@@ -1,0 +1,112 @@
+name: Release
+
+# Triggered when a tag like v0.1.0 is pushed.
+# Builds release binaries for Linux/macOS/Windows and uploads them to a GitHub Release
+# whose body is auto-generated from the merged PRs / commits since the previous tag.
+
+on:
+  push:
+    tags:
+      - "v*.*.*"
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    name: build ${{ matrix.target }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-latest
+            target: x86_64-unknown-linux-gnu
+            archive: tar.gz
+          - os: macos-latest
+            target: x86_64-apple-darwin
+            archive: tar.gz
+          - os: macos-latest
+            target: aarch64-apple-darwin
+            archive: tar.gz
+          - os: windows-latest
+            target: x86_64-pc-windows-msvc
+            archive: zip
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.target }}
+
+      - uses: Swatinem/rust-cache@v2
+
+      - name: Build release binary
+        run: cargo build --release --locked --target ${{ matrix.target }}
+
+      - name: Package (Unix)
+        if: matrix.archive == 'tar.gz'
+        run: |
+          mkdir -p dist
+          NAME="typerush-${{ github.ref_name }}-${{ matrix.target }}"
+          mkdir -p "$NAME"
+          cp "target/${{ matrix.target }}/release/typerush" "$NAME/"
+          cp README.md LICENSE CHANGELOG.md "$NAME/"
+          tar -czf "dist/$NAME.tar.gz" "$NAME"
+          echo "ASSET=dist/$NAME.tar.gz" >> "$GITHUB_ENV"
+
+      - name: Package (Windows)
+        if: matrix.archive == 'zip'
+        shell: pwsh
+        run: |
+          $name = "typerush-${{ github.ref_name }}-${{ matrix.target }}"
+          New-Item -ItemType Directory -Force -Path "dist" | Out-Null
+          New-Item -ItemType Directory -Force -Path $name | Out-Null
+          Copy-Item "target/${{ matrix.target }}/release/typerush.exe" "$name/"
+          Copy-Item README.md, LICENSE, CHANGELOG.md "$name/"
+          Compress-Archive -Path $name -DestinationPath "dist/$name.zip"
+          "ASSET=dist/$name.zip" | Out-File -FilePath $env:GITHUB_ENV -Append
+
+      - name: Upload asset
+        uses: actions/upload-artifact@v4
+        with:
+          name: typerush-${{ matrix.target }}
+          path: ${{ env.ASSET }}
+          if-no-files-found: error
+
+  release:
+    name: Create GitHub Release
+    needs: build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          # Fetch full history so the auto-generated release notes can compare against the previous tag.
+          fetch-depth: 0
+
+      - name: Download all build artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: dist
+          merge-multiple: true
+
+      - name: Publish release
+        uses: softprops/action-gh-release@v2
+        with:
+          name: TypeRush ${{ github.ref_name }}
+          tag_name: ${{ github.ref_name }}
+          generate_release_notes: true
+          body: |
+            Pre-built binaries are attached below. Pick the archive that matches your platform,
+            unzip / untar it, and put the `typerush` binary somewhere on your `$PATH`.
+
+            Or install via cargo:
+
+            ```
+            cargo install typerush --version ${{ github.ref_name }}
+            ```
+
+            See [CHANGELOG.md](https://github.com/withrvr/typerush/blob/main/CHANGELOG.md) for the full notes.
+          files: dist/*

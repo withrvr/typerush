@@ -1,3 +1,9 @@
+//! Results screen — shown immediately after a session ends.
+//!
+//! Displays final WPM, accuracy, elapsed time, character counts, the chosen
+//! mode, and the user's all-time best WPM. Includes a +/- delta against the
+//! previous session and a mini sparkline of recent WPM scores.
+
 use ratatui::{
     prelude::*,
     widgets::{Block, Borders, Paragraph, Sparkline},
@@ -5,6 +11,7 @@ use ratatui::{
 
 use crate::{app::App, storage};
 
+/// Render the post-session results screen.
 pub fn render(f: &mut Frame, app: &App) {
     let area = f.area();
     let layout = Layout::vertical([
@@ -18,7 +25,9 @@ pub fn render(f: &mut Frame, app: &App) {
 
     let title = Paragraph::new(Span::styled(
         "  ✓ session complete",
-        Style::default().fg(Color::Green).add_modifier(Modifier::BOLD),
+        Style::default()
+            .fg(Color::Green)
+            .add_modifier(Modifier::BOLD),
     ));
     f.render_widget(title, layout[0]);
 
@@ -33,8 +42,15 @@ pub fn render(f: &mut Frame, app: &App) {
         Some(prev) => {
             let diff = wpm - prev;
             let sign = if diff >= 0.0 { "+" } else { "" };
-            let color = if diff >= 0.0 { Color::Green } else { Color::Red };
-            Span::styled(format!(" ({sign}{:.0} vs last)", diff), Style::default().fg(color))
+            let color = if diff >= 0.0 {
+                Color::Green
+            } else {
+                Color::Red
+            };
+            Span::styled(
+                format!(" ({sign}{:.0} vs last)", diff),
+                Style::default().fg(color),
+            )
         }
         None => Span::raw(""),
     };
@@ -42,7 +58,12 @@ pub fn render(f: &mut Frame, app: &App) {
     let body_lines = vec![
         Line::from(vec![
             Span::styled("  wpm        ", Style::default().fg(Color::DarkGray)),
-            Span::styled(format!("{:>6.1}", wpm), Style::default().fg(Color::Yellow).add_modifier(Modifier::BOLD)),
+            Span::styled(
+                format!("{:>6.1}", wpm),
+                Style::default()
+                    .fg(Color::Yellow)
+                    .add_modifier(Modifier::BOLD),
+            ),
             delta,
         ]),
         Line::from(vec![
@@ -51,11 +72,17 @@ pub fn render(f: &mut Frame, app: &App) {
         ]),
         Line::from(vec![
             Span::styled("  time       ", Style::default().fg(Color::DarkGray)),
-            Span::styled(format!("{:>5.1}s", elapsed), Style::default().fg(Color::Cyan)),
+            Span::styled(
+                format!("{:>5.1}s", elapsed),
+                Style::default().fg(Color::Cyan),
+            ),
         ]),
         Line::from(vec![
             Span::styled("  chars      ", Style::default().fg(Color::DarkGray)),
-            Span::styled(format!("{}/{}", app.correct_chars, app.total_typed_chars), Style::default().fg(Color::White)),
+            Span::styled(
+                format!("{}/{}", app.correct_chars, app.total_typed_chars),
+                Style::default().fg(Color::White),
+            ),
         ]),
         Line::from(vec![
             Span::styled("  mode       ", Style::default().fg(Color::DarkGray)),
@@ -63,7 +90,12 @@ pub fn render(f: &mut Frame, app: &App) {
         ]),
         Line::from(vec![
             Span::styled("  best ever  ", Style::default().fg(Color::DarkGray)),
-            Span::styled(format!("{:>6.1} wpm", pb), Style::default().fg(Color::Cyan).add_modifier(Modifier::BOLD)),
+            Span::styled(
+                format!("{:>6.1} wpm", pb),
+                Style::default()
+                    .fg(Color::Cyan)
+                    .add_modifier(Modifier::BOLD),
+            ),
         ]),
     ];
     let body = Paragraph::new(body_lines).block(

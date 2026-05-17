@@ -1,3 +1,7 @@
+//! Two floating overlays drawn on top of any screen:
+//!  - the keybindings help (toggled with `?`)
+//!  - a transient error modal (dismissed by any keypress)
+
 use ratatui::{
     prelude::*,
     widgets::{Block, Borders, Clear, Paragraph, Wrap},
@@ -5,6 +9,7 @@ use ratatui::{
 
 use crate::app::App;
 
+/// Render the keybindings overlay.
 pub fn render(f: &mut Frame, _app: &App) {
     let area = centered_rect(60, 70, f.area());
     f.render_widget(Clear, area);
@@ -12,7 +17,9 @@ pub fn render(f: &mut Frame, _app: &App) {
     let lines = vec![
         Line::from(Span::styled(
             "  TypeRush — keybindings",
-            Style::default().fg(Color::Cyan).add_modifier(Modifier::BOLD),
+            Style::default()
+                .fg(Color::Cyan)
+                .add_modifier(Modifier::BOLD),
         )),
         Line::raw(""),
         Line::from("  ↑/↓ or j/k     navigate menu"),
@@ -26,7 +33,9 @@ pub fn render(f: &mut Frame, _app: &App) {
         Line::raw(""),
         Line::from(Span::styled(
             "  Modes",
-            Style::default().fg(Color::Yellow).add_modifier(Modifier::BOLD),
+            Style::default()
+                .fg(Color::Yellow)
+                .add_modifier(Modifier::BOLD),
         )),
         Line::from("  Time           type as many words as you can"),
         Line::from("  Words          type a fixed number of words"),
@@ -40,17 +49,16 @@ pub fn render(f: &mut Frame, _app: &App) {
         )),
     ];
 
-    let p = Paragraph::new(lines)
-        .wrap(Wrap { trim: false })
-        .block(
-            Block::default()
-                .borders(Borders::ALL)
-                .border_style(Style::default().fg(Color::Cyan))
-                .title(" help "),
-        );
+    let p = Paragraph::new(lines).wrap(Wrap { trim: false }).block(
+        Block::default()
+            .borders(Borders::ALL)
+            .border_style(Style::default().fg(Color::Cyan))
+            .title(" help "),
+    );
     f.render_widget(p, area);
 }
 
+/// Render the transient error modal. Dismissed by any keypress from the main loop.
 pub fn render_error(f: &mut Frame, message: &str) {
     let area = centered_rect(50, 20, f.area());
     f.render_widget(Clear, area);

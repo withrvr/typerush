@@ -1,0 +1,88 @@
+name: 🐞 Bug report
+description: Something in TypeRush isn't working the way it should.
+title: "[bug]: "
+labels: ["bug", "needs triage"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for taking the time to report a bug!
+        Please fill in as much of this form as you can — it makes fixing things much faster.
+
+  - type: textarea
+    id: what-happened
+    attributes:
+      label: What happened?
+      description: A clear description of the bug. What did you do, and what went wrong?
+      placeholder: |
+        Example: I started a 30-second time mode session and after typing my first word
+        the cursor disappeared until I pressed another key.
+    validations:
+      required: true
+
+  - type: textarea
+    id: expected
+    attributes:
+      label: What did you expect to happen?
+      placeholder: The cursor should stay visible the whole time.
+    validations:
+      required: true
+
+  - type: textarea
+    id: reproduce
+    attributes:
+      label: Steps to reproduce
+      description: The smallest sequence of steps that reliably reproduces the bug.
+      placeholder: |
+        1. Run `typerush --time 30`
+        2. Press any letter
+        3. Observe the cursor
+    validations:
+      required: true
+
+  - type: input
+    id: version
+    attributes:
+      label: TypeRush version
+      description: Run `typerush --version`.
+      placeholder: e.g. 0.1.0
+    validations:
+      required: true
+
+  - type: dropdown
+    id: os
+    attributes:
+      label: Operating system
+      options:
+        - Linux
+        - macOS
+        - Windows
+        - WSL
+        - Other (please describe in "what happened?")
+    validations:
+      required: true
+
+  - type: input
+    id: terminal
+    attributes:
+      label: Terminal emulator
+      placeholder: e.g. iTerm2, Alacritty, Windows Terminal, Warp
+    validations:
+      required: true
+
+  - type: textarea
+    id: logs
+    attributes:
+      label: Logs / screenshots
+      description: Paste any output, screenshots, or recordings that help illustrate the issue.
+      render: shell
+
+  - type: checkboxes
+    id: confirmations
+    attributes:
+      label: Pre-flight checklist
+      options:
+        - label: I searched existing issues and didn't find a duplicate.
+          required: true
+        - label: I'm on the latest TypeRush release (or built from `main`).
+          required: false

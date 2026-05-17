@@ -1,0 +1,33 @@
+name: ❓ Question
+description: Ask a question about using or building TypeRush.
+title: "[question]: "
+labels: ["question"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        For open-ended chat, the [Discussions](https://github.com/withrvr/typerush/discussions) tab
+        is usually a better home. But if you have a specific question, this is the right place.
+
+  - type: textarea
+    id: question
+    attributes:
+      label: Your question
+    validations:
+      required: true
+
+  - type: textarea
+    id: tried
+    attributes:
+      label: What have you tried so far?
+      description: Sharing this helps us answer faster.
+
+  - type: checkboxes
+    id: confirmations
+    attributes:
+      label: Pre-flight checklist
+      options:
+        - label: I checked the [README](https://github.com/withrvr/typerush/blob/main/README.md) and [docs/](https://github.com/withrvr/typerush/tree/main/docs).
+          required: true
+        - label: I searched existing issues and Discussions.
+          required: true

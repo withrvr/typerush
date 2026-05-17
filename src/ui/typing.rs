@@ -1,3 +1,9 @@
+//! The typing screen — header (live stats), progress bar, words area, footer.
+//!
+//! The cursor is **steady** (no blink) to avoid layout shifts. Two cursor styles:
+//! - on a character → REVERSED (solid block fill)
+//! - past the last character of a word → underlined trailing space (plain bar)
+
 use ratatui::{
     prelude::*,
     widgets::{Block, Borders, Gauge, Paragraph, Wrap},
@@ -8,13 +14,15 @@ use crate::{
     game::{get_char_states, CharState},
 };
 
+/// Top-level entry point for the typing screen. Splits the area into four
+/// horizontal bands: header, progress bar, words, footer.
 pub fn render(f: &mut Frame, app: &App) {
     let area = f.area();
     let layout = Layout::vertical([
-        Constraint::Length(3),
-        Constraint::Length(2),
-        Constraint::Min(6),
-        Constraint::Length(3),
+        Constraint::Length(3), // live stats header
+        Constraint::Length(2), // progress gauge
+        Constraint::Min(6),    // words to type
+        Constraint::Length(3), // keybinding footer
     ])
     .split(area);
 
@@ -24,8 +32,10 @@ pub fn render(f: &mut Frame, app: &App) {
     render_footer(f, layout[3]);
 }
 
+/// Renders the live WPM / accuracy / time / mode strip at the top of the screen.
+/// In zen mode this is intentionally minimal (no numbers — just a label).
 fn render_header(f: &mut Frame, app: &App, area: Rect) {
-    let zen = matches!(app.mode, Mode::Zen);
+    let is_zen_mode = matches!(app.mode, Mode::Zen);
 
     let timer_text = if let Some(remaining) = app.time_remaining() {
         format!("{:>3}s", remaining.as_secs())
@@ -33,34 +43,54 @@ fn render_header(f: &mut Frame, app: &App, area: Rect) {
         format!("{:>5.1}s", app.elapsed().as_secs_f64())
     };
 
-    let header = if zen {
+    let header = if is_zen_mode {
         Line::from(vec![
             Span::styled(" zen ", Style::default().fg(Color::DarkGray)),
             Span::styled(" · esc to finish", Style::default().fg(Color::DarkGray)),
         ])
     } else {
         Line::from(vec![
-            Span::styled(" wpm ",  Style::default().fg(Color::DarkGray)),
-            Span::styled(format!("{:>3.0}", app.wpm()), Style::default().fg(Color::Yellow).add_modifier(Modifier::BOLD)),
+            Span::styled(" wpm ", Style::default().fg(Color::DarkGray)),
+            Span::styled(
+                format!("{:>3.0}", app.wpm()),
+                Style::default()
+                    .fg(Color::Yellow)
+                    .add_modifier(Modifier::BOLD),
+            ),
             Span::raw("   "),
             Span::styled("acc ", Style::default().fg(Color::DarkGray)),
-            Span::styled(format!("{:>5.1}%", app.accuracy()), Style::default().fg(Color::Green)),
+            Span::styled(
+                format!("{:>5.1}%", app.accuracy()),
+                Style::default().fg(Color::Green),
+            ),
             Span::raw("   "),
             Span::styled("time ", Style::default().fg(Color::DarkGray)),
             Span::styled(timer_text, Style::default().fg(Color::Cyan)),
             Span::raw("   "),
-            Span::styled(format!("[{}]", app.mode.label()), Style::default().fg(Color::Magenta)),
+            Span::styled(
+                format!("[{}]", app.mode.label()),
+                Style::default().fg(Color::Magenta),
+            ),
         ])
     };
 
-    let p = Paragraph::new(header)
-        .block(Block::default().borders(Borders::BOTTOM).border_style(Style::default().fg(Color::DarkGray)));
-    f.render_widget(p, area);
+    let header_paragraph = Paragraph::new(header).block(
+        Block::default()
+            .borders(Borders::BOTTOM)
+            .border_style(Style::default().fg(Color::DarkGray)),
+    );
+    f.render_widget(header_paragraph, area);
 }
 
+/// Progress bar — words-typed / total for word modes, elapsed / total for time modes.
+/// Quote, code, zen and custom modes don't show a bar.
 fn render_progress(f: &mut Frame, app: &App, area: Rect) {
     if let Some((done, total)) = app.progress() {
-        let ratio = if total == 0 { 0.0 } else { done as f64 / total as f64 };
+        let ratio = if total == 0 {
+            0.0
+        } else {
+            done as f64 / total as f64
+        };
         let gauge = Gauge::default()
             .block(Block::default())
             .gauge_style(Style::default().fg(Color::Cyan))
@@ -79,89 +109,132 @@ fn render_progress(f: &mut Frame, app: &App, area: Rect) {
     }
 }
 
+/// Renders the words to type, colored character by character.
+///
+/// Word-wraps manually (rather than relying on `Paragraph::wrap`) so we keep
+/// full control of where line breaks happen — important because each character
+/// has its own style.
+///
+/// The cursor never blinks: it is rendered as a REVERSED block on the
+/// character it sits on, or as an underlined trailing space when it has passed
+/// the end of the current word. Keeping the cursor steady avoids the
+/// horizontal "jitter" that a phantom blinking character would cause.
 fn render_words(f: &mut Frame, app: &App, area: Rect) {
-    let mut lines: Vec<Line> = vec![];
+    let mut wrapped_lines: Vec<Line> = vec![];
     let mut current_line: Vec<Span> = vec![];
-    let max_width = area.width.saturating_sub(4) as usize;
-    let mut current_width = 0usize;
-    let cursor_visible = app.tick_count % 10 < 5;
-    let zen = matches!(app.mode, Mode::Zen);
+    // -4 to account for the surrounding border (1 char each side + padding).
+    let max_line_width = area.width.saturating_sub(4) as usize;
+    let mut current_line_width = 0usize;
+    let is_zen_mode = matches!(app.mode, Mode::Zen);
+    let last_word_index = app.words.len().saturating_sub(1);
 
-    for (wi, word) in app.words.iter().enumerate() {
-        let states = get_char_states(&word.text, &word.typed);
-        let typed_count = word.typed.chars().count();
+    for (word_index, word) in app.words.iter().enumerate() {
+        let char_states = get_char_states(&word.text, &word.typed);
+        let typed_char_count = word.typed.chars().count();
+        let is_active_word = word_index == app.current_word;
+        // True when the user has typed at least as many characters as the word's
+        // states — i.e. the cursor sits past the final character and any extras.
+        let cursor_past_word_end = is_active_word && typed_char_count >= char_states.len();
 
-        let mut word_spans: Vec<Span> = vec![];
-        for (ci, (ch, state)) in states.iter().enumerate() {
-            let is_cursor = wi == app.current_word && ci == typed_count && cursor_visible;
-            let style = if zen {
-                if state == &CharState::Correct {
-                    Style::default().fg(Color::Gray)
-                } else if state == &CharState::Incorrect || state == &CharState::Extra {
-                    Style::default().fg(Color::DarkGray).add_modifier(Modifier::UNDERLINED)
-                } else {
-                    Style::default().fg(Color::DarkGray)
-                }
+        // 1. Render every character (target + extras) with its state-driven style.
+        //    If the cursor is on this char, overlay it with REVERSED for a block fill.
+        let mut word_spans: Vec<Span> = Vec::with_capacity(char_states.len() + 1);
+        for (char_index, (ch, state)) in char_states.iter().enumerate() {
+            let cursor_on_this_char = is_active_word && char_index == typed_char_count;
+            let base_style = style_for_char(*state, is_zen_mode);
+            let style = if cursor_on_this_char {
+                base_style.add_modifier(Modifier::REVERSED)
             } else {
-                match state {
-                    CharState::Correct => Style::default().fg(Color::Green),
-                    CharState::Incorrect => Style::default().fg(Color::Red).add_modifier(Modifier::BOLD),
-                    CharState::Pending => Style::default().fg(Color::DarkGray),
-                    CharState::Extra => Style::default().fg(Color::Red).add_modifier(Modifier::UNDERLINED),
-                }
-            };
-            let style = if is_cursor {
-                style.add_modifier(Modifier::REVERSED)
-            } else {
-                style
+                base_style
             };
             word_spans.push(Span::styled(ch.to_string(), style));
         }
 
-        // Cursor at end of typed input when typed >= chars in target
-        if wi == app.current_word && typed_count >= word.text.chars().count() && cursor_visible {
-            // already handled via Extra cursor coloring if any extras
-            if word.typed.chars().count() == word.text.chars().count() {
-                // append a phantom cursor block
-                word_spans.push(Span::styled(
-                    "▏",
-                    Style::default().fg(Color::Cyan).add_modifier(Modifier::BOLD),
-                ));
-            }
-        }
+        // 2. Decide whether (and how) to render the trailing space.
+        //    A trailing space goes between every pair of words. It also doubles
+        //    as the cursor "rest position" when the user has finished a word
+        //    and is about to press space.
+        let has_trailing_space = word_index < last_word_index;
+        let space_style = if cursor_past_word_end {
+            // Plain underline — no fill, no blink, no width change.
+            Style::default()
+                .fg(Color::Cyan)
+                .add_modifier(Modifier::UNDERLINED)
+        } else {
+            Style::default()
+        };
 
-        let word_len: usize = word.text.chars().count().max(word.typed.chars().count());
-        let space_len = if wi < app.words.len() - 1 { 1 } else { 0 };
-        if current_width + word_len + space_len > max_width && !current_line.is_empty() {
-            lines.push(Line::from(std::mem::take(&mut current_line)));
-            current_width = 0;
+        let trailing_chars: usize = if has_trailing_space {
+            word_spans.push(Span::styled(" ", space_style));
+            1
+        } else if cursor_past_word_end {
+            // Last word edge case — still reserve one space so the cursor has
+            // something to underline, but only when the cursor is actually here.
+            word_spans.push(Span::styled(" ", space_style));
+            1
+        } else {
+            0
+        };
+
+        // 3. Word-wrap: if this word + space won't fit on the current line,
+        //    flush and start a new one.
+        let visible_word_width = char_states.len();
+        let total_word_width = visible_word_width + trailing_chars;
+
+        if current_line_width + total_word_width > max_line_width && !current_line.is_empty() {
+            wrapped_lines.push(Line::from(std::mem::take(&mut current_line)));
+            current_line_width = 0;
         }
         current_line.extend(word_spans);
-        current_width += word_len;
-        if space_len > 0 {
-            current_line.push(Span::raw(" "));
-            current_width += 1;
-        }
-    }
-    if !current_line.is_empty() {
-        lines.push(Line::from(current_line));
+        current_line_width += total_word_width;
     }
 
-    let para = Paragraph::new(lines)
+    if !current_line.is_empty() {
+        wrapped_lines.push(Line::from(current_line));
+    }
+
+    let words_paragraph = Paragraph::new(wrapped_lines)
         .wrap(Wrap { trim: false })
         .block(
             Block::default()
                 .borders(Borders::ALL)
                 .border_style(Style::default().fg(Color::DarkGray))
-                .title(Span::styled(" typerush ", Style::default().fg(Color::Cyan).add_modifier(Modifier::BOLD))),
+                .title(Span::styled(
+                    " typerush ",
+                    Style::default()
+                        .fg(Color::Cyan)
+                        .add_modifier(Modifier::BOLD),
+                )),
         );
-    f.render_widget(para, area);
+    f.render_widget(words_paragraph, area);
 }
 
+/// Picks a foreground color/modifier for one character based on whether it
+/// was typed correctly, incorrectly, not yet typed, or typed as an extra.
+/// Zen mode uses a softer, monochrome palette to keep the screen distraction-free.
+fn style_for_char(state: CharState, is_zen_mode: bool) -> Style {
+    if is_zen_mode {
+        return match state {
+            CharState::Correct => Style::default().fg(Color::Gray),
+            CharState::Incorrect | CharState::Extra => Style::default()
+                .fg(Color::DarkGray)
+                .add_modifier(Modifier::UNDERLINED),
+            CharState::Pending => Style::default().fg(Color::DarkGray),
+        };
+    }
+    match state {
+        CharState::Correct => Style::default().fg(Color::Green),
+        CharState::Incorrect => Style::default().fg(Color::Red).add_modifier(Modifier::BOLD),
+        CharState::Pending => Style::default().fg(Color::DarkGray),
+        CharState::Extra => Style::default()
+            .fg(Color::Red)
+            .add_modifier(Modifier::UNDERLINED),
+    }
+}
+
+/// Tiny hint strip at the bottom of the screen.
 fn render_footer(f: &mut Frame, area: Rect) {
-    let footer = Paragraph::new(
-        "  ctrl+r restart  ·  esc menu  ·  ctrl+c quit  ·  ? help",
-    )
-    .style(Style::default().fg(Color::DarkGray));
+    let footer = Paragraph::new("  ctrl+r restart  ·  esc menu  ·  ctrl+c quit  ·  ? help")
+        .style(Style::default().fg(Color::DarkGray));
     f.render_widget(footer, area);
 }

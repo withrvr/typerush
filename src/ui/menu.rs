@@ -1,3 +1,6 @@
+//! Main menu screen — ASCII banner up top, a centered list of modes in the
+//! middle, and a one-line hint footer at the bottom.
+
 use ratatui::{
     prelude::*,
     widgets::{Block, Borders, List, ListItem, ListState, Paragraph, Wrap},
@@ -5,6 +8,7 @@ use ratatui::{
 
 use crate::app::App;
 
+/// Render the menu screen. `app.menu_index` highlights the active row.
 pub fn render(f: &mut Frame, app: &App) {
     let area = f.area();
     let layout = Layout::vertical([
@@ -18,23 +22,33 @@ pub fn render(f: &mut Frame, app: &App) {
     let banner_text = vec![
         Line::from(Span::styled(
             "  ████████ ██    ██ ██████  ███████ ██████  ██    ██ ███████ ██   ██ ",
-            Style::default().fg(Color::Cyan).add_modifier(Modifier::BOLD),
+            Style::default()
+                .fg(Color::Cyan)
+                .add_modifier(Modifier::BOLD),
         )),
         Line::from(Span::styled(
             "     ██     ██  ██  ██   ██ ██      ██   ██ ██    ██ ██      ██   ██ ",
-            Style::default().fg(Color::Cyan).add_modifier(Modifier::BOLD),
+            Style::default()
+                .fg(Color::Cyan)
+                .add_modifier(Modifier::BOLD),
         )),
         Line::from(Span::styled(
             "     ██      ████   ██████  █████   ██████  ██    ██ ███████ ███████ ",
-            Style::default().fg(Color::Cyan).add_modifier(Modifier::BOLD),
+            Style::default()
+                .fg(Color::Cyan)
+                .add_modifier(Modifier::BOLD),
         )),
         Line::from(Span::styled(
             "     ██       ██    ██      ██      ██   ██ ██    ██      ██ ██   ██ ",
-            Style::default().fg(Color::Cyan).add_modifier(Modifier::BOLD),
+            Style::default()
+                .fg(Color::Cyan)
+                .add_modifier(Modifier::BOLD),
         )),
         Line::from(Span::styled(
             "     ██       ██    ██      ███████ ██   ██  ██████  ███████ ██   ██ ",
-            Style::default().fg(Color::Cyan).add_modifier(Modifier::BOLD),
+            Style::default()
+                .fg(Color::Cyan)
+                .add_modifier(Modifier::BOLD),
         )),
     ];
     let banner = Paragraph::new(banner_text).alignment(Alignment::Center);
@@ -49,12 +63,12 @@ pub fn render(f: &mut Frame, app: &App) {
         .collect();
     let list = List::new(items)
         .block(
-            Block::default()
-                .borders(Borders::ALL)
-                .title(Span::styled(
-                    " select mode ",
-                    Style::default().fg(Color::Yellow).add_modifier(Modifier::BOLD),
-                )),
+            Block::default().borders(Borders::ALL).title(Span::styled(
+                " select mode ",
+                Style::default()
+                    .fg(Color::Yellow)
+                    .add_modifier(Modifier::BOLD),
+            )),
         )
         .highlight_style(
             Style::default()
@@ -69,11 +83,9 @@ pub fn render(f: &mut Frame, app: &App) {
     f.render_stateful_widget(list, inner, &mut state);
 
     // Footer
-    let footer = Paragraph::new(
-        "  ↑/↓ navigate  ·  Enter start  ·  q quit  ·  ? help",
-    )
-    .style(Style::default().fg(Color::DarkGray))
-    .wrap(Wrap { trim: true });
+    let footer = Paragraph::new("  ↑/↓ navigate  ·  Enter start  ·  q quit  ·  ? help")
+        .style(Style::default().fg(Color::DarkGray))
+        .wrap(Wrap { trim: true });
     f.render_widget(footer, layout[2]);
 }
 

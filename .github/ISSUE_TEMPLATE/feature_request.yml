@@ -1,0 +1,60 @@
+name: 💡 Feature request
+description: Suggest a new feature or improvement for TypeRush.
+title: "[feat]: "
+labels: ["enhancement", "needs triage"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for your idea! Tell us a bit about it so we can decide where it fits on the roadmap.
+
+  - type: textarea
+    id: problem
+    attributes:
+      label: What problem does this solve?
+      description: What can't you do today, or what feels harder than it should?
+      placeholder: |
+        Example: I want to practice typing programming symbols `(){};=>` specifically,
+        but the current modes don't let me focus on those.
+    validations:
+      required: true
+
+  - type: textarea
+    id: solution
+    attributes:
+      label: Proposed solution
+      description: What would you like TypeRush to do?
+      placeholder: |
+        A new "symbols" mode that generates short sequences of common programming punctuation.
+    validations:
+      required: true
+
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: Alternatives considered
+      description: Are there other ways to solve this? Workarounds you're using today?
+      placeholder: |
+        I could pipe a text file of symbols into `--file`, but that's tedious to maintain.
+
+  - type: dropdown
+    id: scope
+    attributes:
+      label: Rough scope
+      options:
+        - Tiny (small UI tweak, config option)
+        - Medium (new mode, new screen)
+        - Big (architectural change, new dependency)
+        - Not sure
+    validations:
+      required: true
+
+  - type: checkboxes
+    id: confirmations
+    attributes:
+      label: Pre-flight checklist
+      options:
+        - label: I searched existing issues and didn't find a duplicate.
+          required: true
+        - label: I checked the [roadmap](https://github.com/withrvr/typerush/blob/main/docs/ROADMAP.md).
+          required: false

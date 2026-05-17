@@ -1,3 +1,7 @@
+//! Historical stats screen — pulls the full session list from disk
+//! (`~/.typerush/stats.json`) and renders a summary card, a WPM sparkline,
+//! and a table of the last 10 sessions.
+
 use ratatui::{
     prelude::*,
     widgets::{Block, Borders, Cell, Paragraph, Row, Sparkline, Table},
@@ -5,6 +9,8 @@ use ratatui::{
 
 use crate::{app::App, storage};
 
+/// Render the stats history screen. Doesn't take any state from `App` —
+/// everything is read from disk.
 pub fn render(f: &mut Frame, _app: &App) {
     let area = f.area();
     let layout = Layout::vertical([
@@ -18,7 +24,9 @@ pub fn render(f: &mut Frame, _app: &App) {
 
     let title = Paragraph::new(Span::styled(
         "  ◆ stats history",
-        Style::default().fg(Color::Cyan).add_modifier(Modifier::BOLD),
+        Style::default()
+            .fg(Color::Cyan)
+            .add_modifier(Modifier::BOLD),
     ));
     f.render_widget(title, layout[0]);
 
@@ -31,17 +39,28 @@ pub fn render(f: &mut Frame, _app: &App) {
     let summary_lines = vec![
         Line::from(vec![
             Span::styled("  best wpm     ", Style::default().fg(Color::DarkGray)),
-            Span::styled(format!("{:>6.1}", pb), Style::default().fg(Color::Yellow).add_modifier(Modifier::BOLD)),
+            Span::styled(
+                format!("{:>6.1}", pb),
+                Style::default()
+                    .fg(Color::Yellow)
+                    .add_modifier(Modifier::BOLD),
+            ),
             Span::raw("      "),
             Span::styled("avg accuracy ", Style::default().fg(Color::DarkGray)),
-            Span::styled(format!("{:>5.1}%", avg_acc), Style::default().fg(Color::Green)),
+            Span::styled(
+                format!("{:>5.1}%", avg_acc),
+                Style::default().fg(Color::Green),
+            ),
         ]),
         Line::from(vec![
             Span::styled("  sessions    ", Style::default().fg(Color::DarkGray)),
             Span::styled(format!("{:>6}", total), Style::default().fg(Color::White)),
             Span::raw("      "),
             Span::styled("last wpm     ", Style::default().fg(Color::DarkGray)),
-            Span::styled(format!("{:>5.1}", last_wpm), Style::default().fg(Color::Cyan)),
+            Span::styled(
+                format!("{:>5.1}", last_wpm),
+                Style::default().fg(Color::Cyan),
+            ),
         ]),
     ];
     let summary = Paragraph::new(summary_lines).block(
@@ -80,13 +99,17 @@ pub fn render(f: &mut Frame, _app: &App) {
                 Cell::from(s.mode.clone()).style(Style::default().fg(Color::Magenta)),
                 Cell::from(format!("{:.1}", s.wpm)).style(Style::default().fg(Color::Yellow)),
                 Cell::from(format!("{:.1}%", s.accuracy)).style(Style::default().fg(Color::Green)),
-                Cell::from(format!("{:.1}s", s.duration_secs)).style(Style::default().fg(Color::Cyan)),
+                Cell::from(format!("{:.1}s", s.duration_secs))
+                    .style(Style::default().fg(Color::Cyan)),
             ])
         })
         .collect::<Vec<_>>();
 
-    let header = Row::new(vec!["Date", "Mode", "WPM", "Acc", "Time"])
-        .style(Style::default().fg(Color::DarkGray).add_modifier(Modifier::BOLD));
+    let header = Row::new(vec!["Date", "Mode", "WPM", "Acc", "Time"]).style(
+        Style::default()
+            .fg(Color::DarkGray)
+            .add_modifier(Modifier::BOLD),
+    );
 
     let table = Table::new(
         recent_rows,
@@ -107,7 +130,7 @@ pub fn render(f: &mut Frame, _app: &App) {
     );
     f.render_widget(table, layout[3]);
 
-    let footer = Paragraph::new("  m / esc menu  ·  q quit")
-        .style(Style::default().fg(Color::DarkGray));
+    let footer =
+        Paragraph::new("  m / esc menu  ·  q quit").style(Style::default().fg(Color::DarkGray));
     f.render_widget(footer, layout[4]);
 }
