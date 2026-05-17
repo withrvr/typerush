@@ -16,7 +16,7 @@
 
 ## 👀 Preview
 
-![TypeRush demo](assets/demo.gif)
+![TypeRush demo](https://raw.githubusercontent.com/withrvr/typerush/main/assets/demo.gif)
 
 TypeRush is a beautiful, fast typing-speed trainer that runs **entirely in your terminal**.
 No browser. No internet. No installer. Just one tiny binary, ready in a single command.

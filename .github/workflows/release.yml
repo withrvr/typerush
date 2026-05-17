@@ -1,6 +1,6 @@
 name: Release
 
-# Triggered when a tag like v0.1.0 is pushed.
+# Triggered when a tag like v0.1.1 is pushed.
 # Builds release binaries for Linux/macOS/Windows and uploads them to a GitHub Release
 # whose body is auto-generated from the merged PRs / commits since the previous tag.
 
