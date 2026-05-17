@@ -1,0 +1,61 @@
+pub const QUOTES: &[&str] = &[
+    "The best way to predict the future is to invent it.",
+    "Programs must be written for people to read, and only incidentally for machines to execute.",
+    "Premature optimization is the root of all evil.",
+    "Simplicity is the soul of efficiency.",
+    "Make it work, make it right, make it fast.",
+    "Talk is cheap. Show me the code.",
+    "The only way to learn a new programming language is by writing programs in it.",
+    "Any fool can write code that a computer can understand. Good programmers write code that humans can understand.",
+    "Code is like humor. When you have to explain it, it is bad.",
+    "First, solve the problem. Then, write the code.",
+    "Experience is the name everyone gives to their mistakes.",
+    "Simplicity is the ultimate sophistication.",
+    "Before software can be reusable it first has to be usable.",
+    "Walking on water and developing software from a specification are easy if both are frozen.",
+    "There are two ways of constructing a software design.",
+    "The most damaging phrase in the language is: We have always done it this way.",
+    "Truth can only be found in one place: the code.",
+    "It is not enough for code to work.",
+    "Knowledge is power.",
+    "Java is to JavaScript what car is to carpet.",
+];
+
+pub const CODE_RUST: &[&str] = &[
+    "fn main() { println!(\"Hello, world!\"); }",
+    "let mut count: i32 = 0; for i in 0..10 { count += i; }",
+    "let v: Vec<i32> = (1..=5).collect();",
+    "fn add(a: i32, b: i32) -> i32 { a + b }",
+    "let s = String::from(\"rust is fast\");",
+    "match x { Some(n) => n * 2, None => 0 }",
+    "if let Some(value) = result { println!(\"{}\", value); }",
+    "struct Point { x: f64, y: f64 }",
+    "let nums: Vec<i32> = vec![1, 2, 3, 4, 5];",
+    "fn square(n: i32) -> i32 { n * n }",
+];
+
+pub const CODE_PYTHON: &[&str] = &[
+    "def hello(): print(\"hello world\")",
+    "x = [i * 2 for i in range(10)]",
+    "with open(\"file.txt\") as f: data = f.read()",
+    "import json; obj = json.loads(text)",
+    "def add(a, b): return a + b",
+    "for i in range(10): print(i)",
+    "nums = list(map(int, input().split()))",
+    "result = sorted(items, key=lambda x: x[1])",
+    "class Dog: def bark(self): print(\"woof\")",
+    "data = {\"name\": \"alice\", \"age\": 30}",
+];
+
+pub const CODE_JS: &[&str] = &[
+    "const sum = (a, b) => a + b;",
+    "const arr = [1, 2, 3].map(x => x * 2);",
+    "function greet(name) { return `Hello, ${name}`; }",
+    "const obj = { name: \"Alice\", age: 30 };",
+    "async function fetchData() { return await api.get(); }",
+    "const filtered = list.filter(x => x > 0);",
+    "let count = 0; for (let i = 0; i < 10; i++) count += i;",
+    "const [a, b] = [1, 2]; console.log(a + b);",
+    "Promise.all(tasks).then(results => done(results));",
+    "const unique = [...new Set(arr)];",
+];
