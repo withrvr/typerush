@@ -7,6 +7,7 @@ license = "MIT"
 repository = "https://github.com/withrvr/typerush"
 keywords = ["typing", "terminal", "tui", "wpm"]
 categories = ["command-line-utilities", "games"]
+authors = ["Raghav Rathi", "withrvr"]
 readme = "README.md"
 
 [dependencies]

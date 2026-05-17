@@ -142,8 +142,13 @@ fn render_words(f: &mut Frame, app: &App, area: Rect) {
         for (char_index, (ch, state)) in char_states.iter().enumerate() {
             let cursor_on_this_char = is_active_word && char_index == typed_char_count;
             let base_style = style_for_char(*state, is_zen_mode);
+            // Cursor is always a cyan underline regardless of the character's
+            // own state. This matches the trailing-space cursor style exactly,
+            // giving a single consistent indicator throughout the session.
             let style = if cursor_on_this_char {
-                base_style.add_modifier(Modifier::REVERSED)
+                Style::default()
+                    .fg(Color::Cyan)
+                    .add_modifier(Modifier::UNDERLINED)
             } else {
                 base_style
             };
