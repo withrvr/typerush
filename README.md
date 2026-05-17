@@ -1,7 +1,7 @@
 # TypeRush
 
 A fast, cross-platform **typing speed trainer** that lives entirely in your terminal.
-Like MonkeyType — but no browser, no internet, no Electron. Just one Rust binary.
+Like no browser, no internet, no Electron. Just one Rust binary.
 
 ```
 ████████ ██    ██ ██████  ███████ ██████  ██    ██ ███████ ██   ██
@@ -88,7 +88,7 @@ Every non-zen session is appended to `~/.typerush/stats.json`. The Stats screen
 
 ## WPM Formula
 
-TypeRush uses MonkeyType's standard formula:
+TypeRush uses this standard formula:
 
 ```
 wpm = (correct_chars / 5) / elapsed_minutes

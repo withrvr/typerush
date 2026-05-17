@@ -2,10 +2,10 @@
 name = "typerush"
 version = "0.1.0"
 edition = "2021"
-description = "MonkeyType in your terminal — a fast, cross-platform WPM typing trainer built with Rust"
+description = "In your terminal — a fast, cross-platform WPM typing trainer built with Rust"
 license = "MIT"
 repository = "https://github.com/withrvr/typerush"
-keywords = ["typing", "terminal", "tui", "wpm", "monkeytype"]
+keywords = ["typing", "terminal", "tui", "wpm"]
 categories = ["command-line-utilities", "games"]
 readme = "README.md"
 

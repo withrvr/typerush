@@ -26,7 +26,7 @@ use crate::storage::SessionRecord;
 #[command(
     name = "typerush",
     version,
-    about = "MonkeyType in your terminal — a fast WPM typing trainer",
+    about = "In your terminal — a fast WPM typing trainer",
     long_about = None,
 )]
 struct Cli {
