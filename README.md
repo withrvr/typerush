@@ -16,11 +16,9 @@
 
 ## 👀 Preview
 
-<!-- <p align="center">
-  <img src="assets/demo.gif" alt="TypeRush demo" width="700">
-</p> -->
-
-![TypeRush demo](assets/demo.gif)
+<p align="center">
+  <video src="assets/demo.mp4" autoplay loop muted playsinline width="700"></video>
+</p>
 
 TypeRush is a beautiful, fast typing-speed trainer that runs **entirely in your terminal**.
 No browser. No internet. No installer. Just one tiny binary, ready in a single command.
