@@ -312,6 +312,22 @@ mod tests {
     }
 
     #[test]
+    fn multiple_bad_colors_accumulate_warnings() {
+        let raw = Config {
+            colors: Some(Colors {
+                accent: Some("not-a-color".into()),
+                correct: Some("#GG0000".into()),
+                ..Default::default()
+            }),
+            ..Default::default()
+        };
+        let (_, warnings) = resolve(raw, None);
+        assert_eq!(warnings.len(), 2);
+        assert!(warnings.iter().any(|w| w.contains("accent")));
+        assert!(warnings.iter().any(|w| w.contains("correct")));
+    }
+
+    #[test]
     fn defaults_code_mode_picks_language() {
         let raw = Config {
             defaults: Some(Defaults {

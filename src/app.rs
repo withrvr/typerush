@@ -564,3 +564,45 @@ impl App {
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn best_menu_match_exact_time() {
+        let menu = default_menu();
+        let index = best_menu_match(&menu, DefaultMode::Time(30));
+        assert_eq!(menu[index].label, "Time · 30s");
+    }
+
+    #[test]
+    fn best_menu_match_exact_words() {
+        let menu = default_menu();
+        let index = best_menu_match(&menu, DefaultMode::Words(100));
+        assert_eq!(menu[index].label, "Words · 100");
+    }
+
+    #[test]
+    fn best_menu_match_falls_back_to_first_time_row() {
+        // 45 isn't one of the four standard time rows; we expect the first
+        // time row ("Time · 15s") rather than something unrelated.
+        let menu = default_menu();
+        let index = best_menu_match(&menu, DefaultMode::Time(45));
+        assert_eq!(menu[index].label, "Time · 15s");
+    }
+
+    #[test]
+    fn best_menu_match_falls_back_to_first_words_row() {
+        let menu = default_menu();
+        let index = best_menu_match(&menu, DefaultMode::Words(7));
+        assert_eq!(menu[index].label, "Words · 10");
+    }
+
+    #[test]
+    fn best_menu_match_picks_zen_row() {
+        let menu = default_menu();
+        let index = best_menu_match(&menu, DefaultMode::Zen);
+        assert_eq!(menu[index].label, "Zen");
+    }
+}

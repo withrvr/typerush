@@ -132,4 +132,17 @@ not_a_real_slot = "red"
         "#;
         assert!(toml::from_str::<Config>(raw).is_err());
     }
+
+    /// Regression guard: the example config we ship at the repo root must
+    /// parse cleanly through the same deserializer the runtime uses. If
+    /// someone adds a slot or renames a field, this fails before users see it.
+    #[test]
+    fn shipped_example_config_round_trips() {
+        let example = include_str!("../../config.example.toml");
+        let cfg: Config = toml::from_str(example).expect("config.example.toml must parse");
+        assert_eq!(cfg.theme.as_deref(), Some("monokai"));
+        let defaults = cfg.defaults.expect("defaults section");
+        assert_eq!(defaults.mode.as_deref(), Some("time"));
+        assert_eq!(defaults.time_seconds, Some(15));
+    }
 }

@@ -61,6 +61,10 @@ pub fn render(f: &mut Frame, app: &App) {
                     .add_modifier(Modifier::BOLD),
             )),
         )
+        // Black on accent gives high contrast on every built-in theme since
+        // each one's `accent` is a bright color. A user who overrides accent
+        // to something dark would lose readability here — at that point they
+        // can override the slot.
         .highlight_style(
             Style::default()
                 .fg(Color::Black)
