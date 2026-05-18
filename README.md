@@ -21,7 +21,7 @@ with a quote — TypeRush meets you where you already work: the command line.
 ## ✨ Why TypeRush
 
 - 🚀 **Instant feedback** — see your WPM and accuracy climb keystroke by keystroke
-- 🎨 **Beautiful TUI** — clean colors, smooth layout, no distractions
+- 🎨 **Themes built-in** — `dark`, `light`, `monokai`, `dracula`, or roll your own colors
 - ⏱ **Six built-in modes** — Time, Words, Quote, Code, Zen, and Custom-file
 - 💾 **Tracks your progress** — every session saved locally, with charts and a personal best
 - 🌍 **Runs everywhere** — Linux · macOS · Windows · WSL · Git Bash
@@ -61,6 +61,8 @@ typerush --quote             # one programming quote
 typerush --code rust         # a real Rust snippet
 typerush --zen               # zen mode — no timer, no pressure
 typerush --file my_text.txt  # type anything you want
+typerush --theme monokai     # try a different theme
+typerush --list-themes       # see all built-in themes
 ```
 
 ---
@@ -98,6 +100,24 @@ Full keymap: see [`docs/USAGE.md`](docs/USAGE.md).
 Every (non-zen) session is saved to `~/.typerush/stats.json`. The Stats screen
 shows your personal best, average accuracy, a trend sparkline, and your last
 10 runs.
+
+---
+
+## 🎨 Make it yours
+
+Drop a [`config.toml`](config.example.toml) into `~/.typerush/` to pick a
+theme, set your default mode, or override individual colors:
+
+```toml
+theme = "monokai"
+
+[defaults]
+mode = "time"
+time_seconds = 30
+```
+
+See [`docs/USAGE.md`](docs/USAGE.md#configuration--typerushconfigtoml) for
+the full reference.
 
 ---
 

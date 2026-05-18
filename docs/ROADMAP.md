@@ -47,6 +47,18 @@ KEY:  ✅ done    🚧 in progress    🔲 planned    💡 idea
 
 ---
 
+## ✅ Shipped (v0.2 — Customization)
+
+- ✅ `~/.typerush/config.toml` for themes and defaults
+- ✅ Named-color + hex (`#RRGGBB`) theme support
+- ✅ Default word count / time / mode picked from config
+- ✅ Light theme
+- ✅ Built-in themes: `dark`, `light`, `monokai`, `dracula`
+- ✅ Per-slot color overrides on top of any built-in theme
+- ✅ `--theme <name>` CLI override + `--list-themes` discovery flag
+
+---
+
 ## 🚧 In progress
 
 - 🚧 Pre-built binary releases on GitHub
@@ -55,12 +67,6 @@ KEY:  ✅ done    🚧 in progress    🔲 planned    💡 idea
 ---
 
 ## 🔲 Planned
-
-### v0.2 — Customization
-- 🔲 `~/.typerush/config.toml` for themes and defaults
-- 🔲 Named-color + hex (`#RRGGBB`) theme support
-- 🔲 Default word count / time picked from config
-- 🔲 Light theme
 
 ### v0.3 — Smarter stats
 - 🔲 Per-key accuracy heatmap (find your problem keys)

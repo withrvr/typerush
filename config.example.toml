@@ -1,0 +1,47 @@
+# TypeRush — example configuration file
+#
+# Copy this file to `~/.typerush/config.toml` and edit to taste.
+# TypeRush works fine without a config file — every setting below is optional.
+#
+# Precedence: CLI flags > this file > built-in defaults.
+
+# -----------------------------------------------------------------------------
+# Theme — pick one of the built-in palettes by name.
+# Available names: dark, light, monokai, dracula
+# Run `typerush --list-themes` to see what's currently shipped.
+# -----------------------------------------------------------------------------
+theme = "monokai"
+
+# -----------------------------------------------------------------------------
+# Defaults — pre-selects a menu row and sets the initial mode when no CLI flag
+# is given. CLI flags (--time, --words, --quote, --code, --zen) always win.
+# -----------------------------------------------------------------------------
+[defaults]
+# Which menu row to pre-select: "time" | "words" | "quote" | "code" | "zen"
+mode = "time"
+# Used when mode = "time". Standard menu rows: 15 / 30 / 60 / 120.
+time_seconds = 15
+# Used when mode = "words". Standard menu rows: 10 / 25 / 50 / 100.
+word_count = 25
+# Used when mode = "code". One of: rust | python | js
+code_lang = "rust"
+
+# -----------------------------------------------------------------------------
+# Color overrides — applied ON TOP of the chosen theme.
+# Any slot omitted here keeps the theme's value.
+# Values may be:
+#   - a hex string like "#A6E22E"
+#   - one of the 16 ANSI names: black, red, green, yellow, blue, magenta,
+#     cyan, gray, dark_gray, light_red, light_green, light_yellow,
+#     light_blue, light_magenta, light_cyan, white
+# -----------------------------------------------------------------------------
+# [colors]
+# accent    = "#66D9EF"   # cursor, gauge, banner, time, titles
+# secondary = "#E6DB74"   # WPM number, section titles
+# correct   = "#A6E22E"   # correctly-typed characters + accuracy %
+# incorrect = "#F92672"   # wrongly-typed characters
+# pending   = "#75715E"   # untyped characters + muted labels/footers
+# extra     = "#FD971F"   # surplus characters past end of word
+# mode_tag  = "#AE81FF"   # [mode] badge in the header
+# error     = "#F92672"   # error modal border
+# neutral   = "#F8F8F2"   # emphasized neutral text (char totals)
