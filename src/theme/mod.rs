@@ -41,6 +41,12 @@ pub struct ThemePalette {
     /// Maps to the terminal's natural foreground on each theme (white on dark,
     /// near-black on light) so it stays readable on every background.
     pub neutral: Color,
+    /// Whole-screen background fill. Set to `Color::Reset` to leave the
+    /// terminal's native background alone (used by the `dark` theme so it
+    /// behaves identically to v0.1). Other themes paint their canonical
+    /// background so the theme looks the same regardless of which terminal
+    /// the user is on.
+    pub background: Color,
 }
 
 impl ThemePalette {
@@ -61,6 +67,7 @@ impl ThemePalette {
                 "mode_tag" => self.mode_tag = *color,
                 "error" => self.error = *color,
                 "neutral" => self.neutral = *color,
+                "background" => self.background = *color,
                 _ => {}
             }
         }

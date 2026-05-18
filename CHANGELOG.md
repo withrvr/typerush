@@ -21,9 +21,13 @@ _No unreleased changes yet._
   `config.example.toml` and `docs/USAGE.md` for the full schema.
 - **Built-in themes**: `dark` (the existing look, still the default), `light`,
   `monokai`, `dracula`. Pick one with `theme = "monokai"` in the config.
-- **Per-slot color overrides** on top of any built-in theme. Nine themable
+  Each theme paints its own canonical background — light is genuinely light
+  even on a dark terminal, monokai and dracula look like the real schemes
+  regardless of host terminal. Dark uses `Color::Reset` so the user's
+  terminal background still shines through.
+- **Per-slot color overrides** on top of any built-in theme. Ten themable
   slots (`accent`, `secondary`, `correct`, `incorrect`, `pending`, `extra`,
-  `mode_tag`, `error`, `neutral`) cover every UI element.
+  `mode_tag`, `error`, `neutral`, `background`) cover every UI element.
 - **Color parser** for `#RRGGBB` hex strings and the 16 ANSI color names
   (case-insensitive, `_` / `-` separators tolerated).
 - **`--theme <name>` CLI flag** for one-shot overrides. Wins over the config.

@@ -36,12 +36,14 @@ code_lang = "rust"
 #     light_blue, light_magenta, light_cyan, white
 # -----------------------------------------------------------------------------
 # [colors]
-# accent    = "#66D9EF"   # cursor, gauge, banner, time, titles
-# secondary = "#E6DB74"   # WPM number, section titles
-# correct   = "#A6E22E"   # correctly-typed characters + accuracy %
-# incorrect = "#F92672"   # wrongly-typed characters
-# pending   = "#75715E"   # untyped characters + muted labels/footers
-# extra     = "#FD971F"   # surplus characters past end of word
-# mode_tag  = "#AE81FF"   # [mode] badge in the header
-# error     = "#F92672"   # error modal border
-# neutral   = "#F8F8F2"   # emphasized neutral text (char totals)
+# accent     = "#66D9EF"   # cursor, gauge, banner, time, titles
+# secondary  = "#E6DB74"   # WPM number, section titles
+# correct    = "#A6E22E"   # correctly-typed characters + accuracy %
+# incorrect  = "#F92672"   # wrongly-typed characters
+# pending    = "#75715E"   # untyped characters + muted labels/footers
+# extra      = "#FD971F"   # surplus characters past end of word
+# mode_tag   = "#AE81FF"   # [mode] badge in the header
+# error      = "#F92672"   # error modal border
+# neutral    = "#F8F8F2"   # emphasized neutral text (char totals)
+# background = "#272822"   # full-screen background fill
+#                          # set to "reset" to use the terminal's native bg

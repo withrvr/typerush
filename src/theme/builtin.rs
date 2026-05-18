@@ -10,6 +10,10 @@ use super::ThemePalette;
 
 /// The original TypeRush look — cyan/green/yellow on a black terminal.
 /// This is the default when no `theme = ...` is set in the config.
+///
+/// `background = Color::Reset` keeps the user's terminal background untouched,
+/// so anyone who picks "dark" on e.g. a solarized-dark terminal still gets
+/// their terminal's chrome — no surprise color change.
 pub const DARK: ThemePalette = ThemePalette {
     accent: Color::Cyan,
     secondary: Color::Yellow,
@@ -20,22 +24,26 @@ pub const DARK: ThemePalette = ThemePalette {
     mode_tag: Color::Magenta,
     error: Color::Red,
     neutral: Color::White,
+    background: Color::Reset,
 };
 
 /// Softer palette intended for terminals with a light background.
+/// Forces an off-white background so the theme actually feels "light" even
+/// when the user's terminal itself is dark.
 pub const LIGHT: ThemePalette = ThemePalette {
     accent: Color::Rgb(0x01, 0x84, 0xBC),    // deep cyan
     secondary: Color::Rgb(0xC1, 0x84, 0x01), // amber
     correct: Color::Rgb(0x50, 0xA1, 0x4F),   // muted green
     incorrect: Color::Rgb(0xE4, 0x56, 0x49), // muted red
-    pending: Color::Rgb(0xA0, 0xA1, 0xA7),   // light gray
+    pending: Color::Rgb(0x80, 0x80, 0x88),   // medium gray — readable on white
     extra: Color::Rgb(0xE4, 0x56, 0x49),
     mode_tag: Color::Rgb(0xA6, 0x26, 0xA4), // purple
     error: Color::Rgb(0xCA, 0x12, 0x43),
     neutral: Color::Rgb(0x38, 0x3A, 0x42), // near-black for light bg
+    background: Color::Rgb(0xFA, 0xFA, 0xFA), // off-white
 };
 
-/// Classic Monokai — pink/green/yellow on a warm dark backdrop.
+/// Classic Monokai — pink/green/yellow on the canonical warm dark backdrop.
 pub const MONOKAI: ThemePalette = ThemePalette {
     accent: Color::Rgb(0x66, 0xD9, 0xEF),    // monokai cyan
     secondary: Color::Rgb(0xE6, 0xDB, 0x74), // monokai yellow
@@ -46,9 +54,10 @@ pub const MONOKAI: ThemePalette = ThemePalette {
     mode_tag: Color::Rgb(0xAE, 0x81, 0xFF),  // purple
     error: Color::Rgb(0xF9, 0x26, 0x72),
     neutral: Color::Rgb(0xF8, 0xF8, 0xF2), // monokai foreground
+    background: Color::Rgb(0x27, 0x28, 0x22), // canonical monokai background
 };
 
-/// Dracula — purple/pink/cyan on `#282a36`.
+/// Dracula — purple/pink/cyan on the canonical `#282a36` background.
 pub const DRACULA: ThemePalette = ThemePalette {
     accent: Color::Rgb(0x8B, 0xE9, 0xFD),    // dracula cyan
     secondary: Color::Rgb(0xF1, 0xFA, 0x8C), // dracula yellow
@@ -59,6 +68,7 @@ pub const DRACULA: ThemePalette = ThemePalette {
     mode_tag: Color::Rgb(0xFF, 0x79, 0xC6),  // dracula pink
     error: Color::Rgb(0xFF, 0x55, 0x55),
     neutral: Color::Rgb(0xF8, 0xF8, 0xF2), // dracula foreground
+    background: Color::Rgb(0x28, 0x2A, 0x36), // canonical dracula background
 };
 
 /// `(name, palette)` for every built-in theme.
@@ -116,5 +126,21 @@ mod tests {
     fn default_palette_is_dark() {
         let default_palette: ThemePalette = ThemePalette::default();
         assert_eq!(default_palette, DARK);
+    }
+
+    /// Dark theme must not paint a background — the user's terminal bg shines
+    /// through, preserving the v0.1 look on every terminal.
+    #[test]
+    fn dark_background_is_reset() {
+        assert_eq!(DARK.background, Color::Reset);
+    }
+
+    /// Light/monokai/dracula must paint their own background so the theme
+    /// looks the same regardless of the host terminal.
+    #[test]
+    fn non_dark_themes_paint_explicit_backgrounds() {
+        assert_ne!(LIGHT.background, Color::Reset);
+        assert_eq!(MONOKAI.background, Color::Rgb(0x27, 0x28, 0x22));
+        assert_eq!(DRACULA.background, Color::Rgb(0x28, 0x2A, 0x36));
     }
 }

@@ -150,9 +150,16 @@ accent = "#FF00FF"      # hex
 correct = "green"       # or ANSI name
 ```
 
-The 9 slots: `accent`, `secondary`, `correct`, `incorrect`, `pending`,
-`extra`, `mode_tag`, `error`, `neutral`. Each maps to a specific UI element —
-see `config.example.toml` for inline documentation.
+The 10 slots: `accent`, `secondary`, `correct`, `incorrect`, `pending`,
+`extra`, `mode_tag`, `error`, `neutral`, `background`. Each maps to a
+specific UI element — see `config.example.toml` for inline documentation.
+
+> **Background.** The `dark` theme uses `Color::Reset` for `background` so it
+> picks up whatever your terminal's native background is — same look as v0.1.
+> The `light`, `monokai`, and `dracula` themes paint their canonical
+> backgrounds so the theme looks the same regardless of terminal. Set
+> `background = "reset"` in `[colors]` if you'd rather one of those themes
+> use your terminal background too.
 
 ### Defaults
 

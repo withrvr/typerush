@@ -161,6 +161,7 @@ fn apply_color_overrides(
     try_push("mode_tag", &overrides.mode_tag, warnings);
     try_push("error", &overrides.error, warnings);
     try_push("neutral", &overrides.neutral, warnings);
+    try_push("background", &overrides.background, warnings);
     base.with_overrides(&parsed)
 }
 
