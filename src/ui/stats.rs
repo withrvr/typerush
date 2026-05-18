@@ -95,7 +95,11 @@ pub fn render(f: &mut Frame, app: &App) {
         .take(10)
         .map(|s| {
             Row::new(vec![
-                Cell::from(s.timestamp.format("%Y-%m-%d %H:%M").to_string()),
+                // Date column has no theme-specific role — give it neutral so
+                // it renders cleanly on both dark and light themes (without
+                // the explicit fg it falls through to terminal default).
+                Cell::from(s.timestamp.format("%Y-%m-%d %H:%M").to_string())
+                    .style(Style::default().fg(theme.neutral)),
                 Cell::from(s.mode.clone()).style(Style::default().fg(theme.mode_tag)),
                 Cell::from(format!("{:.1}", s.wpm)).style(Style::default().fg(theme.secondary)),
                 Cell::from(format!("{:.1}%", s.accuracy)).style(Style::default().fg(theme.correct)),

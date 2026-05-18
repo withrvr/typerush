@@ -54,12 +54,19 @@ pub fn render(f: &mut Frame, app: &App) {
         )),
     ];
 
-    let p = Paragraph::new(lines).wrap(Wrap { trim: false }).block(
-        Block::default()
-            .borders(Borders::ALL)
-            .border_style(Style::default().fg(theme.accent))
-            .title(" help "),
-    );
+    let p = Paragraph::new(lines)
+        // Plain Line::from(string) entries inherit this fg — otherwise they
+        // render with terminal default which is invisible on the light theme.
+        // Explicitly-styled spans (titles, subtitles, dim hints) keep their
+        // own colors because Span style overrides Paragraph style.
+        .style(Style::default().fg(theme.neutral))
+        .wrap(Wrap { trim: false })
+        .block(
+            Block::default()
+                .borders(Borders::ALL)
+                .border_style(Style::default().fg(theme.accent))
+                .title(" help "),
+        );
     f.render_widget(p, area);
 }
 

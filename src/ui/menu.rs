@@ -57,6 +57,11 @@ pub fn render(f: &mut Frame, app: &App) {
         .map(|m| ListItem::new(Line::from(m.label)))
         .collect();
     let list = List::new(items)
+        // Unselected items inherit this fg. Without it, ratatui leaves cells
+        // with fg=Reset and the terminal renders its default fg — which is
+        // usually white on a dark terminal, invisible on the light theme's
+        // white background.
+        .style(Style::default().fg(app.theme.neutral))
         .block(
             Block::default().borders(Borders::ALL).title(Span::styled(
                 " select mode ",

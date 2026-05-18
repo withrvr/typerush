@@ -93,6 +93,13 @@ fn render_header(f: &mut Frame, app: &App, area: Rect) {
 /// Quote, code, zen and custom modes don't show a bar.
 fn render_progress(f: &mut Frame, app: &App, area: Rect) {
     let gauge_color = app.theme.accent;
+    // Gauge label sits in the middle of the bar, often straddling the
+    // boundary between the filled (bg = accent) and unfilled (bg = theme bg)
+    // portions. `secondary + BOLD` gives high contrast on both halves for
+    // every built-in theme without needing a separate "on-accent" slot.
+    let label_style = Style::default()
+        .fg(app.theme.secondary)
+        .add_modifier(Modifier::BOLD);
     if let Some((done, total)) = app.progress() {
         let ratio = if total == 0 {
             0.0
@@ -103,7 +110,7 @@ fn render_progress(f: &mut Frame, app: &App, area: Rect) {
             .block(Block::default())
             .gauge_style(Style::default().fg(gauge_color))
             .ratio(ratio.min(1.0))
-            .label(format!("{} / {}", done, total));
+            .label(Span::styled(format!("{} / {}", done, total), label_style));
         f.render_widget(gauge, area);
     } else if let Mode::Time(total) = app.mode {
         let elapsed = app.elapsed().as_secs_f64();
@@ -112,7 +119,10 @@ fn render_progress(f: &mut Frame, app: &App, area: Rect) {
             .block(Block::default())
             .gauge_style(Style::default().fg(gauge_color))
             .ratio(ratio)
-            .label(format!("{:.0}s / {}s", elapsed, total));
+            .label(Span::styled(
+                format!("{:.0}s / {}s", elapsed, total),
+                label_style,
+            ));
         f.render_widget(gauge, area);
     }
 }
