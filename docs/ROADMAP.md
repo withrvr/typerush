@@ -88,6 +88,9 @@ KEY:  ✅ done    🚧 in progress    🔲 planned    💡 idea
 - 🔲 Replay a recent session word-for-word
 - 🔲 Export stats as CSV
 - 🔲 Daily challenge (deterministic seed-of-the-day)
+- 🔲 `typerush config get/set/show/reset/path` CLI subcommands (edit `~/.typerush/config.toml` without opening it)
+- 🔲 In-app Settings screen — theme picker, default mode picker, reset-to-defaults
+- 🔲 `typerush --init-config` writes a starter `config.toml` to `~/.typerush/`
 
 ---
 
