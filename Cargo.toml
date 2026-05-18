@@ -9,6 +9,13 @@ keywords = ["typing", "terminal", "tui", "wpm"]
 categories = ["command-line-utilities", "games"]
 authors = ["Raghav Rathi", "withrvr"]
 readme = "README.md"
+exclude = [
+    "assets/",
+    ".github/",
+    "*.mp4",
+    "*.gif",
+    "*.tape",
+]
 
 [dependencies]
 ratatui = "0.29"

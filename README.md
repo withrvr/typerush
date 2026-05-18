@@ -2,6 +2,10 @@
 
 **Type faster. Right in your terminal.**
 
+[![Crates.io](https://img.shields.io/crates/v/typerush)](https://crates.io/crates/typerush)
+[![License: MIT](https://img.shields.io/badge/license-MIT-blue)](LICENSE)
+[![Build](https://img.shields.io/github/actions/workflow/status/withrvr/typerush/release.yml?label=build)](https://github.com/withrvr/typerush/actions)
+
 ```
 ████████ ██    ██ ██████  ███████ ██████  ██    ██ ███████ ██   ██
    ██     ██  ██  ██   ██ ██      ██   ██ ██    ██ ██      ██   ██
@@ -9,6 +13,10 @@
    ██       ██    ██      ██      ██   ██ ██    ██      ██ ██   ██
    ██       ██    ██      ███████ ██   ██  ██████  ███████ ██   ██
 ```
+
+## 👀 Preview
+
+![TypeRush demo](https://raw.githubusercontent.com/withrvr/typerush/main/assets/demo.gif)
 
 TypeRush is a beautiful, fast typing-speed trainer that runs **entirely in your terminal**.
 No browser. No internet. No installer. Just one tiny binary, ready in a single command.

@@ -1,6 +1,6 @@
 name: Release
 
-# Triggered when a tag like v0.1.0 is pushed.
+# Triggered when a tag like v0.1.1 is pushed.
 # Builds release binaries for Linux/macOS/Windows and uploads them to a GitHub Release
 # whose body is auto-generated from the merged PRs / commits since the previous tag.
 
@@ -92,21 +92,33 @@ jobs:
           path: dist
           merge-multiple: true
 
+      - name: Extract changelog section
+        id: changelog
+        run: |
+          VERSION="${{ github.ref_name }}"
+          VERSION_NO_V="${VERSION#v}"
+          NOTES=$(awk "/^## \[${VERSION_NO_V}\]/{found=1; next} found && /^## \[/{exit} found && /^---$/{exit} found{print}" CHANGELOG.md)
+          echo "notes<<EOF" >> $GITHUB_OUTPUT
+          echo "$NOTES" >> $GITHUB_OUTPUT
+          echo "EOF" >> $GITHUB_OUTPUT
+
       - name: Publish release
         uses: softprops/action-gh-release@v2
         with:
           name: TypeRush ${{ github.ref_name }}
           tag_name: ${{ github.ref_name }}
-          generate_release_notes: true
+          generate_release_notes: false
           body: |
-            Pre-built binaries are attached below. Pick the archive that matches your platform,
-            unzip / untar it, and put the `typerush` binary somewhere on your `$PATH`.
+            ${{ steps.changelog.outputs.notes }}
 
-            Or install via cargo:
+            ---
 
+            ## Install
+
+            **Via cargo:**
             ```
-            cargo install typerush --version ${{ github.ref_name }}
+            cargo install typerush
             ```
 
-            See [CHANGELOG.md](https://github.com/withrvr/typerush/blob/main/CHANGELOG.md) for the full notes.
+            **Pre-built binary:** download the archive for your platform below, unzip/untar, and put `typerush` on your `$PATH`.
           files: dist/*

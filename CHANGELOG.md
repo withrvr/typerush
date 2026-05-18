@@ -38,9 +38,10 @@ _No unreleased changes yet._
 - **`docs/DEVELOPMENT.md`** — practical local-dev workflow (running with
   CLI args, sandboxed config testing via `HOME` redirect, `cargo-watch`
   patterns for TUI apps, recommended two-terminal loop).
-- Test count grew from 4 to 43 — color parsing, config deserialization,
+- Test count grew from 4 to 48 — color parsing, config deserialization,
   theme resolution, override application, CLI precedence, menu-row
-  matching, render-level background paint, custom-mode auto-finish.
+  matching, render-level background paint, custom-mode auto-finish,
+  Ctrl+H/W/Backspace dispatch.
 
 ### Changed
 - Zen mode now desaturates to theme-aware `pending` / `neutral` colors instead
@@ -53,9 +54,6 @@ _No unreleased changes yet._
   All slots now land at ≥4.5:1 contrast against the `#FAFAFA` background.
 
 ### Fixed
-- Cursor no longer flickers / shifts the line horizontally at the end of a
-  word. The cursor is now steady and always reserves a fixed-width slot.
-  _(Carried over from the unreleased section of v0.1.)_
 - **Custom-file mode (`--file <path>`) now auto-finishes** when the user
   types the last word, matching the documented behavior in
   `docs/USAGE.md`. Previously the session sat waiting for `Esc`.
@@ -82,7 +80,7 @@ _No unreleased changes yet._
 
 ---
 
-## [0.1.0] — initial release
+## [0.1.1] — initial release
 
 ### Added
 - Cross-platform TUI built with `ratatui` + `crossterm`.
@@ -96,7 +94,22 @@ _No unreleased changes yet._
 - Floating `?` help overlay.
 - Unit tests for the matcher.
 - GitHub Actions CI: build + test + clippy on Linux, macOS, Windows.
+- `ARCHITECTURE.md`, `ROADMAP.md`, `CONTRIBUTING.md`, `CHANGELOG.md`.
+- Module-level (`//!`) and item-level (`///`) doc comments throughout the
+  codebase.
+- GitHub issue & pull-request templates.
+- Release workflow that builds binaries for Linux / macOS / Windows on every
+  `v*` tag.
+
+### Fixed
+- Cursor no longer flickers / shifts the line horizontally at the end of a
+  word. The cursor is now steady and always reserves a fixed-width slot.
+
+### Changed
+- README rewritten to be more approachable. Technical content moved into
+  dedicated docs.
+- Demo GIF uses absolute GitHub raw URL for correct display on crates.io.
 
 [Unreleased]: https://github.com/withrvr/typerush/compare/v0.2.0...HEAD
-[0.2.0]: https://github.com/withrvr/typerush/compare/v0.1.0...v0.2.0
-[0.1.0]: https://github.com/withrvr/typerush/releases/tag/v0.1.0
+[0.2.0]: https://github.com/withrvr/typerush/compare/v0.1.1...v0.2.0
+[0.1.1]: https://github.com/withrvr/typerush/releases/tag/v0.1.1
