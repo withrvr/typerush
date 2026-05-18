@@ -43,6 +43,9 @@ _No unreleased changes yet._
 - Cursor no longer flickers / shifts the line horizontally at the end of a
   word. The cursor is now steady and always reserves a fixed-width slot.
   _(Carried over from the unreleased section of v0.1.)_
+- **Custom-file mode (`--file <path>`) now auto-finishes** when the user
+  types the last word, matching the documented behavior in
+  `docs/USAGE.md`. Previously the session sat waiting for `Esc`.
 
 ### Compatibility
 - Existing CLI flags (`--time`, `--words`, `--quote`, `--code`, `--zen`,

@@ -541,8 +541,9 @@ impl App {
                 return;
             }
         }
-        // Quote / code modes: stop when there's nothing left to type.
-        if matches!(self.mode, Mode::Quote | Mode::Code(_)) && self.current_word >= self.words.len()
+        // Quote / code / custom-file modes: stop when there's nothing left to type.
+        if matches!(self.mode, Mode::Quote | Mode::Code(_) | Mode::Custom)
+            && self.current_word >= self.words.len()
         {
             self.finish_game();
         }
@@ -604,5 +605,25 @@ mod tests {
         let menu = default_menu();
         let index = best_menu_match(&menu, DefaultMode::Zen);
         assert_eq!(menu[index].label, "Zen");
+    }
+
+    /// Regression: custom-file mode must auto-finish when the user completes
+    /// the last word. Previously it sat waiting for Esc, contradicting the
+    /// documented behavior in docs/USAGE.md.
+    #[test]
+    fn custom_mode_finishes_after_last_word() {
+        let palette = crate::theme::ThemePalette::default();
+        let mut app = App::new(None, palette, DefaultMode::Time(15));
+        app.mode = Mode::Custom;
+        app.words = vec![Word::new("hi".into()), Word::new("bye".into())];
+        app.screen = Screen::Typing;
+
+        // Type "hi" + space + "bye" + space.
+        for ch in "hi bye ".chars() {
+            app.handle_char(ch);
+        }
+
+        assert_eq!(app.screen, Screen::Results);
+        assert!(app.ended_at.is_some());
     }
 }
