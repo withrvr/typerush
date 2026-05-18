@@ -173,11 +173,9 @@ menu row, optionally add a CLI flag.
 
 ## Adding a new theme
 
-(Once theming lands in v0.2.) Each theme is a `Theme` struct in
-`src/config.rs` mapping the four character states (Correct / Incorrect /
-Pending / Extra) to ratatui colors. The plan is to read these from
-`~/.typerush/config.toml`. Until then, hard-coded constants live in
-`src/ui/typing.rs::style_for_char`.
+Drop a `ThemePalette` constant into `src/theme/builtin.rs` and append it to
+`ALL`. The recipe lives in `docs/ARCHITECTURE.md` — see "When you add a new
+theme".
 
 ---
 

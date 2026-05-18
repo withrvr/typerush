@@ -35,13 +35,22 @@ _No unreleased changes yet._
   useful for shell-completion scripts.
 - **Default mode + per-mode defaults** in the config — pre-selects the
   matching menu row at startup.
-- 25 new unit tests covering color parsing, config deserialization, theme
-  resolution, override application, and CLI precedence.
+- **`docs/DEVELOPMENT.md`** — practical local-dev workflow (running with
+  CLI args, sandboxed config testing via `HOME` redirect, `cargo-watch`
+  patterns for TUI apps, recommended two-terminal loop).
+- Test count grew from 4 to 43 — color parsing, config deserialization,
+  theme resolution, override application, CLI precedence, menu-row
+  matching, render-level background paint, custom-mode auto-finish.
 
 ### Changed
 - Zen mode now desaturates to theme-aware `pending` / `neutral` colors instead
   of hardcoded grays, keeping the screen readable on light backgrounds.
 - Help overlay lists the config file path alongside the stats file path.
+- Menu screen gained 2 rows of top padding so the TYPERUSH banner no longer
+  hugs the terminal's title bar / tab strip.
+- Light theme foreground palette darkened across every slot — the previous
+  values were carried over from the dark theme and washed out on white.
+  All slots now land at ≥4.5:1 contrast against the `#FAFAFA` background.
 
 ### Fixed
 - Cursor no longer flickers / shifts the line horizontally at the end of a
@@ -50,6 +59,15 @@ _No unreleased changes yet._
 - **Custom-file mode (`--file <path>`) now auto-finishes** when the user
   types the last word, matching the documented behavior in
   `docs/USAGE.md`. Previously the session sat waiting for `Esc`.
+- **Progress-gauge timer label** is now explicitly styled (`secondary` +
+  bold) instead of falling through to whatever default ratatui picked.
+  Readable on both the filled and unfilled portions of the bar across
+  every built-in theme.
+- **Plain (unstyled) text on the light theme** — menu list items, the
+  stats table's date column, and plain help-overlay lines — now render
+  in `theme.neutral` rather than terminal-default foreground. Previously
+  they were near-white on white when running the light theme on a dark
+  terminal.
 
 ### Compatibility
 - Existing CLI flags (`--time`, `--words`, `--quote`, `--code`, `--zen`,

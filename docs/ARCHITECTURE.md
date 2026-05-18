@@ -88,7 +88,7 @@ src/
 │
 ├── app.rs               The App state machine. All fields, all transitions,
 │                        WPM / accuracy math, mode-switching, time/word
-│                        completion logic.
+│                        completion logic. Holds the active ThemePalette.
 │
 ├── game.rs              Pure function: get_char_states(target, typed) — the
 │                        character-by-character matcher that drives all
@@ -98,8 +98,25 @@ src/
 │                        ~/.typerush/stats.json. Personal best & average
 │                        accuracy helpers.
 │
+├── theme/
+│   ├── mod.rs           ThemePalette struct (10 themable color slots)
+│   │                    and per-slot override application.
+│   ├── builtin.rs       The four built-in palettes (dark, light, monokai,
+│   │                    dracula). Adding a new theme = one row appended
+│   │                    to `ALL`.
+│   └── color.rs         Color parser for #RRGGBB hex strings and the 16
+│                        ANSI color names.
+│
+├── config/
+│   ├── mod.rs           Config / Defaults / Colors structs read from
+│   │                    ~/.typerush/config.toml via serde.
+│   └── load.rs          load_or_default() — disk read + flattening into a
+│                        ResolvedConfig. Never errors; bad files surface as
+│                        a single human-readable warning.
+│
 ├── ui/
-│   ├── mod.rs           render() dispatcher (matches on app.screen)
+│   ├── mod.rs           render() dispatcher. Paints theme.background on
+│   │                    every cell before any screen renders.
 │   ├── menu.rs          Main menu with the ASCII banner
 │   ├── typing.rs        The typing screen: header, progress gauge, words
 │   ├── results.rs       Post-session screen with PB delta + sparkline
@@ -124,13 +141,31 @@ what you see.
 ### Steady (no-blink) cursor
 Earlier versions blinked a phantom `▏` character past the end of the typed
 word. That toggled the rendered word width, shifting the whole line left/right
-every 500ms. The current design renders a **steady** cursor:
+every 500ms. The current design renders a **steady** cursor as an
+underlined character in `theme.accent`:
 
-- on a character → REVERSED style (block fill)
-- past the last character → an underlined trailing space (plain bar)
+- on a character → the character itself, restyled with the cursor style
+- past the last character → an underlined trailing space, same style
 
-The trailing space is always part of the layout, so toggling its style never
+Both cases use the same `fg = theme.accent, modifier = UNDERLINED`. The
+trailing space is always part of the layout, so toggling its style never
 changes width.
+
+### Theme-aware background paint
+`ui::render` calls `frame.buffer_mut().set_style(area, ...)` with the
+active theme's `background` color before any screen renders. This is what
+makes the `light` theme actually look light on a dark terminal, and what
+gives `monokai` / `dracula` their canonical backgrounds regardless of
+terminal config. The `dark` theme uses `Color::Reset` so the user's
+terminal background shines through exactly as it did in v0.1 — there is
+no forced override.
+
+Widgets that include plain `Line::from(string)` or `Cell::from(string)`
+entries (no explicit fg) need a widget-level `.style(fg=theme.neutral)`
+so they don't fall through to the terminal's default foreground — which
+becomes invisible the moment the light theme paints a white background
+over a dark terminal. The menu list, stats date column, and help overlay
+all follow this pattern.
 
 ### Stats persistence
 JSON, flat array, no schema. The file is small enough (one session ≈ 200B)
@@ -169,3 +204,19 @@ crate. We don't directly use any platform-specific code, so the binary is a
 5. If it has a unique completion condition, handle it in `submit_word()` /
    `tick()`.
 6. (Optional) Add a CLI flag in `main.rs::Cli`.
+
+---
+
+## When you add a new theme
+
+1. Declare a `pub const` of type `ThemePalette` in `src/theme/builtin.rs`.
+   Fill every slot (`accent`, `secondary`, `correct`, `incorrect`, `pending`,
+   `extra`, `mode_tag`, `error`, `neutral`, `background`). For light-background
+   themes, pick colors at ≥4.5:1 contrast against the bg.
+2. Append `("name", YOUR_THEME)` to `ALL` in the same file.
+3. That's it. The CLI loader (`--theme <name>`), the config loader (`theme =
+   "..."`), and `--list-themes` all iterate `ALL` — no other wiring needed.
+
+If you want the theme to look identical regardless of terminal, set
+`background` to a concrete `Color::Rgb(...)`. If you'd rather it inherit
+the user's terminal background, set `background = Color::Reset`.
