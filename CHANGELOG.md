@@ -68,6 +68,11 @@ _No unreleased changes yet._
   in `theme.neutral` rather than terminal-default foreground. Previously
   they were near-white on white when running the light theme on a dark
   terminal.
+- **Ctrl+Backspace now actually deletes the current word.** Most terminals
+  send `Ctrl+Backspace` as a literal `^H` byte — crossterm reports it as
+  `Char('h') + CTRL`, not as `Backspace + CTRL` — so the old keymap was
+  silently dropping it into the "ignore control chords" branch. The
+  keymap now also recognises `Ctrl+W` (Unix "kill word" muscle memory).
 
 ### Compatibility
 - Existing CLI flags (`--time`, `--words`, `--quote`, `--code`, `--zen`,

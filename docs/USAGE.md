@@ -68,6 +68,8 @@ You can also pass `--file` alone to use the file inside the menu's "Custom" entr
 | `Space`          | Submit the current word, advance to the next    |
 | `Backspace`      | Delete the previous character                   |
 | `Ctrl+Backspace` | Delete the entire current word                  |
+| `Ctrl+W`         | Same — delete the entire current word            |
+| `Ctrl+H`         | Same — most terminals send this when you press `Ctrl+Backspace` |
 | `Ctrl+R`         | Restart the same mode with a new word list      |
 | `Esc`            | End the session and go to the results screen    |
 

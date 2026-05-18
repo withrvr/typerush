@@ -315,7 +315,7 @@ fn handle_menu_key(app: &mut App, code: KeyCode, _mods: KeyModifiers) {
 
 /// Keymap for the typing screen. Note that '?' is **not** a help shortcut
 /// here — the user may legitimately need to type it.
-fn handle_typing_key(app: &mut App, code: KeyCode, mods: KeyModifiers) {
+pub(crate) fn handle_typing_key(app: &mut App, code: KeyCode, mods: KeyModifiers) {
     match code {
         KeyCode::Esc => {
             app.finish_game();
@@ -331,9 +331,18 @@ fn handle_typing_key(app: &mut App, code: KeyCode, mods: KeyModifiers) {
                 mods.contains(KeyModifiers::CONTROL) || mods.contains(KeyModifiers::ALT);
             app.handle_backspace(delete_whole_word);
         }
+        // Many terminals (notably Windows Terminal, iTerm2, most Linux
+        // emulators) send Ctrl+Backspace as a literal `^H` byte — crossterm
+        // surfaces this as `Char('h') + CTRL`, NOT as `Backspace + CTRL`,
+        // so the dedicated Backspace branch above never fires. Ctrl+W is
+        // the Unix convention for "kill word" and is included for the same
+        // reason — common muscle memory shouldn't fall on the floor.
+        KeyCode::Char('h') | KeyCode::Char('w') if mods.contains(KeyModifiers::CONTROL) => {
+            app.handle_backspace(true);
+        }
         KeyCode::Char(typed_char) => {
-            // Ignore control chords like Ctrl+A — we never want those to be
-            // counted as typed characters.
+            // Ignore other control chords like Ctrl+A — we never want those
+            // to be counted as typed characters.
             if mods.contains(KeyModifiers::CONTROL) {
                 return;
             }
@@ -395,4 +404,84 @@ fn save_current_session(app: &App) {
         timestamp: chrono::Local::now(),
     };
     let _ = storage::save_session(&record);
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::app::{Screen, Word};
+    use crate::config::load::DefaultMode;
+    use crate::theme::ThemePalette;
+
+    fn make_typing_app() -> App {
+        let mut app = App::new(None, ThemePalette::default(), DefaultMode::Time(15));
+        app.screen = Screen::Typing;
+        app.mode = Mode::Words(2);
+        app.words = vec![Word::new("hello".into()), Word::new("world".into())];
+        app
+    }
+
+    /// Regression: most terminals send Ctrl+Backspace as a literal ^H byte,
+    /// which crossterm reports as Char('h') + CTRL. Before this fix the
+    /// keymap dropped that into the "ignore control chords" branch and the
+    /// user saw nothing happen.
+    #[test]
+    fn ctrl_h_deletes_current_word() {
+        let mut app = make_typing_app();
+        for ch in "hel".chars() {
+            app.handle_char(ch);
+        }
+        assert_eq!(app.words[0].typed, "hel");
+
+        handle_typing_key(&mut app, KeyCode::Char('h'), KeyModifiers::CONTROL);
+        assert_eq!(app.words[0].typed, "");
+    }
+
+    /// Ctrl+W is the Unix convention for "kill word" — common muscle memory.
+    #[test]
+    fn ctrl_w_deletes_current_word() {
+        let mut app = make_typing_app();
+        for ch in "hel".chars() {
+            app.handle_char(ch);
+        }
+        handle_typing_key(&mut app, KeyCode::Char('w'), KeyModifiers::CONTROL);
+        assert_eq!(app.words[0].typed, "");
+    }
+
+    /// The original Backspace+CTRL path still works on terminals that DO
+    /// surface Ctrl+Backspace as a real Backspace keycode.
+    #[test]
+    fn ctrl_backspace_keycode_still_deletes_word() {
+        let mut app = make_typing_app();
+        for ch in "hel".chars() {
+            app.handle_char(ch);
+        }
+        handle_typing_key(&mut app, KeyCode::Backspace, KeyModifiers::CONTROL);
+        assert_eq!(app.words[0].typed, "");
+    }
+
+    /// Plain Backspace must still delete a single character — not a whole
+    /// word. Guards against accidentally widening the new Ctrl+H branch.
+    #[test]
+    fn plain_backspace_deletes_one_char() {
+        let mut app = make_typing_app();
+        for ch in "hel".chars() {
+            app.handle_char(ch);
+        }
+        handle_typing_key(&mut app, KeyCode::Backspace, KeyModifiers::NONE);
+        assert_eq!(app.words[0].typed, "he");
+    }
+
+    /// Other Ctrl-chords (Ctrl+A, Ctrl+Z, …) must still be ignored — not
+    /// counted as typed characters.
+    #[test]
+    fn other_ctrl_chords_are_ignored() {
+        let mut app = make_typing_app();
+        for ch in "hel".chars() {
+            app.handle_char(ch);
+        }
+        handle_typing_key(&mut app, KeyCode::Char('a'), KeyModifiers::CONTROL);
+        handle_typing_key(&mut app, KeyCode::Char('z'), KeyModifiers::CONTROL);
+        assert_eq!(app.words[0].typed, "hel");
+    }
 }
