@@ -49,3 +49,55 @@ pub fn render(frame: &mut Frame, app: &App) {
         help::render_error(frame, &app.theme, message);
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::config::load::DefaultMode;
+    use crate::theme::builtin;
+    use ratatui::backend::TestBackend;
+    use ratatui::Terminal;
+
+    /// Render the menu screen into a fake terminal and return the cell at
+    /// `(x, y)`. Far-corner cells aren't touched by any widget on the menu
+    /// screen, so they reflect the theme's background paint directly.
+    fn render_and_sample(palette: crate::theme::ThemePalette, x: u16, y: u16) -> (Color, Color) {
+        let app = App::new(None, palette, DefaultMode::Time(15));
+        let backend = TestBackend::new(80, 24);
+        let mut terminal = Terminal::new(backend).unwrap();
+        terminal.draw(|f| render(f, &app)).unwrap();
+        let buffer = terminal.backend().buffer();
+        let cell = &buffer[(x, y)];
+        (cell.fg, cell.bg)
+    }
+
+    /// v0.1 compatibility: the dark theme must NOT force any explicit bg.
+    /// `Color::Reset` lets the user's terminal background shine through —
+    /// regressing this would change the look on every terminal.
+    #[test]
+    fn dark_theme_leaves_background_as_reset() {
+        let (_fg, bg) = render_and_sample(builtin::DARK, 79, 23);
+        assert_eq!(bg, Color::Reset);
+    }
+
+    /// Non-default themes paint their canonical background on every cell.
+    /// Sampling a far-corner cell guarantees we're reading the painted bg
+    /// rather than something a widget happened to render there.
+    #[test]
+    fn monokai_theme_paints_canonical_background() {
+        let (_fg, bg) = render_and_sample(builtin::MONOKAI, 79, 23);
+        assert_eq!(bg, Color::Rgb(0x27, 0x28, 0x22));
+    }
+
+    #[test]
+    fn dracula_theme_paints_canonical_background() {
+        let (_fg, bg) = render_and_sample(builtin::DRACULA, 79, 23);
+        assert_eq!(bg, Color::Rgb(0x28, 0x2A, 0x36));
+    }
+
+    #[test]
+    fn light_theme_paints_off_white_background() {
+        let (_fg, bg) = render_and_sample(builtin::LIGHT, 79, 23);
+        assert_eq!(bg, Color::Rgb(0xFA, 0xFA, 0xFA));
+    }
+}
