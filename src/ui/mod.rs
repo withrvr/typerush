@@ -26,6 +26,6 @@ pub fn render(frame: &mut Frame, app: &App) {
     }
     // Error overlay sits on top of everything else when present.
     if let Some(message) = &app.error_message {
-        help::render_error(frame, message);
+        help::render_error(frame, &app.theme, message);
     }
 }

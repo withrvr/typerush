@@ -19,6 +19,7 @@ pub const DARK: ThemePalette = ThemePalette {
     extra: Color::Red,
     mode_tag: Color::Magenta,
     error: Color::Red,
+    neutral: Color::White,
 };
 
 /// Softer palette intended for terminals with a light background.
@@ -31,6 +32,7 @@ pub const LIGHT: ThemePalette = ThemePalette {
     extra: Color::Rgb(0xE4, 0x56, 0x49),
     mode_tag: Color::Rgb(0xA6, 0x26, 0xA4), // purple
     error: Color::Rgb(0xCA, 0x12, 0x43),
+    neutral: Color::Rgb(0x38, 0x3A, 0x42), // near-black for light bg
 };
 
 /// Classic Monokai — pink/green/yellow on a warm dark backdrop.
@@ -43,6 +45,7 @@ pub const MONOKAI: ThemePalette = ThemePalette {
     extra: Color::Rgb(0xFD, 0x97, 0x1F),     // orange
     mode_tag: Color::Rgb(0xAE, 0x81, 0xFF),  // purple
     error: Color::Rgb(0xF9, 0x26, 0x72),
+    neutral: Color::Rgb(0xF8, 0xF8, 0xF2), // monokai foreground
 };
 
 /// Dracula — purple/pink/cyan on `#282a36`.
@@ -55,6 +58,7 @@ pub const DRACULA: ThemePalette = ThemePalette {
     extra: Color::Rgb(0xFF, 0xB8, 0x6C),     // dracula orange
     mode_tag: Color::Rgb(0xFF, 0x79, 0xC6),  // dracula pink
     error: Color::Rgb(0xFF, 0x55, 0x55),
+    neutral: Color::Rgb(0xF8, 0xF8, 0xF2), // dracula foreground
 };
 
 /// `(name, palette)` for every built-in theme.

@@ -9,10 +9,10 @@ use ratatui::{
 
 use crate::{app::App, storage};
 
-/// Render the stats history screen. Doesn't take any state from `App` —
-/// everything is read from disk.
-pub fn render(f: &mut Frame, _app: &App) {
+/// Render the stats history screen.
+pub fn render(f: &mut Frame, app: &App) {
     let area = f.area();
+    let theme = &app.theme;
     let layout = Layout::vertical([
         Constraint::Length(2),
         Constraint::Length(5),
@@ -25,7 +25,7 @@ pub fn render(f: &mut Frame, _app: &App) {
     let title = Paragraph::new(Span::styled(
         "  ◆ stats history",
         Style::default()
-            .fg(Color::Cyan)
+            .fg(theme.accent)
             .add_modifier(Modifier::BOLD),
     ));
     f.render_widget(title, layout[0]);
@@ -38,35 +38,35 @@ pub fn render(f: &mut Frame, _app: &App) {
 
     let summary_lines = vec![
         Line::from(vec![
-            Span::styled("  best wpm     ", Style::default().fg(Color::DarkGray)),
+            Span::styled("  best wpm     ", Style::default().fg(theme.pending)),
             Span::styled(
                 format!("{:>6.1}", pb),
                 Style::default()
-                    .fg(Color::Yellow)
+                    .fg(theme.secondary)
                     .add_modifier(Modifier::BOLD),
             ),
             Span::raw("      "),
-            Span::styled("avg accuracy ", Style::default().fg(Color::DarkGray)),
+            Span::styled("avg accuracy ", Style::default().fg(theme.pending)),
             Span::styled(
                 format!("{:>5.1}%", avg_acc),
-                Style::default().fg(Color::Green),
+                Style::default().fg(theme.correct),
             ),
         ]),
         Line::from(vec![
-            Span::styled("  sessions    ", Style::default().fg(Color::DarkGray)),
-            Span::styled(format!("{:>6}", total), Style::default().fg(Color::White)),
+            Span::styled("  sessions    ", Style::default().fg(theme.pending)),
+            Span::styled(format!("{:>6}", total), Style::default().fg(theme.neutral)),
             Span::raw("      "),
-            Span::styled("last wpm     ", Style::default().fg(Color::DarkGray)),
+            Span::styled("last wpm     ", Style::default().fg(theme.pending)),
             Span::styled(
                 format!("{:>5.1}", last_wpm),
-                Style::default().fg(Color::Cyan),
+                Style::default().fg(theme.accent),
             ),
         ]),
     ];
     let summary = Paragraph::new(summary_lines).block(
         Block::default()
             .borders(Borders::ALL)
-            .border_style(Style::default().fg(Color::DarkGray))
+            .border_style(Style::default().fg(theme.pending))
             .title(" summary "),
     );
     f.render_widget(summary, layout[1]);
@@ -82,11 +82,11 @@ pub fn render(f: &mut Frame, _app: &App) {
         .block(
             Block::default()
                 .borders(Borders::ALL)
-                .border_style(Style::default().fg(Color::DarkGray))
+                .border_style(Style::default().fg(theme.pending))
                 .title(" wpm trend (last 20) "),
         )
         .data(&recent)
-        .style(Style::default().fg(Color::Cyan));
+        .style(Style::default().fg(theme.accent));
     f.render_widget(spark, layout[2]);
 
     let recent_rows = sessions
@@ -96,18 +96,18 @@ pub fn render(f: &mut Frame, _app: &App) {
         .map(|s| {
             Row::new(vec![
                 Cell::from(s.timestamp.format("%Y-%m-%d %H:%M").to_string()),
-                Cell::from(s.mode.clone()).style(Style::default().fg(Color::Magenta)),
-                Cell::from(format!("{:.1}", s.wpm)).style(Style::default().fg(Color::Yellow)),
-                Cell::from(format!("{:.1}%", s.accuracy)).style(Style::default().fg(Color::Green)),
+                Cell::from(s.mode.clone()).style(Style::default().fg(theme.mode_tag)),
+                Cell::from(format!("{:.1}", s.wpm)).style(Style::default().fg(theme.secondary)),
+                Cell::from(format!("{:.1}%", s.accuracy)).style(Style::default().fg(theme.correct)),
                 Cell::from(format!("{:.1}s", s.duration_secs))
-                    .style(Style::default().fg(Color::Cyan)),
+                    .style(Style::default().fg(theme.accent)),
             ])
         })
         .collect::<Vec<_>>();
 
     let header = Row::new(vec!["Date", "Mode", "WPM", "Acc", "Time"]).style(
         Style::default()
-            .fg(Color::DarkGray)
+            .fg(theme.pending)
             .add_modifier(Modifier::BOLD),
     );
 
@@ -125,12 +125,12 @@ pub fn render(f: &mut Frame, _app: &App) {
     .block(
         Block::default()
             .borders(Borders::ALL)
-            .border_style(Style::default().fg(Color::DarkGray))
+            .border_style(Style::default().fg(theme.pending))
             .title(" recent sessions "),
     );
     f.render_widget(table, layout[3]);
 
     let footer =
-        Paragraph::new("  m / esc menu  ·  q quit").style(Style::default().fg(Color::DarkGray));
+        Paragraph::new("  m / esc menu  ·  q quit").style(Style::default().fg(theme.pending));
     f.render_widget(footer, layout[4]);
 }

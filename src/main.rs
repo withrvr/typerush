@@ -37,6 +37,7 @@ use ratatui::{backend::CrosstermBackend, Terminal};
 
 use crate::app::{App, MenuAction, Mode, Screen};
 use crate::storage::SessionRecord;
+use crate::theme::builtin;
 
 /// Command-line interface. Run with no args to open the interactive menu; pass
 /// any of the mode flags to skip the menu and jump straight into a session.
@@ -71,15 +72,36 @@ struct Cli {
     /// Skip the menu and start zen mode.
     #[arg(long)]
     zen: bool,
+
+    /// One-shot theme override: dark | light | monokai | dracula.
+    /// Takes precedence over the `theme` setting in `~/.typerush/config.toml`.
+    #[arg(long)]
+    theme: Option<String>,
+
+    /// Print available built-in theme names and exit.
+    #[arg(long)]
+    list_themes: bool,
 }
 
 fn main() -> Result<()> {
     let cli = Cli::parse();
+    if cli.list_themes {
+        print_themes_and_exit();
+    }
     install_panic_hook();
     let mut terminal = setup_terminal()?;
     let run_result = run_app(&mut terminal, cli);
     restore_terminal(&mut terminal)?;
     run_result
+}
+
+/// Print every built-in theme name on its own line and exit with status 0.
+/// Intended for shell completion / discoverability.
+fn print_themes_and_exit() -> ! {
+    for theme_name in builtin::names() {
+        println!("{}", theme_name);
+    }
+    std::process::exit(0);
 }
 
 /// Type alias to keep function signatures readable.
@@ -126,7 +148,14 @@ fn install_panic_hook() {
 /// enough that we're not busy-looping. `event::poll` blocks for the remainder
 /// of the tick interval so keystrokes are still handled instantly.
 fn run_app(terminal: &mut Tui, cli: Cli) -> Result<()> {
-    let mut app = App::new(cli.file.clone());
+    let (resolved, warnings) = config::load::load_or_default(cli.theme.as_deref());
+    let mut app = App::new(cli.file.clone(), resolved.palette, resolved.default_mode);
+    // Surface the first config warning (if any) via the existing error modal.
+    // We only show one — chaining them would force the user to dismiss N
+    // popups before reaching the menu.
+    if let Some(first_warning) = warnings.into_iter().next() {
+        app.error_message = Some(first_warning);
+    }
     apply_cli_autostart(&mut app, &cli)?;
 
     let tick_rate = Duration::from_millis(100);

@@ -18,43 +18,34 @@ pub fn render(f: &mut Frame, app: &App) {
     ])
     .split(area);
 
-    // Banner
+    let banner_style = Style::default()
+        .fg(app.theme.accent)
+        .add_modifier(Modifier::BOLD);
     let banner_text = vec![
         Line::from(Span::styled(
             "  ████████ ██    ██ ██████  ███████ ██████  ██    ██ ███████ ██   ██ ",
-            Style::default()
-                .fg(Color::Cyan)
-                .add_modifier(Modifier::BOLD),
+            banner_style,
         )),
         Line::from(Span::styled(
             "     ██     ██  ██  ██   ██ ██      ██   ██ ██    ██ ██      ██   ██ ",
-            Style::default()
-                .fg(Color::Cyan)
-                .add_modifier(Modifier::BOLD),
+            banner_style,
         )),
         Line::from(Span::styled(
             "     ██      ████   ██████  █████   ██████  ██    ██ ███████ ███████ ",
-            Style::default()
-                .fg(Color::Cyan)
-                .add_modifier(Modifier::BOLD),
+            banner_style,
         )),
         Line::from(Span::styled(
             "     ██       ██    ██      ██      ██   ██ ██    ██      ██ ██   ██ ",
-            Style::default()
-                .fg(Color::Cyan)
-                .add_modifier(Modifier::BOLD),
+            banner_style,
         )),
         Line::from(Span::styled(
             "     ██       ██    ██      ███████ ██   ██  ██████  ███████ ██   ██ ",
-            Style::default()
-                .fg(Color::Cyan)
-                .add_modifier(Modifier::BOLD),
+            banner_style,
         )),
     ];
     let banner = Paragraph::new(banner_text).alignment(Alignment::Center);
     f.render_widget(banner, layout[0]);
 
-    // Centered list
     let inner = centered_rect(60, 100, layout[1]);
     let items: Vec<ListItem> = app
         .menu
@@ -66,14 +57,14 @@ pub fn render(f: &mut Frame, app: &App) {
             Block::default().borders(Borders::ALL).title(Span::styled(
                 " select mode ",
                 Style::default()
-                    .fg(Color::Yellow)
+                    .fg(app.theme.secondary)
                     .add_modifier(Modifier::BOLD),
             )),
         )
         .highlight_style(
             Style::default()
                 .fg(Color::Black)
-                .bg(Color::Cyan)
+                .bg(app.theme.accent)
                 .add_modifier(Modifier::BOLD),
         )
         .highlight_symbol("➤ ");
@@ -82,9 +73,8 @@ pub fn render(f: &mut Frame, app: &App) {
     state.select(Some(app.menu_index));
     f.render_stateful_widget(list, inner, &mut state);
 
-    // Footer
     let footer = Paragraph::new("  ↑/↓ navigate  ·  Enter start  ·  q quit  ·  ? help")
-        .style(Style::default().fg(Color::DarkGray))
+        .style(Style::default().fg(app.theme.pending))
         .wrap(Wrap { trim: true });
     f.render_widget(footer, layout[2]);
 }

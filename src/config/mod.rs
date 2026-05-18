@@ -65,6 +65,7 @@ pub struct Colors {
     pub extra: Option<String>,
     pub mode_tag: Option<String>,
     pub error: Option<String>,
+    pub neutral: Option<String>,
 }
 
 #[cfg(test)]

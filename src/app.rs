@@ -15,7 +15,9 @@
 
 use std::time::{Duration, Instant};
 
+use crate::config::load::{CodeLangKind, DefaultMode};
 use crate::game::{get_char_states, CharState};
+use crate::theme::ThemePalette;
 
 /// One of the high-level screens the user can be looking at. The current
 /// `Screen` drives both the renderer dispatch in `ui::render` and the keymap
@@ -108,6 +110,43 @@ pub enum MenuAction {
     ShowStats,
     /// Quit the application.
     Quit,
+}
+
+/// Translate a `DefaultMode` (the config-side enum) into a runtime `Mode`.
+fn mode_for(default_mode: DefaultMode) -> Mode {
+    use crate::words::CodeLang;
+    match default_mode {
+        DefaultMode::Time(seconds) => Mode::Time(seconds),
+        DefaultMode::Words(count) => Mode::Words(count),
+        DefaultMode::Quote => Mode::Quote,
+        DefaultMode::Code(CodeLangKind::Rust) => Mode::Code(CodeLang::Rust),
+        DefaultMode::Code(CodeLangKind::Python) => Mode::Code(CodeLang::Python),
+        DefaultMode::Code(CodeLangKind::JavaScript) => Mode::Code(CodeLang::JavaScript),
+        DefaultMode::Zen => Mode::Zen,
+    }
+}
+
+/// Pick which menu row to highlight given the configured default mode.
+///
+/// Exact match wins (e.g. `time_seconds = 30` → "Time · 30s"). Otherwise we
+/// fall back to the first row of the same mode family (so `time_seconds = 45`
+/// still pre-selects a time row rather than landing on something unrelated).
+fn best_menu_match(menu: &[MenuItem], default_mode: DefaultMode) -> usize {
+    let exact = mode_for(default_mode);
+    if let Some(index) = menu.iter().position(|item| item.mode == Some(exact)) {
+        return index;
+    }
+    let family_match = menu.iter().position(|item| {
+        matches!(
+            (item.mode, default_mode),
+            (Some(Mode::Time(_)), DefaultMode::Time(_))
+                | (Some(Mode::Words(_)), DefaultMode::Words(_))
+                | (Some(Mode::Code(_)), DefaultMode::Code(_))
+                | (Some(Mode::Quote), DefaultMode::Quote)
+                | (Some(Mode::Zen), DefaultMode::Zen)
+        )
+    });
+    family_match.unwrap_or(0)
 }
 
 /// Build the default menu shown on startup.
@@ -237,17 +276,30 @@ pub struct App {
     pub error_message: Option<String>,
     /// Counts every `tick()`. Used to throttle costly UI updates if needed.
     pub tick_count: u64,
+    /// Active color palette — read by every UI module on every frame.
+    pub theme: ThemePalette,
 }
 
 impl App {
     /// Construct a fresh `App` sitting on the main menu.
-    pub fn new(custom_file: Option<String>) -> Self {
+    ///
+    /// `default_mode` (from `~/.typerush/config.toml`) controls which menu row
+    /// is pre-selected and what `app.mode` starts as. `palette` is the active
+    /// color theme — UI modules read it on every frame.
+    pub fn new(
+        custom_file: Option<String>,
+        palette: ThemePalette,
+        default_mode: DefaultMode,
+    ) -> Self {
+        let menu = default_menu();
+        let initial_mode = mode_for(default_mode);
+        let menu_index = best_menu_match(&menu, default_mode);
         Self {
             screen: Screen::Menu,
             previous_screen: Screen::Menu,
-            menu: default_menu(),
-            menu_index: 0,
-            mode: Mode::Words(25),
+            menu,
+            menu_index,
+            mode: initial_mode,
             words: vec![],
             current_word: 0,
             started_at: None,
@@ -259,6 +311,7 @@ impl App {
             should_quit: false,
             error_message: None,
             tick_count: 0,
+            theme: palette,
         }
     }
 

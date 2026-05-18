@@ -37,6 +37,10 @@ pub struct ThemePalette {
     pub mode_tag: Color,
     /// Error modal border / red highlights.
     pub error: Color,
+    /// Emphasized neutral text — session counts, char totals on results.
+    /// Maps to the terminal's natural foreground on each theme (white on dark,
+    /// near-black on light) so it stays readable on every background.
+    pub neutral: Color,
 }
 
 impl ThemePalette {
@@ -56,6 +60,7 @@ impl ThemePalette {
                 "extra" => self.extra = *color,
                 "mode_tag" => self.mode_tag = *color,
                 "error" => self.error = *color,
+                "neutral" => self.neutral = *color,
                 _ => {}
             }
         }

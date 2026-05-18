@@ -160,6 +160,7 @@ fn apply_color_overrides(
     try_push("extra", &overrides.extra, warnings);
     try_push("mode_tag", &overrides.mode_tag, warnings);
     try_push("error", &overrides.error, warnings);
+    try_push("neutral", &overrides.neutral, warnings);
     base.with_overrides(&parsed)
 }
 
@@ -321,6 +322,9 @@ mod tests {
             ..Default::default()
         };
         let (resolved, _) = resolve(raw, None);
-        assert_eq!(resolved.default_mode, DefaultMode::Code(CodeLangKind::Python));
+        assert_eq!(
+            resolved.default_mode,
+            DefaultMode::Code(CodeLangKind::Python)
+        );
     }
 }
