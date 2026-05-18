@@ -11,6 +11,7 @@
 //!   4. Restore the terminal on exit (and on panic, via a hook).
 
 mod app;
+mod config;
 mod game;
 mod storage;
 mod theme;
