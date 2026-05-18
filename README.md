@@ -125,6 +125,7 @@ the full reference.
 
 - 📖 [USAGE](docs/USAGE.md) — all keybindings, modes, CLI flags, config
 - 🏛 [ARCHITECTURE](docs/ARCHITECTURE.md) — how the code is laid out
+- 🛠 [DEVELOPMENT](docs/DEVELOPMENT.md) — local dev workflow, cargo-watch, sandbox config
 - 🗺 [ROADMAP](docs/ROADMAP.md) — what's done, what's next
 - 🤝 [CONTRIBUTING](CONTRIBUTING.md) — dev setup, conventions, how to help
 - 📝 [CHANGELOG](CHANGELOG.md) — what changed in every release
