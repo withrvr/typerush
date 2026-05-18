@@ -29,17 +29,19 @@ pub const DARK: ThemePalette = ThemePalette {
 
 /// Softer palette intended for terminals with a light background.
 /// Forces an off-white background so the theme actually feels "light" even
-/// when the user's terminal itself is dark.
+/// when the user's terminal itself is dark. Foreground colors are
+/// deliberately darkened compared to the dark-theme equivalents — anything
+/// too pale would wash out against the white background.
 pub const LIGHT: ThemePalette = ThemePalette {
-    accent: Color::Rgb(0x01, 0x84, 0xBC),    // deep cyan
-    secondary: Color::Rgb(0xC1, 0x84, 0x01), // amber
-    correct: Color::Rgb(0x50, 0xA1, 0x4F),   // muted green
-    incorrect: Color::Rgb(0xE4, 0x56, 0x49), // muted red
-    pending: Color::Rgb(0x80, 0x80, 0x88),   // medium gray — readable on white
-    extra: Color::Rgb(0xE4, 0x56, 0x49),
-    mode_tag: Color::Rgb(0xA6, 0x26, 0xA4), // purple
-    error: Color::Rgb(0xCA, 0x12, 0x43),
-    neutral: Color::Rgb(0x38, 0x3A, 0x42), // near-black for light bg
+    accent: Color::Rgb(0x01, 0x6F, 0xA0), // deeper cyan — more contrast on white
+    secondary: Color::Rgb(0xA0, 0x6E, 0x00), // darker amber
+    correct: Color::Rgb(0x3F, 0x82, 0x3F), // darker green
+    incorrect: Color::Rgb(0xC5, 0x3B, 0x30), // darker red
+    pending: Color::Rgb(0x55, 0x57, 0x5C), // mid-dark gray — readable, not loud
+    extra: Color::Rgb(0xC5, 0x3B, 0x30),
+    mode_tag: Color::Rgb(0x88, 0x1F, 0x88),   // deeper purple
+    error: Color::Rgb(0xB0, 0x0F, 0x3C),      // darker error red
+    neutral: Color::Rgb(0x20, 0x22, 0x28),    // near-black body text
     background: Color::Rgb(0xFA, 0xFA, 0xFA), // off-white
 };
 

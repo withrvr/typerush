@@ -11,10 +11,14 @@ use crate::app::App;
 /// Render the menu screen. `app.menu_index` highlights the active row.
 pub fn render(f: &mut Frame, app: &App) {
     let area = f.area();
+    // Layout: a small breathing-room strip, then the banner, then the
+    // mode list, then a small bottom margin, then the footer. The top
+    // padding stops the banner from hugging the terminal's title-bar.
     let layout = Layout::vertical([
-        Constraint::Length(5),
-        Constraint::Min(8),
-        Constraint::Length(3),
+        Constraint::Length(2), // top padding
+        Constraint::Length(5), // banner
+        Constraint::Min(8),    // mode list
+        Constraint::Length(3), // footer
     ])
     .split(area);
 
@@ -44,9 +48,9 @@ pub fn render(f: &mut Frame, app: &App) {
         )),
     ];
     let banner = Paragraph::new(banner_text).alignment(Alignment::Center);
-    f.render_widget(banner, layout[0]);
+    f.render_widget(banner, layout[1]);
 
-    let inner = centered_rect(60, 100, layout[1]);
+    let inner = centered_rect(60, 100, layout[2]);
     let items: Vec<ListItem> = app
         .menu
         .iter()
@@ -80,7 +84,7 @@ pub fn render(f: &mut Frame, app: &App) {
     let footer = Paragraph::new("  ↑/↓ navigate  ·  Enter start  ·  q quit  ·  ? help")
         .style(Style::default().fg(app.theme.pending))
         .wrap(Wrap { trim: true });
-    f.render_widget(footer, layout[2]);
+    f.render_widget(footer, layout[3]);
 }
 
 fn centered_rect(percent_x: u16, percent_y: u16, r: Rect) -> Rect {
