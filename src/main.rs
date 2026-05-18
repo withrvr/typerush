@@ -13,6 +13,7 @@
 mod app;
 mod game;
 mod storage;
+mod theme;
 mod ui;
 mod words;
 
