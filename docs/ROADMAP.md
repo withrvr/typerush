@@ -74,11 +74,14 @@ KEY:  ✅ done    🚧 in progress    🔲 planned    💡 idea
 - 🔲 Daily streak counter
 - 🔲 Average WPM over the last 7 / 30 days
 
-### v0.4 — More content
+### v0.4 — More content & menu UX
 - 🔲 Bigger English word pool (10k)
 - 🔲 Programming-symbols mode (focus on `(){};=>` etc.)
 - 🔲 More languages: Go, Java, SQL, Shell
 - 🔲 Punctuation / numbers toggle
+- 🔲 Custom snippet library: drop `.txt` files in `~/.typerush/snippets/`
+- 🔲 "Custom" menu row + last-picked-file memory in `~/.typerush/state.json`
+- 🔲 Visual section gaps in the main menu (Time / Words / Quote / Code / Zen groups)
 
 ### v0.5 — Quality of life
 - 🔲 Pause / resume mid-session
@@ -94,7 +97,6 @@ KEY:  ✅ done    🚧 in progress    🔲 planned    💡 idea
 - 💡 Per-finger heatmap (left vs right hand, weak fingers)
 - 💡 Adaptive practice: re-roll words containing your worst keys
 - 💡 Webhook to post your PB to Discord/Slack
-- 💡 Custom snippet library: drop `.txt` files in `~/.typerush/snippets/`
 - 💡 Voice-over for accessibility
 
 Got an idea that should be on this list? [Open an issue](https://github.com/withrvr/typerush/issues/new/choose).
