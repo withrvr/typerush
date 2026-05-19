@@ -63,14 +63,70 @@ pub fn stats_path() -> PathBuf {
     data_dir().join("stats.json")
 }
 
-/// Append `record` to the stats file, creating the data directory if needed.
+/// Full path to the incremental key-accuracy aggregate file.
+fn aggregate_path() -> PathBuf {
+    data_dir().join("aggregate.json")
+}
+
+/// Cumulative per-key press totals across **all** saved sessions.
 ///
-/// The whole file is rewritten on each save — fine in practice because the
-/// file is tiny (a few hundred bytes per session) and the user only saves
-/// once at the end of a session.
+/// Stored in `~/.typerush/aggregate.json` and updated with each session save
+/// (O(keys_in_session)), so key-accuracy reads stay O(1) regardless of how
+/// large `stats.json` grows.
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct AggregateStats {
+    /// Total correct presses per key across every saved session.
+    #[serde(default)]
+    pub key_hits: HashMap<String, u64>,
+    /// Total wrong / extra presses per key across every saved session.
+    #[serde(default)]
+    pub key_misses: HashMap<String, u64>,
+}
+
+/// Load the aggregate from disk. Returns a zeroed `AggregateStats` when the
+/// file is missing or unreadable (first run, or after manual deletion).
+pub fn load_aggregate() -> AggregateStats {
+    let path = aggregate_path();
+    if !path.exists() {
+        return AggregateStats::default();
+    }
+    let Ok(raw) = fs::read_to_string(&path) else {
+        return AggregateStats::default();
+    };
+    serde_json::from_str(&raw).unwrap_or_default()
+}
+
+/// Persist the aggregate to disk. Best-effort — never panics.
+pub fn save_aggregate(agg: &AggregateStats) {
+    let path = aggregate_path();
+    if let Ok(json) = serde_json::to_string_pretty(agg) {
+        let _ = fs::write(path, json);
+    }
+}
+
+/// Apply one session's key data to an in-memory aggregate. Pure — no disk I/O.
+/// Call `save_aggregate` separately when you want to persist the result.
+pub fn apply_session_to_aggregate(agg: &mut AggregateStats, record: &SessionRecord) {
+    for (k, &v) in &record.key_hits {
+        *agg.key_hits.entry(k.clone()).or_insert(0) += v;
+    }
+    for (k, &v) in &record.key_misses {
+        *agg.key_misses.entry(k.clone()).or_insert(0) += v;
+    }
+}
+
+/// Append `record` to the stats file, creating the data directory if needed.
+/// Also updates `aggregate.json` incrementally so key-accuracy reads stay fast.
+///
+/// The whole stats file is rewritten on each save — fine in practice because
+/// the file is tiny and the user only saves once at the end of a session.
 pub fn save_session(record: &SessionRecord) -> Result<()> {
     fs::create_dir_all(data_dir())?;
-    save_session_to_path(&stats_path(), record)
+    save_session_to_path(&stats_path(), record)?;
+    let mut agg = load_aggregate();
+    apply_session_to_aggregate(&mut agg, record);
+    save_aggregate(&agg);
+    Ok(())
 }
 
 /// Load every saved session in the order they were recorded (oldest first).
@@ -210,7 +266,9 @@ pub fn avg_wpm_last_n_days(sessions: &[SessionRecord], days: u32) -> Option<f64>
 /// Aggregated per-key accuracy across all sessions, sorted by accuracy
 /// ascending (worst keys first). Only keys with at least `min_presses`
 /// total keystrokes (hits + misses) are included.
-pub fn key_accuracy(sessions: &[SessionRecord], min_presses: u64) -> Vec<KeyAccuracyStat> {
+/// Used by tests; production code uses `key_accuracy_from_aggregate`.
+#[cfg(test)]
+fn key_accuracy(sessions: &[SessionRecord], min_presses: u64) -> Vec<KeyAccuracyStat> {
     let mut hits: HashMap<char, u64> = HashMap::new();
     let mut misses: HashMap<char, u64> = HashMap::new();
 
@@ -251,6 +309,46 @@ pub fn key_accuracy(sessions: &[SessionRecord], min_presses: u64) -> Vec<KeyAccu
 
     // Worst keys first (lowest accuracy ascending); break ties alphabetically
     // so equal-accuracy keys never swap positions between renders.
+    stats.sort_by(|a, b| {
+        a.accuracy
+            .partial_cmp(&b.accuracy)
+            .unwrap_or(std::cmp::Ordering::Equal)
+            .then_with(|| a.key.cmp(&b.key))
+    });
+    stats
+}
+
+/// Same as `key_accuracy` but reads from a pre-computed `AggregateStats`
+/// instead of iterating all sessions. O(distinct_keys) — always fast.
+/// Prefer this in the render path.
+pub fn key_accuracy_from_aggregate(agg: &AggregateStats, min_presses: u64) -> Vec<KeyAccuracyStat> {
+    let all_keys: std::collections::HashSet<&str> = agg
+        .key_hits
+        .keys()
+        .chain(agg.key_misses.keys())
+        .map(String::as_str)
+        .collect();
+
+    let mut stats: Vec<KeyAccuracyStat> = all_keys
+        .into_iter()
+        .filter_map(|k| {
+            let c = k.chars().next()?;
+            let h = agg.key_hits.get(k).copied().unwrap_or(0);
+            let m = agg.key_misses.get(k).copied().unwrap_or(0);
+            let total = h + m;
+            if total < min_presses {
+                return None;
+            }
+            let accuracy = h as f64 / total as f64 * 100.0;
+            Some(KeyAccuracyStat {
+                key: c,
+                total,
+                hits: h,
+                accuracy,
+            })
+        })
+        .collect();
+
     stats.sort_by(|a, b| {
         a.accuracy
             .partial_cmp(&b.accuracy)

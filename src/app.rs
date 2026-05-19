@@ -18,6 +18,7 @@ use std::time::{Duration, Instant};
 
 use crate::config::load::{CodeLangKind, DefaultMode};
 use crate::game::{get_char_states, CharState};
+use crate::storage::{self, AggregateStats, SessionRecord};
 use crate::theme::ThemePalette;
 
 /// One of the high-level screens the user can be looking at. The current
@@ -285,6 +286,15 @@ pub struct App {
     pub key_hits: HashMap<char, u64>,
     /// Number of times each key was typed but did not match (wrong key or extra).
     pub key_misses: HashMap<char, u64>,
+
+    // --- stats caching (v0.3.0) ---
+    /// Full session history, loaded once when the Stats screen is entered and
+    /// invalidated on each session save. `None` until the first Stats visit.
+    pub stats_cache: Option<Vec<SessionRecord>>,
+    /// Running aggregate of per-key hit/miss totals across all sessions.
+    /// Loaded from `aggregate.json` at startup; kept current in memory after
+    /// each save so the key-accuracy panel never re-reads the full history.
+    pub aggregate: AggregateStats,
 }
 
 impl App {
@@ -321,6 +331,24 @@ impl App {
             theme: palette,
             key_hits: HashMap::new(),
             key_misses: HashMap::new(),
+            stats_cache: None,
+            aggregate: {
+                let mut agg = storage::load_aggregate();
+                // One-time O(n) rebuild when upgrading from a version that
+                // predates aggregate.json — after this the file exists and
+                // subsequent startups are O(1).
+                if agg.key_hits.is_empty() && agg.key_misses.is_empty() {
+                    if let Ok(sessions) = storage::load_sessions() {
+                        for s in &sessions {
+                            storage::apply_session_to_aggregate(&mut agg, s);
+                        }
+                        if !agg.key_hits.is_empty() || !agg.key_misses.is_empty() {
+                            storage::save_aggregate(&agg);
+                        }
+                    }
+                }
+                agg
+            },
         }
     }
 

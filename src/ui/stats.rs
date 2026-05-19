@@ -1,6 +1,7 @@
-//! Historical stats screen — pulls the full session list from disk
-//! (`~/.typerush/stats.json`) and renders a summary card, a WPM sparkline,
-//! a key-accuracy heatmap (v0.3.0), and a table of the last 10 sessions.
+//! Historical stats screen — reads session data from `App`'s in-memory cache
+//! (populated once on screen entry from `~/.typerush/stats.json`) and key
+//! accuracy from the pre-computed `App::aggregate`. No disk I/O in the render
+//! path.
 //!
 //! v0.3.0 additions:
 //!  - Daily streak counter (top summary card)
@@ -42,11 +43,11 @@ pub fn render(f: &mut Frame, app: &App) {
     ));
     f.render_widget(title, layout[0]);
 
-    let sessions = storage::load_sessions().unwrap_or_default();
+    let sessions: &[storage::SessionRecord] = app.stats_cache.as_deref().unwrap_or(&[]);
 
-    render_summary_and_heatmap(f, app, layout[1], &sessions);
-    render_sparkline(f, app, layout[2], &sessions);
-    render_sessions_table(f, app, layout[3], &sessions);
+    render_summary_and_heatmap(f, app, layout[1], sessions);
+    render_sparkline(f, app, layout[2], sessions);
+    render_sessions_table(f, app, layout[3], sessions);
 
     let footer =
         Paragraph::new("  m / esc menu  ·  q quit").style(Style::default().fg(theme.pending));
@@ -155,13 +156,14 @@ fn render_summary_and_heatmap(
 
     // ── Key accuracy heatmap ─────────────────────────────────────────────────
 
-    render_key_heatmap(f, app, cols[1], sessions);
+    render_key_heatmap(f, app, cols[1]);
 }
 
 /// Render the key-accuracy panel (worst keys, sorted by accuracy ascending).
-fn render_key_heatmap(f: &mut Frame, app: &App, area: Rect, sessions: &[storage::SessionRecord]) {
+/// Reads from `app.aggregate` — O(distinct_keys), no disk I/O.
+fn render_key_heatmap(f: &mut Frame, app: &App, area: Rect) {
     let theme = &app.theme;
-    let worst_keys = storage::key_accuracy(sessions, 3);
+    let worst_keys = storage::key_accuracy_from_aggregate(&app.aggregate, 3);
 
     if worst_keys.is_empty() {
         let msg = Paragraph::new(vec![
