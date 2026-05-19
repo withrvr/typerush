@@ -18,14 +18,26 @@ Or skip the menu and start a session directly:
 typerush --time 30            # 30-second timed test (15 / 30 / 60 / 120)
 typerush --words 50           # type exactly N words
 typerush --quote              # one programming quote
-typerush --code rust          # code-typing: rust | python | js
+typerush --code rust          # code-typing: rust | python | js | go | java | sql | shell
 typerush --zen                # zen mode (no timer, no stats)
+typerush --symbols 25         # symbols drill (N tokens; standard rows: 25 / 50)
 typerush --file <path>        # type any text file you have
+typerush --big                # use the larger 10,000-word English pool
+typerush --punctuation        # mix punctuation marks into random words
+typerush --numbers            # mix random number tokens into random words
 typerush --theme monokai      # one-shot theme override
 typerush --list-themes        # print available theme names and exit
+typerush --list-snippets      # print every snippet found in ~/.typerush/snippets/
 ```
 
-You can also pass `--file` alone to use the file inside the menu's "Custom" entry.
+You can pass `--file <path>` alone to use the file inside the menu's "Custom"
+entry. TypeRush remembers the last path you typed against in
+`~/.typerush/state.json`, so the "Custom" menu row stays useful even after the
+flag is gone.
+
+To build a personal snippet library, drop `.txt` files into
+`~/.typerush/snippets/`. Each file appears as a `Snippet · <name>` row in the
+main menu and is loaded as the typing source when selected.
 
 ---
 
@@ -36,9 +48,10 @@ You can also pass `--file` alone to use the file inside the menu's "Custom" entr
 | Time    | Sprint — type as many words as possible in N seconds                  | the timer hits zero              |
 | Words   | Type a fixed number of random words (10 / 25 / 50 / 100)              | you complete the last word       |
 | Quote   | A randomly chosen famous programming quote                            | you complete the last word       |
-| Code    | A real short code snippet (Rust, Python, or JavaScript)               | you complete the last word       |
+| Code    | A real short code snippet (Rust, Python, JavaScript, Go, Java, SQL, Shell) | you complete the last word  |
+| Symbols | Programming punctuation drill — type N short tokens like `=>` `(){};` | you complete the last token      |
 | Zen     | Soft, monochrome UI. No timer, no WPM, no score saved.                | you press `Esc`                  |
-| Custom  | Any whitespace-separated text file passed via `--file`                | you complete the last word       |
+| Custom  | Any whitespace-separated text file passed via `--file` or picked from `~/.typerush/snippets/` | you complete the last word |
 
 ---
 
@@ -53,12 +66,16 @@ You can also pass `--file` alone to use the file inside the menu's "Custom" entr
 
 ### Main menu
 
-| Key                | Action                            |
-| ------------------ | --------------------------------- |
-| `↑ / ↓` or `j / k` | Move highlight                    |
-| `Enter`            | Start the selected mode           |
-| `Tab`              | Jump to the historical stats view |
-| `q`                | Quit                              |
+| Key                | Action                                                          |
+| ------------------ | --------------------------------------------------------------- |
+| `↑ / ↓` or `j / k` | Move highlight (decorative section headers are skipped)         |
+| `Enter`            | Start the selected mode / open the selected snippet             |
+| `Tab`              | Jump to the historical stats view                               |
+| `q`                | Quit                                                            |
+
+The menu is grouped into visual sections — Time, Words, Quote, Code, Symbols,
+Zen, Custom, More — separated by muted `── Section ──` headers. Arrow-key
+navigation hops over headers so you always land on a selectable row.
 
 ### While typing
 
@@ -112,6 +129,16 @@ hurts accuracy) but never toward correct chars.
 history; delete it if you want a fresh start.
 
 Zen-mode sessions are intentionally **not** saved.
+
+Alongside the stats file, TypeRush keeps:
+
+| File                            | Purpose                                                  |
+| ------------------------------- | -------------------------------------------------------- |
+| `~/.typerush/stats.json`        | One JSON record per completed session.                   |
+| `~/.typerush/aggregate.json`    | Pre-computed per-key hit/miss totals — O(1) Stats reads. |
+| `~/.typerush/state.json`        | Tiny UI state: the last `--file` path you typed against. |
+| `~/.typerush/config.toml`       | Optional user configuration (themes, defaults, words).   |
+| `~/.typerush/snippets/*.txt`    | Personal snippet library (each `.txt` is one menu row).  |
 
 ### What the Stats screen shows (v0.3.0+)
 
@@ -186,16 +213,40 @@ Pre-select a menu row and starting mode:
 
 ```toml
 [defaults]
-mode = "time"            # time | words | quote | code | zen
+mode = "time"            # time | words | quote | code | zen | symbols
 time_seconds = 15        # 15 / 30 / 60 / 120 (matches menu rows)
 word_count = 25          # 10 / 25 / 50 / 100
-code_lang = "rust"       # rust | python | js
+code_lang = "rust"       # rust | python | js | go | java | sql | shell
+symbol_count = 25        # 25 / 50 (matches Symbols menu rows)
 ```
+
+### Words section (v0.4.0+)
+
+Tune the word source for Time / Words / Zen modes:
+
+```toml
+[words]
+pool = "common"          # "common" (≈1k, default) | "extended" (10k)
+punctuation = false      # attach commas, periods, quotes to ~25% of words
+numbers = false          # replace ~12% of slots with random 1–4 digit numbers
+```
+
+The `--big`, `--punctuation`, and `--numbers` CLI flags override these
+per-launch. The decoration toggles never apply in Zen mode (the screen stays
+calm by design).
+
+### Snippets library (v0.4.0+)
+
+Drop `.txt` files into `~/.typerush/snippets/` to build your own typing
+library. Each file appears as a `Snippet · <name>` row in the main menu and is
+sourced as the typing target when selected. Files are discovered in
+alphabetical order so menu positions are stable across launches. Use
+`typerush --list-snippets` to print every snippet TypeRush has found.
 
 ### Precedence
 
 ```
-CLI flag (--theme, --time, …) > config.toml > built-in default
+CLI flag (--theme, --time, --big, …) > config.toml > built-in default
 ```
 
 A malformed config file does not crash TypeRush — it falls back to defaults

@@ -74,14 +74,14 @@ KEY:  ✅ done    🚧 in progress    🔲 planned    💡 idea
 - ✅ Daily streak counter
 - ✅ Average WPM over the last 7 / 30 days
 
-### v0.4 — More content & menu UX
-- 🔲 Bigger English word pool (10k)
-- 🔲 Programming-symbols mode (focus on `(){};=>` etc.)
-- 🔲 More languages: Go, Java, SQL, Shell
-- 🔲 Punctuation / numbers toggle
-- 🔲 Custom snippet library: drop `.txt` files in `~/.typerush/snippets/`
-- 🔲 "Custom" menu row + last-picked-file memory in `~/.typerush/state.json`
-- 🔲 Visual section gaps in the main menu (Time / Words / Quote / Code / Zen groups)
+### ✅ v0.4 — More content & menu UX
+- ✅ Bigger English word pool (10k) — opt-in via `--big` or `words.pool = "extended"`
+- ✅ Programming-symbols mode (focus on `(){};=>` etc.)
+- ✅ More languages: Go, Java, SQL, Shell
+- ✅ Punctuation / numbers toggle — `--punctuation`, `--numbers`, or the `[words]` section
+- ✅ Custom snippet library: drop `.txt` files in `~/.typerush/snippets/`
+- ✅ "Custom" menu row + last-picked-file memory in `~/.typerush/state.json`
+- ✅ Visual section gaps in the main menu (Time / Words / Quote / Code / Symbols / Zen / Custom groups)
 
 ### v0.5 — Quality of life
 - 🔲 Pause / resume mid-session

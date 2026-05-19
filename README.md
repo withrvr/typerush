@@ -30,7 +30,10 @@ with a quote — TypeRush meets you where you already work: the command line.
 
 - 🚀 **Instant feedback** — see your WPM and accuracy climb keystroke by keystroke
 - 🎨 **Themes built-in** — `dark`, `light`, `monokai`, `dracula`, or roll your own colors
-- ⏱ **Six built-in modes** — Time, Words, Quote, Code, Zen, and Custom-file
+- ⏱ **Seven built-in modes** — Time, Words, Quote, Code, Symbols, Zen, and Custom-file
+- 🔤 **Seven code languages** — Rust, Python, JavaScript, Go, Java, SQL, Shell
+- 📚 **10k-word pool & punctuation/number drills** — opt in when you want a tougher session
+- 🗂  **Personal snippet library** — drop `.txt` files in `~/.typerush/snippets/`
 - 💾 **Tracks your progress** — every session saved locally, with charts and a personal best
 - 🌍 **Runs everywhere** — Linux · macOS · Windows · WSL · Git Bash
 - 📦 **One binary, zero setup** — `cargo install typerush` and you're done
@@ -63,28 +66,34 @@ typerush
 Or jump straight into a mode:
 
 ```bash
-typerush --time 30           # 30-second timed sprint
-typerush --words 50          # 50 random English words
-typerush --quote             # one programming quote
-typerush --code rust         # a real Rust snippet
-typerush --zen               # zen mode — no timer, no pressure
-typerush --file my_text.txt  # type anything you want
-typerush --theme monokai     # try a different theme
-typerush --list-themes       # see all built-in themes
+typerush --time 30            # 30-second timed sprint
+typerush --words 50           # 50 random English words
+typerush --quote              # one programming quote
+typerush --code rust          # rust | python | js | go | java | sql | shell
+typerush --symbols 25         # programming-punctuation drill
+typerush --zen                # zen mode — no timer, no pressure
+typerush --file my_text.txt   # type anything you want
+typerush --big                # use the 10,000-word English pool
+typerush --punctuation        # sprinkle punctuation onto random words
+typerush --numbers            # mix number tokens into random words
+typerush --theme monokai      # try a different theme
+typerush --list-themes        # see all built-in themes
+typerush --list-snippets      # see every snippet in ~/.typerush/snippets/
 ```
 
 ---
 
 ## 🎯 Modes at a glance
 
-| Mode    | What it's for                                          |
-| ------- | ------------------------------------------------------ |
-| Time    | Sprint! Type as many words as you can in 15/30/60/120s |
-| Words   | Hit a fixed target — 10, 25, 50, or 100 words          |
-| Quote   | Famous programming quote, one round                    |
-| Code    | Real Rust / Python / JavaScript snippets               |
-| Zen     | No timer, no score. Just type and breathe.             |
-| Custom  | Use any text file you have                             |
+| Mode    | What it's for                                                       |
+| ------- | ------------------------------------------------------------------- |
+| Time    | Sprint! Type as many words as you can in 15/30/60/120s              |
+| Words   | Hit a fixed target — 10, 25, 50, or 100 words                       |
+| Quote   | Famous programming quote, one round                                 |
+| Code    | Real Rust / Python / JS / Go / Java / SQL / Shell snippets          |
+| Symbols | Drill punctuation: `(){};=>`, `&&`, `?.`, `<T>` and friends         |
+| Zen     | No timer, no score. Just type and breathe.                          |
+| Custom  | Any text file via `--file` or `.txt` in `~/.typerush/snippets/`     |
 
 ---
 

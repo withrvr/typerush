@@ -13,6 +13,72 @@ _No unreleased changes yet._
 
 ---
 
+## [0.4.0] — more content & menu UX
+
+### Added
+
+- **10,000-word English pool.** A new `ENGLISH_10000` pool sits alongside the
+  existing common-word pool. Opt in with `--big` or `[words] pool = "extended"`
+  in `config.toml`. The default behavior is unchanged (Common pool, ≈1k words).
+- **Programming-symbols mode.** A new `Mode::Symbols(N)` drills punctuation —
+  tokens like `=>`, `(){};`, `&&`, `?.`, `[]`, `<T>` — sourced from a curated
+  pool plus a handful of randomly composed tokens. Menu rows for 25 and 50
+  tokens; `--symbols N` from the CLI; per-mode PB tracked as `symbols-N`.
+- **Four new Code languages.** Added Go, Java, SQL, and Shell snippet pools.
+  Menu rows: `Code · Go`, `Code · Java`, `Code · SQL`, `Code · Shell`. CLI
+  accepts `--code go|java|sql|shell` plus the usual aliases (`golang`, `sh`,
+  `bash`).
+- **Punctuation / numbers toggles.** When enabled, randomly attach
+  punctuation marks to ~25% of words and replace ~12% of slots with random
+  1–4 digit numbers in Time / Words modes. Toggle via the `[words]` config
+  section or the `--punctuation` / `--numbers` CLI flags. Zen mode ignores
+  these toggles to stay calm.
+- **Custom snippet library.** Drop `.txt` files into `~/.typerush/snippets/`
+  and they appear as `Snippet · <name>` rows under the menu's Custom
+  section. New `--list-snippets` CLI flag prints every snippet TypeRush
+  found, one per line (`name\tpath`).
+- **"Custom" menu row + last-file memory.** The menu now has a dedicated
+  Custom row even when `--file` isn't passed. The path of the most recent
+  custom session is persisted to `~/.typerush/state.json` so the menu
+  pre-fills the row with `Custom · <truncated path>` across launches.
+- **Visual section gaps in the main menu.** Rows are grouped under muted
+  `── Section ──` headers (Time / Words / Quote / Code / Symbols / Zen /
+  Custom / More). Arrow-key navigation skips headers automatically so the
+  highlight always lands on a selectable row.
+- **`docs/USAGE.md`** documents the new flags, modes, snippet workflow, and
+  the new `[words]` config section. **`config.example.toml`** carries
+  inline comments for every new option. **`docs/ARCHITECTURE.md`** picks up
+  the new modules (`state.rs`, `words/snippets.rs`, `words/symbols.rs`) and
+  gains a "When you add a new code language" runbook.
+
+### Changed
+
+- `App::new` now takes the word pool and decoration as required arguments
+  instead of defaulting them silently. Callers in main and tests pass the
+  desired values explicitly. (Internal-only change — no end-user impact.)
+- The menu builder is now `app::build_menu(snippets, last_custom_file)`
+  instead of a `default_menu()` constant — the same function is used by the
+  app and by tests.
+- The mode label `Mode::Code(JavaScript)` is documented as deliberately
+  serializing to `"code-javascript"` (not the slug `"js"`) for backward
+  compatibility with v0.3 and earlier `stats.json` records.
+
+### Compatibility
+
+- Existing CLI flags (`--time`, `--words`, `--quote`, `--code`, `--zen`,
+  `--file`, `--theme`, `--list-themes`) are unchanged. The new flags
+  (`--big`, `--punctuation`, `--numbers`, `--symbols`, `--list-snippets`)
+  are purely additive.
+- `~/.typerush/stats.json` and `aggregate.json` formats are unchanged. Old
+  session records load and aggregate correctly; no migration needed.
+- `~/.typerush/config.toml` adds an optional `[words]` section and three
+  new optional `[defaults]` keys (`symbol_count`, plus extended `code_lang`
+  aliases). Existing configs continue to load without modification.
+- `~/.typerush/state.json` is new in v0.4.0 and entirely optional — TypeRush
+  creates it lazily the first time a custom-file session is started.
+
+---
+
 ## [0.3.0] — smarter stats
 
 ### Added
@@ -155,7 +221,8 @@ _No unreleased changes yet._
   dedicated docs.
 - Demo GIF uses absolute GitHub raw URL for correct display on crates.io.
 
-[Unreleased]: https://github.com/withrvr/typerush/compare/v0.3.0...HEAD
+[Unreleased]: https://github.com/withrvr/typerush/compare/v0.4.0...HEAD
+[0.4.0]: https://github.com/withrvr/typerush/compare/v0.3.0...v0.4.0
 [0.3.0]: https://github.com/withrvr/typerush/compare/v0.2.0...v0.3.0
 [0.2.0]: https://github.com/withrvr/typerush/compare/v0.1.1...v0.2.0
 [0.1.1]: https://github.com/withrvr/typerush/releases/tag/v0.1.1

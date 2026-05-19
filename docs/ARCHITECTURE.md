@@ -88,7 +88,9 @@ src/
 │
 ├── app.rs               The App state machine. All fields, all transitions,
 │                        WPM / accuracy math, mode-switching, time/word
-│                        completion logic. Holds the active ThemePalette.
+│                        completion logic. Holds the active ThemePalette,
+│                        WordPool, WordDecor, and the menu (built once per
+│                        launch from snippets + persisted state).
 │
 ├── game.rs              Pure function: get_char_states(target, typed) — the
 │                        character-by-character matcher that drives all
@@ -98,6 +100,11 @@ src/
 │                        ~/.typerush/stats.json. Helpers: personal_best,
 │                        personal_best_for_mode, average_accuracy, streak,
 │                        avg_wpm_last_n_days, key_accuracy (v0.3.0).
+│
+├── state.rs             Tiny key-value persistence at
+│                        ~/.typerush/state.json — currently just the last
+│                        custom-file path so the menu "Custom" row works
+│                        across launches. Best-effort, never crashes.
 │
 ├── theme/
 │   ├── mod.rs           ThemePalette struct (10 themable color slots)
@@ -109,25 +116,37 @@ src/
 │                        ANSI color names.
 │
 ├── config/
-│   ├── mod.rs           Config / Defaults / Colors structs read from
-│   │                    ~/.typerush/config.toml via serde.
-│   └── load.rs          load_or_default() — disk read + flattening into a
-│                        ResolvedConfig. Never errors; bad files surface as
-│                        a single human-readable warning.
+│   ├── mod.rs           Config / Defaults / Colors / Words structs read
+│   │                    from ~/.typerush/config.toml via serde.
+│   └── load.rs          load_or_default_with(CliOverrides) — disk read +
+│                        flattening into a ResolvedConfig (palette,
+│                        default_mode, word_pool, word_decor). Never
+│                        errors; bad files surface as a single
+│                        human-readable warning.
 │
 ├── ui/
 │   ├── mod.rs           render() dispatcher. Paints theme.background on
 │   │                    every cell before any screen renders.
-│   ├── menu.rs          Main menu with the ASCII banner
+│   ├── menu.rs          Main menu with the ASCII banner. Renders separator
+│   │                    rows in muted italics; keyboard handler in main.rs
+│   │                    skips over them.
 │   ├── typing.rs        The typing screen: header, progress gauge, words
 │   ├── results.rs       Post-session screen with PB delta + sparkline
 │   ├── stats.rs         History view: summary, sparkline, recent table
 │   └── help.rs          Floating ? overlay and error modal
 │
 └── words/
-    ├── mod.rs           Word source picker (random, quote, code, file)
-    ├── english.rs       Built-in 200- and 1000-word English pools
-    └── quotes.rs        Programming quotes + Rust/Python/JS snippets
+    ├── mod.rs           Word source picker (random, quote, code, symbols,
+    │                    file). Owns WordPool / WordDecor enums and the
+    │                    random_words_from helper used by every random mode.
+    ├── english.rs       Built-in 200-, 1000-, and 10,000-word English pools.
+    ├── quotes.rs        Programming quotes + Rust / Python / JS / Go /
+    │                    Java / SQL / Shell snippets.
+    ├── snippets.rs      Discovery of user snippet files under
+    │                    ~/.typerush/snippets/*.txt. Stable alphabetical
+    │                    order so menu indices don't shuffle between runs.
+    └── symbols.rs       Random programming-symbol token generator powering
+                         Mode::Symbols. Curated + procedural mix.
 ```
 
 ---
@@ -210,10 +229,25 @@ crate. We don't directly use any platform-specific code, so the binary is a
 1. Add a variant to `Mode` in `src/app.rs`.
 2. Pattern-match it inside `App::start_game` to pick a word source.
 3. Update `Mode::label` so it persists nicely in stats.
-4. Add a row to `default_menu()`.
+4. Add a row to `build_menu()` (with the right section separator).
 5. If it has a unique completion condition, handle it in `submit_word()` /
-   `tick()`.
-6. (Optional) Add a CLI flag in `main.rs::Cli`.
+   `tick()`. Both `Mode::Words(N)` and `Mode::Symbols(N)` finish when
+   `current_word >= N`, sharing one match arm.
+6. (Optional) Add a CLI flag in `main.rs::Cli` and route it through
+   `apply_cli_autostart`.
+7. If the mode tracks a per-mode personal best, make sure its `Mode::label`
+   string stays stable across releases — `personal_best_for_mode` keys on it.
+
+## When you add a new code language
+
+1. Add a variant to `CodeLang` in `src/words/mod.rs`.
+2. Pattern-match it in `random_code_snippet` to point at a pool constant.
+3. Add the new pool constant (e.g. `CODE_GO`) in `src/words/quotes.rs`.
+4. Add a `CodeLangKind` mirror variant in `src/config/load.rs` and route it
+   through `mode_for` in `app.rs`.
+5. Extend `parse_code_lang` (in `config/load.rs`) and the CLI autostart
+   matcher (in `main.rs`) with the new alias(es).
+6. Add a `Code · <Lang>` row to `build_menu()` in the Code section.
 
 ---
 

@@ -14,17 +14,31 @@ theme = "monokai"
 
 # -----------------------------------------------------------------------------
 # Defaults — pre-selects a menu row and sets the initial mode when no CLI flag
-# is given. CLI flags (--time, --words, --quote, --code, --zen) always win.
+# is given. CLI flags (--time, --words, --quote, --code, --zen, --symbols)
+# always win.
 # -----------------------------------------------------------------------------
 [defaults]
-# Which menu row to pre-select: "time" | "words" | "quote" | "code" | "zen"
+# Which menu row to pre-select:
+#   "time" | "words" | "quote" | "code" | "zen" | "symbols"
 mode = "time"
 # Used when mode = "time". Standard menu rows: 15 / 30 / 60 / 120.
 time_seconds = 15
 # Used when mode = "words". Standard menu rows: 10 / 25 / 50 / 100.
 word_count = 25
-# Used when mode = "code". One of: rust | python | js
+# Used when mode = "code". One of:
+#   rust | python | js | go | java | sql | shell
 code_lang = "rust"
+# Used when mode = "symbols". Standard menu rows: 25 / 50.
+symbol_count = 25
+
+# -----------------------------------------------------------------------------
+# Words — pick the word pool and optionally sprinkle in punctuation / numbers.
+# CLI flags `--big`, `--punctuation`, `--numbers` override these per-launch.
+# -----------------------------------------------------------------------------
+# [words]
+# pool = "common"        # "common" (≈1k words, default) | "extended" (10k words)
+# punctuation = false    # attach commas, periods, quotes, etc. to ~25% of words
+# numbers = false        # mix in random 1–4 digit number tokens (~12% of slots)
 
 # -----------------------------------------------------------------------------
 # Color overrides — applied ON TOP of the chosen theme.
