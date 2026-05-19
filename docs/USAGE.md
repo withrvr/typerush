@@ -21,6 +21,8 @@ typerush --quote              # one programming quote
 typerush --code rust          # code-typing: rust | python | js
 typerush --zen                # zen mode (no timer, no stats)
 typerush --file <path>        # type any text file you have
+typerush --theme monokai      # one-shot theme override
+typerush --list-themes        # print available theme names and exit
 ```
 
 You can also pass `--file` alone to use the file inside the menu's "Custom" entry.
@@ -66,6 +68,8 @@ You can also pass `--file` alone to use the file inside the menu's "Custom" entr
 | `Space`          | Submit the current word, advance to the next    |
 | `Backspace`      | Delete the previous character                   |
 | `Ctrl+Backspace` | Delete the entire current word                  |
+| `Ctrl+W`         | Same — delete the entire current word            |
+| `Ctrl+H`         | Same — most terminals send this when you press `Ctrl+Backspace` |
 | `Ctrl+R`         | Restart the same mode with a new word list      |
 | `Esc`            | End the session and go to the results screen    |
 
@@ -108,6 +112,77 @@ hurts accuracy) but never toward correct chars.
 history; delete it if you want a fresh start.
 
 Zen-mode sessions are intentionally **not** saved.
+
+---
+
+## Configuration — `~/.typerush/config.toml`
+
+The config file is **entirely optional**. Without it, TypeRush boots with the
+`dark` theme and a 15-second time-mode pre-selected.
+
+A complete example lives at [`config.example.toml`](../config.example.toml) at
+the project root — copy it to `~/.typerush/config.toml` and edit.
+
+### Themes
+
+Pick a built-in palette by name:
+
+```toml
+theme = "monokai"
+```
+
+Built-in themes (run `typerush --list-themes` to print them):
+
+| Name      | Style                                              |
+| --------- | -------------------------------------------------- |
+| `dark`    | Default — cyan / green / yellow on a dark terminal |
+| `light`   | Softer palette for light-background terminals      |
+| `monokai` | Classic Sublime/TextMate — pink/green/yellow       |
+| `dracula` | Purple/pink/cyan on `#282a36`                      |
+
+### Per-slot color overrides
+
+Override any slot of the chosen theme:
+
+```toml
+theme = "dracula"
+
+[colors]
+accent = "#FF00FF"      # hex
+correct = "green"       # or ANSI name
+```
+
+The 10 slots: `accent`, `secondary`, `correct`, `incorrect`, `pending`,
+`extra`, `mode_tag`, `error`, `neutral`, `background`. Each maps to a
+specific UI element — see `config.example.toml` for inline documentation.
+
+> **Background.** The `dark` theme uses `Color::Reset` for `background` so it
+> picks up whatever your terminal's native background is — same look as v0.1.
+> The `light`, `monokai`, and `dracula` themes paint their canonical
+> backgrounds so the theme looks the same regardless of terminal. Set
+> `background = "reset"` in `[colors]` if you'd rather one of those themes
+> use your terminal background too.
+
+### Defaults
+
+Pre-select a menu row and starting mode:
+
+```toml
+[defaults]
+mode = "time"            # time | words | quote | code | zen
+time_seconds = 15        # 15 / 30 / 60 / 120 (matches menu rows)
+word_count = 25          # 10 / 25 / 50 / 100
+code_lang = "rust"       # rust | python | js
+```
+
+### Precedence
+
+```
+CLI flag (--theme, --time, …) > config.toml > built-in default
+```
+
+A malformed config file does not crash TypeRush — it falls back to defaults
+and shows one error modal you can dismiss with any key.
 
 ---
 

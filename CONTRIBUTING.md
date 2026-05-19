@@ -63,17 +63,16 @@ are incremental and finish in under a second.
 
 ### Running during development
 
+For the full local-dev workflow — running with CLI args, debug vs release,
+testing the config file safely, `cargo-watch` patterns for TUI apps, the
+recommended two-terminal loop — see [`docs/DEVELOPMENT.md`](docs/DEVELOPMENT.md).
+
+Quick reference:
+
 ```bash
 cargo run                       # debug build, opens the menu
 cargo run -- --time 30          # pass any CLI flag through
-cargo watch -x run              # rerun on every save
-```
-
-For a release build:
-
-```bash
-cargo build --release
-./target/release/typerush
+cargo build --release && ./target/release/typerush
 ```
 
 ---
@@ -174,11 +173,9 @@ menu row, optionally add a CLI flag.
 
 ## Adding a new theme
 
-(Once theming lands in v0.2.) Each theme is a `Theme` struct in
-`src/config.rs` mapping the four character states (Correct / Incorrect /
-Pending / Extra) to ratatui colors. The plan is to read these from
-`~/.typerush/config.toml`. Until then, hard-coded constants live in
-`src/ui/typing.rs::style_for_char`.
+Drop a `ThemePalette` constant into `src/theme/builtin.rs` and append it to
+`ALL`. The recipe lives in `docs/ARCHITECTURE.md` — see "When you add a new
+theme".
 
 ---
 

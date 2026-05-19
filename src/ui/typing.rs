@@ -1,8 +1,13 @@
 //! The typing screen — header (live stats), progress bar, words area, footer.
 //!
-//! The cursor is **steady** (no blink) to avoid layout shifts. Two cursor styles:
-//! - on a character → REVERSED (solid block fill)
-//! - past the last character of a word → underlined trailing space (plain bar)
+//! The cursor is **steady** (no blink) to avoid layout shifts. Both cursor
+//! positions render the same way:
+//! - on a character → underline in `theme.accent`
+//! - past the last character → an underlined trailing space in `theme.accent`
+//!
+//! Keeping the cursor a single visual style (rather than a "block fill" on
+//! characters + "underline" on spaces) avoids the visual jolt of switching
+//! styles as the cursor crosses word boundaries.
 
 use ratatui::{
     prelude::*,
@@ -12,6 +17,7 @@ use ratatui::{
 use crate::{
     app::{App, Mode},
     game::{get_char_states, CharState},
+    theme::ThemePalette,
 };
 
 /// Top-level entry point for the typing screen. Splits the area into four
@@ -29,13 +35,14 @@ pub fn render(f: &mut Frame, app: &App) {
     render_header(f, app, layout[0]);
     render_progress(f, app, layout[1]);
     render_words(f, app, layout[2]);
-    render_footer(f, layout[3]);
+    render_footer(f, app, layout[3]);
 }
 
 /// Renders the live WPM / accuracy / time / mode strip at the top of the screen.
 /// In zen mode this is intentionally minimal (no numbers — just a label).
 fn render_header(f: &mut Frame, app: &App, area: Rect) {
     let is_zen_mode = matches!(app.mode, Mode::Zen);
+    let theme = &app.theme;
 
     let timer_text = if let Some(remaining) = app.time_remaining() {
         format!("{:>3}s", remaining.as_secs())
@@ -45,31 +52,31 @@ fn render_header(f: &mut Frame, app: &App, area: Rect) {
 
     let header = if is_zen_mode {
         Line::from(vec![
-            Span::styled(" zen ", Style::default().fg(Color::DarkGray)),
-            Span::styled(" · esc to finish", Style::default().fg(Color::DarkGray)),
+            Span::styled(" zen ", Style::default().fg(theme.pending)),
+            Span::styled(" · esc to finish", Style::default().fg(theme.pending)),
         ])
     } else {
         Line::from(vec![
-            Span::styled(" wpm ", Style::default().fg(Color::DarkGray)),
+            Span::styled(" wpm ", Style::default().fg(theme.pending)),
             Span::styled(
                 format!("{:>3.0}", app.wpm()),
                 Style::default()
-                    .fg(Color::Yellow)
+                    .fg(theme.secondary)
                     .add_modifier(Modifier::BOLD),
             ),
             Span::raw("   "),
-            Span::styled("acc ", Style::default().fg(Color::DarkGray)),
+            Span::styled("acc ", Style::default().fg(theme.pending)),
             Span::styled(
                 format!("{:>5.1}%", app.accuracy()),
-                Style::default().fg(Color::Green),
+                Style::default().fg(theme.correct),
             ),
             Span::raw("   "),
-            Span::styled("time ", Style::default().fg(Color::DarkGray)),
-            Span::styled(timer_text, Style::default().fg(Color::Cyan)),
+            Span::styled("time ", Style::default().fg(theme.pending)),
+            Span::styled(timer_text, Style::default().fg(theme.accent)),
             Span::raw("   "),
             Span::styled(
                 format!("[{}]", app.mode.label()),
-                Style::default().fg(Color::Magenta),
+                Style::default().fg(theme.mode_tag),
             ),
         ])
     };
@@ -77,7 +84,7 @@ fn render_header(f: &mut Frame, app: &App, area: Rect) {
     let header_paragraph = Paragraph::new(header).block(
         Block::default()
             .borders(Borders::BOTTOM)
-            .border_style(Style::default().fg(Color::DarkGray)),
+            .border_style(Style::default().fg(theme.pending)),
     );
     f.render_widget(header_paragraph, area);
 }
@@ -85,6 +92,14 @@ fn render_header(f: &mut Frame, app: &App, area: Rect) {
 /// Progress bar — words-typed / total for word modes, elapsed / total for time modes.
 /// Quote, code, zen and custom modes don't show a bar.
 fn render_progress(f: &mut Frame, app: &App, area: Rect) {
+    let gauge_color = app.theme.accent;
+    // Gauge label sits in the middle of the bar, often straddling the
+    // boundary between the filled (bg = accent) and unfilled (bg = theme bg)
+    // portions. `secondary + BOLD` gives high contrast on both halves for
+    // every built-in theme without needing a separate "on-accent" slot.
+    let label_style = Style::default()
+        .fg(app.theme.secondary)
+        .add_modifier(Modifier::BOLD);
     if let Some((done, total)) = app.progress() {
         let ratio = if total == 0 {
             0.0
@@ -93,18 +108,21 @@ fn render_progress(f: &mut Frame, app: &App, area: Rect) {
         };
         let gauge = Gauge::default()
             .block(Block::default())
-            .gauge_style(Style::default().fg(Color::Cyan))
+            .gauge_style(Style::default().fg(gauge_color))
             .ratio(ratio.min(1.0))
-            .label(format!("{} / {}", done, total));
+            .label(Span::styled(format!("{} / {}", done, total), label_style));
         f.render_widget(gauge, area);
     } else if let Mode::Time(total) = app.mode {
         let elapsed = app.elapsed().as_secs_f64();
         let ratio = (elapsed / total as f64).min(1.0);
         let gauge = Gauge::default()
             .block(Block::default())
-            .gauge_style(Style::default().fg(Color::Cyan))
+            .gauge_style(Style::default().fg(gauge_color))
             .ratio(ratio)
-            .label(format!("{:.0}s / {}s", elapsed, total));
+            .label(Span::styled(
+                format!("{:.0}s / {}s", elapsed, total),
+                label_style,
+            ));
         f.render_widget(gauge, area);
     }
 }
@@ -115,10 +133,10 @@ fn render_progress(f: &mut Frame, app: &App, area: Rect) {
 /// full control of where line breaks happen — important because each character
 /// has its own style.
 ///
-/// The cursor never blinks: it is rendered as a REVERSED block on the
-/// character it sits on, or as an underlined trailing space when it has passed
-/// the end of the current word. Keeping the cursor steady avoids the
-/// horizontal "jitter" that a phantom blinking character would cause.
+/// The cursor never blinks: it is rendered as an underlined character (or
+/// underlined trailing space when past the end of the current word) using
+/// `theme.accent`. Keeping the cursor steady avoids the horizontal "jitter"
+/// that a phantom blinking character would cause.
 fn render_words(f: &mut Frame, app: &App, area: Rect) {
     let mut wrapped_lines: Vec<Line> = vec![];
     let mut current_line: Vec<Span> = vec![];
@@ -127,6 +145,9 @@ fn render_words(f: &mut Frame, app: &App, area: Rect) {
     let mut current_line_width = 0usize;
     let is_zen_mode = matches!(app.mode, Mode::Zen);
     let last_word_index = app.words.len().saturating_sub(1);
+    let cursor_style = Style::default()
+        .fg(app.theme.accent)
+        .add_modifier(Modifier::UNDERLINED);
 
     for (word_index, word) in app.words.iter().enumerate() {
         let char_states = get_char_states(&word.text, &word.typed);
@@ -137,18 +158,13 @@ fn render_words(f: &mut Frame, app: &App, area: Rect) {
         let cursor_past_word_end = is_active_word && typed_char_count >= char_states.len();
 
         // 1. Render every character (target + extras) with its state-driven style.
-        //    If the cursor is on this char, overlay it with REVERSED for a block fill.
+        //    If the cursor is on this char, overlay it with the cursor style.
         let mut word_spans: Vec<Span> = Vec::with_capacity(char_states.len() + 1);
         for (char_index, (ch, state)) in char_states.iter().enumerate() {
             let cursor_on_this_char = is_active_word && char_index == typed_char_count;
-            let base_style = style_for_char(*state, is_zen_mode);
-            // Cursor is always a cyan underline regardless of the character's
-            // own state. This matches the trailing-space cursor style exactly,
-            // giving a single consistent indicator throughout the session.
+            let base_style = style_for_char(*state, is_zen_mode, &app.theme);
             let style = if cursor_on_this_char {
-                Style::default()
-                    .fg(Color::Cyan)
-                    .add_modifier(Modifier::UNDERLINED)
+                cursor_style
             } else {
                 base_style
             };
@@ -161,10 +177,7 @@ fn render_words(f: &mut Frame, app: &App, area: Rect) {
         //    and is about to press space.
         let has_trailing_space = word_index < last_word_index;
         let space_style = if cursor_past_word_end {
-            // Plain underline — no fill, no blink, no width change.
-            Style::default()
-                .fg(Color::Cyan)
-                .add_modifier(Modifier::UNDERLINED)
+            cursor_style
         } else {
             Style::default()
         };
@@ -203,11 +216,11 @@ fn render_words(f: &mut Frame, app: &App, area: Rect) {
         .block(
             Block::default()
                 .borders(Borders::ALL)
-                .border_style(Style::default().fg(Color::DarkGray))
+                .border_style(Style::default().fg(app.theme.pending))
                 .title(Span::styled(
                     " typerush ",
                     Style::default()
-                        .fg(Color::Cyan)
+                        .fg(app.theme.accent)
                         .add_modifier(Modifier::BOLD),
                 )),
         );
@@ -216,30 +229,35 @@ fn render_words(f: &mut Frame, app: &App, area: Rect) {
 
 /// Picks a foreground color/modifier for one character based on whether it
 /// was typed correctly, incorrectly, not yet typed, or typed as an extra.
-/// Zen mode uses a softer, monochrome palette to keep the screen distraction-free.
-fn style_for_char(state: CharState, is_zen_mode: bool) -> Style {
+///
+/// Zen mode intentionally desaturates everything to the theme's muted shades
+/// (with correct chars in `neutral`) so the screen stays calm and the user
+/// isn't distracted by score-shaped feedback.
+fn style_for_char(state: CharState, is_zen_mode: bool, theme: &ThemePalette) -> Style {
     if is_zen_mode {
         return match state {
-            CharState::Correct => Style::default().fg(Color::Gray),
+            CharState::Correct => Style::default().fg(theme.neutral),
             CharState::Incorrect | CharState::Extra => Style::default()
-                .fg(Color::DarkGray)
+                .fg(theme.pending)
                 .add_modifier(Modifier::UNDERLINED),
-            CharState::Pending => Style::default().fg(Color::DarkGray),
+            CharState::Pending => Style::default().fg(theme.pending),
         };
     }
     match state {
-        CharState::Correct => Style::default().fg(Color::Green),
-        CharState::Incorrect => Style::default().fg(Color::Red).add_modifier(Modifier::BOLD),
-        CharState::Pending => Style::default().fg(Color::DarkGray),
+        CharState::Correct => Style::default().fg(theme.correct),
+        CharState::Incorrect => Style::default()
+            .fg(theme.incorrect)
+            .add_modifier(Modifier::BOLD),
+        CharState::Pending => Style::default().fg(theme.pending),
         CharState::Extra => Style::default()
-            .fg(Color::Red)
+            .fg(theme.extra)
             .add_modifier(Modifier::UNDERLINED),
     }
 }
 
 /// Tiny hint strip at the bottom of the screen.
-fn render_footer(f: &mut Frame, area: Rect) {
+fn render_footer(f: &mut Frame, app: &App, area: Rect) {
     let footer = Paragraph::new("  ctrl+r restart  ·  esc menu  ·  ctrl+c quit  ·  ? help")
-        .style(Style::default().fg(Color::DarkGray));
+        .style(Style::default().fg(app.theme.pending));
     f.render_widget(footer, area);
 }

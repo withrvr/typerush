@@ -14,6 +14,7 @@ use crate::{app::App, storage};
 /// Render the post-session results screen.
 pub fn render(f: &mut Frame, app: &App) {
     let area = f.area();
+    let theme = &app.theme;
     let layout = Layout::vertical([
         Constraint::Length(3),
         Constraint::Length(9),
@@ -26,7 +27,7 @@ pub fn render(f: &mut Frame, app: &App) {
     let title = Paragraph::new(Span::styled(
         "  ✓ session complete",
         Style::default()
-            .fg(Color::Green)
+            .fg(theme.correct)
             .add_modifier(Modifier::BOLD),
     ));
     f.render_widget(title, layout[0]);
@@ -43,9 +44,9 @@ pub fn render(f: &mut Frame, app: &App) {
             let diff = wpm - prev;
             let sign = if diff >= 0.0 { "+" } else { "" };
             let color = if diff >= 0.0 {
-                Color::Green
+                theme.correct
             } else {
-                Color::Red
+                theme.incorrect
             };
             Span::styled(
                 format!(" ({sign}{:.0} vs last)", diff),
@@ -57,43 +58,43 @@ pub fn render(f: &mut Frame, app: &App) {
 
     let body_lines = vec![
         Line::from(vec![
-            Span::styled("  wpm        ", Style::default().fg(Color::DarkGray)),
+            Span::styled("  wpm        ", Style::default().fg(theme.pending)),
             Span::styled(
                 format!("{:>6.1}", wpm),
                 Style::default()
-                    .fg(Color::Yellow)
+                    .fg(theme.secondary)
                     .add_modifier(Modifier::BOLD),
             ),
             delta,
         ]),
         Line::from(vec![
-            Span::styled("  accuracy   ", Style::default().fg(Color::DarkGray)),
-            Span::styled(format!("{:>6.1}%", acc), Style::default().fg(Color::Green)),
+            Span::styled("  accuracy   ", Style::default().fg(theme.pending)),
+            Span::styled(format!("{:>6.1}%", acc), Style::default().fg(theme.correct)),
         ]),
         Line::from(vec![
-            Span::styled("  time       ", Style::default().fg(Color::DarkGray)),
+            Span::styled("  time       ", Style::default().fg(theme.pending)),
             Span::styled(
                 format!("{:>5.1}s", elapsed),
-                Style::default().fg(Color::Cyan),
+                Style::default().fg(theme.accent),
             ),
         ]),
         Line::from(vec![
-            Span::styled("  chars      ", Style::default().fg(Color::DarkGray)),
+            Span::styled("  chars      ", Style::default().fg(theme.pending)),
             Span::styled(
                 format!("{}/{}", app.correct_chars, app.total_typed_chars),
-                Style::default().fg(Color::White),
+                Style::default().fg(theme.neutral),
             ),
         ]),
         Line::from(vec![
-            Span::styled("  mode       ", Style::default().fg(Color::DarkGray)),
-            Span::styled(app.mode.label(), Style::default().fg(Color::Magenta)),
+            Span::styled("  mode       ", Style::default().fg(theme.pending)),
+            Span::styled(app.mode.label(), Style::default().fg(theme.mode_tag)),
         ]),
         Line::from(vec![
-            Span::styled("  best ever  ", Style::default().fg(Color::DarkGray)),
+            Span::styled("  best ever  ", Style::default().fg(theme.pending)),
             Span::styled(
                 format!("{:>6.1} wpm", pb),
                 Style::default()
-                    .fg(Color::Cyan)
+                    .fg(theme.accent)
                     .add_modifier(Modifier::BOLD),
             ),
         ]),
@@ -101,12 +102,11 @@ pub fn render(f: &mut Frame, app: &App) {
     let body = Paragraph::new(body_lines).block(
         Block::default()
             .borders(Borders::ALL)
-            .border_style(Style::default().fg(Color::DarkGray))
+            .border_style(Style::default().fg(theme.pending))
             .title(" results "),
     );
     f.render_widget(body, layout[1]);
 
-    // Sparkline of recent WPM
     let recent: Vec<u64> = sessions
         .iter()
         .rev()
@@ -118,14 +118,14 @@ pub fn render(f: &mut Frame, app: &App) {
         .block(
             Block::default()
                 .borders(Borders::ALL)
-                .border_style(Style::default().fg(Color::DarkGray))
+                .border_style(Style::default().fg(theme.pending))
                 .title(" recent wpm trend "),
         )
         .data(&recent)
-        .style(Style::default().fg(Color::Cyan));
+        .style(Style::default().fg(theme.accent));
     f.render_widget(spark, layout[2]);
 
     let footer = Paragraph::new("  Enter / r restart  ·  m menu  ·  s stats  ·  q quit")
-        .style(Style::default().fg(Color::DarkGray));
+        .style(Style::default().fg(theme.pending));
     f.render_widget(footer, layout[4]);
 }

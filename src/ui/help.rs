@@ -7,18 +7,19 @@ use ratatui::{
     widgets::{Block, Borders, Clear, Paragraph, Wrap},
 };
 
-use crate::app::App;
+use crate::{app::App, theme::ThemePalette};
 
 /// Render the keybindings overlay.
-pub fn render(f: &mut Frame, _app: &App) {
+pub fn render(f: &mut Frame, app: &App) {
     let area = centered_rect(60, 70, f.area());
     f.render_widget(Clear, area);
+    let theme = &app.theme;
 
     let lines = vec![
         Line::from(Span::styled(
             "  TypeRush — keybindings",
             Style::default()
-                .fg(Color::Cyan)
+                .fg(theme.accent)
                 .add_modifier(Modifier::BOLD),
         )),
         Line::raw(""),
@@ -34,7 +35,7 @@ pub fn render(f: &mut Frame, _app: &App) {
         Line::from(Span::styled(
             "  Modes",
             Style::default()
-                .fg(Color::Yellow)
+                .fg(theme.secondary)
                 .add_modifier(Modifier::BOLD),
         )),
         Line::from("  Time           type as many words as you can"),
@@ -45,21 +46,32 @@ pub fn render(f: &mut Frame, _app: &App) {
         Line::raw(""),
         Line::from(Span::styled(
             "  Stats saved to ~/.typerush/stats.json",
-            Style::default().fg(Color::DarkGray),
+            Style::default().fg(theme.pending),
+        )),
+        Line::from(Span::styled(
+            "  Config: ~/.typerush/config.toml",
+            Style::default().fg(theme.pending),
         )),
     ];
 
-    let p = Paragraph::new(lines).wrap(Wrap { trim: false }).block(
-        Block::default()
-            .borders(Borders::ALL)
-            .border_style(Style::default().fg(Color::Cyan))
-            .title(" help "),
-    );
+    let p = Paragraph::new(lines)
+        // Plain Line::from(string) entries inherit this fg — otherwise they
+        // render with terminal default which is invisible on the light theme.
+        // Explicitly-styled spans (titles, subtitles, dim hints) keep their
+        // own colors because Span style overrides Paragraph style.
+        .style(Style::default().fg(theme.neutral))
+        .wrap(Wrap { trim: false })
+        .block(
+            Block::default()
+                .borders(Borders::ALL)
+                .border_style(Style::default().fg(theme.accent))
+                .title(" help "),
+        );
     f.render_widget(p, area);
 }
 
 /// Render the transient error modal. Dismissed by any keypress from the main loop.
-pub fn render_error(f: &mut Frame, message: &str) {
+pub fn render_error(f: &mut Frame, theme: &ThemePalette, message: &str) {
     let area = centered_rect(50, 20, f.area());
     f.render_widget(Clear, area);
     let p = Paragraph::new(format!("  {}\n\n  press any key", message))
@@ -67,7 +79,7 @@ pub fn render_error(f: &mut Frame, message: &str) {
         .block(
             Block::default()
                 .borders(Borders::ALL)
-                .border_style(Style::default().fg(Color::Red))
+                .border_style(Style::default().fg(theme.error))
                 .title(" error "),
         );
     f.render_widget(p, area);
