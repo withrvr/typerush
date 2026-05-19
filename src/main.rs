@@ -402,6 +402,16 @@ fn save_current_session(app: &App) {
         total_chars: app.total_typed_chars,
         duration_secs: duration,
         timestamp: chrono::Local::now(),
+        key_hits: app
+            .key_hits
+            .iter()
+            .map(|(k, v)| (k.to_string(), *v))
+            .collect(),
+        key_misses: app
+            .key_misses
+            .iter()
+            .map(|(k, v)| (k.to_string(), *v))
+            .collect(),
     };
     let _ = storage::save_session(&record);
 }

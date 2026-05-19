@@ -1,8 +1,9 @@
 //! Results screen — shown immediately after a session ends.
 //!
 //! Displays final WPM, accuracy, elapsed time, character counts, the chosen
-//! mode, and the user's all-time best WPM. Includes a +/- delta against the
-//! previous session and a mini sparkline of recent WPM scores.
+//! mode, the user's all-time best, and (v0.3.0) the per-mode personal best.
+//! Includes a +/- delta against the previous session and a mini sparkline of
+//! recent WPM scores.
 
 use ratatui::{
     prelude::*,
@@ -17,7 +18,7 @@ pub fn render(f: &mut Frame, app: &App) {
     let theme = &app.theme;
     let layout = Layout::vertical([
         Constraint::Length(3),
-        Constraint::Length(9),
+        Constraint::Length(10),
         Constraint::Length(6),
         Constraint::Min(0),
         Constraint::Length(3),
@@ -35,9 +36,11 @@ pub fn render(f: &mut Frame, app: &App) {
     let wpm = app.wpm();
     let acc = app.accuracy();
     let elapsed = app.elapsed().as_secs_f64();
+    let mode_label = app.mode.label();
 
     let sessions = storage::load_sessions().unwrap_or_default();
-    let pb = storage::personal_best(&sessions).unwrap_or(0.0);
+
+    // Delta vs the previous any-mode session (skip the one we just saved).
     let last_wpm = sessions.iter().rev().nth(1).map(|s| s.wpm);
     let delta = match last_wpm {
         Some(prev) => {
@@ -54,6 +57,43 @@ pub fn render(f: &mut Frame, app: &App) {
             )
         }
         None => Span::raw(""),
+    };
+
+    // Per-mode personal best (v0.3.0).
+    // Compare current session's WPM against all *previous* sessions of the
+    // same mode (skipping the one just saved) to detect a new mode PB.
+    let prev_mode_pb = sessions
+        .iter()
+        .rev()
+        .skip(1) // skip the session we just saved
+        .filter(|s| s.mode == mode_label)
+        .map(|s| s.wpm)
+        .fold(None::<f64>, |best, w| {
+            Some(best.map_or(w, |b: f64| b.max(w)))
+        });
+
+    let is_new_mode_pb = match prev_mode_pb {
+        None => true, // first session for this mode
+        Some(prev) => wpm > prev,
+    };
+    let mode_pb_now = storage::personal_best_for_mode(&sessions, &mode_label).unwrap_or(wpm);
+
+    let pb_label = format!("  {:>13}", format!("{} best", mode_label));
+    let pb_value = Span::styled(
+        format!("{:>6.1} wpm", mode_pb_now),
+        Style::default()
+            .fg(theme.accent)
+            .add_modifier(Modifier::BOLD),
+    );
+    let new_pb_badge = if is_new_mode_pb {
+        Span::styled(
+            "  ★ new best!",
+            Style::default()
+                .fg(theme.correct)
+                .add_modifier(Modifier::BOLD),
+        )
+    } else {
+        Span::raw("")
     };
 
     let body_lines = vec![
@@ -87,16 +127,12 @@ pub fn render(f: &mut Frame, app: &App) {
         ]),
         Line::from(vec![
             Span::styled("  mode       ", Style::default().fg(theme.pending)),
-            Span::styled(app.mode.label(), Style::default().fg(theme.mode_tag)),
+            Span::styled(&mode_label, Style::default().fg(theme.mode_tag)),
         ]),
         Line::from(vec![
-            Span::styled("  best ever  ", Style::default().fg(theme.pending)),
-            Span::styled(
-                format!("{:>6.1} wpm", pb),
-                Style::default()
-                    .fg(theme.accent)
-                    .add_modifier(Modifier::BOLD),
-            ),
+            Span::styled(pb_label, Style::default().fg(theme.pending)),
+            pb_value,
+            new_pb_badge,
         ]),
     ];
     let body = Paragraph::new(body_lines).block(
