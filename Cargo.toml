@@ -11,6 +11,7 @@ authors = ["Raghav Rathi", "withrvr"]
 readme = "README.md"
 exclude = [
     "assets/",
+    "docs/",
     ".github/",
     "*.mp4",
     "*.gif",
