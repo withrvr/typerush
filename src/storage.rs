@@ -249,11 +249,13 @@ pub fn key_accuracy(sessions: &[SessionRecord], min_presses: u64) -> Vec<KeyAccu
         })
         .collect();
 
-    // Worst keys first (lowest accuracy ascending).
+    // Worst keys first (lowest accuracy ascending); break ties alphabetically
+    // so equal-accuracy keys never swap positions between renders.
     stats.sort_by(|a, b| {
         a.accuracy
             .partial_cmp(&b.accuracy)
             .unwrap_or(std::cmp::Ordering::Equal)
+            .then_with(|| a.key.cmp(&b.key))
     });
     stats
 }
@@ -484,6 +486,22 @@ mod tests {
         // 'b' is worse (50%) and should come first.
         assert_eq!(stats[0].key, 'b');
         assert_eq!(stats[1].key, 'a');
+    }
+
+    #[test]
+    fn key_accuracy_stable_order_for_equal_accuracy() {
+        // 'r' and 'n' both at 80% — alphabetical tiebreaker must keep 'n' before 'r'.
+        let s = make_record_with_keys(
+            50.0,
+            "time-30s",
+            0,
+            &[("r", 4), ("n", 4)],
+            &[("r", 1), ("n", 1)], // r=80%, n=80%
+        );
+        let stats = key_accuracy(&[s], 1);
+        assert_eq!(stats.len(), 2);
+        assert_eq!(stats[0].key, 'n');
+        assert_eq!(stats[1].key, 'r');
     }
 
     #[test]
