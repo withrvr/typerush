@@ -1,6 +1,6 @@
 [package]
 name = "typerush"
-version = "0.2.0"
+version = "0.3.0"
 edition = "2021"
 description = "In your terminal — a fast, cross-platform WPM typing trainer built with Rust"
 license = "MIT"

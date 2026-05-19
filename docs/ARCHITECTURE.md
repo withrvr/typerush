@@ -95,8 +95,9 @@ src/
 │                        colored feedback. Unit-tested here.
 │
 ├── storage.rs           SessionRecord struct + read/write of
-│                        ~/.typerush/stats.json. Personal best & average
-│                        accuracy helpers.
+│                        ~/.typerush/stats.json. Helpers: personal_best,
+│                        personal_best_for_mode, average_accuracy, streak,
+│                        avg_wpm_last_n_days, key_accuracy (v0.3.0).
 │
 ├── theme/
 │   ├── mod.rs           ThemePalette struct (10 themable color slots)
@@ -168,9 +169,18 @@ over a dark terminal. The menu list, stats date column, and help overlay
 all follow this pattern.
 
 ### Stats persistence
-JSON, flat array, no schema. The file is small enough (one session ≈ 200B)
-that we rewrite it whole on every save. Zen-mode sessions are deliberately
-excluded.
+JSON, flat array, no schema. The file is small enough (one session ≈ 200B
+before v0.3.0, slightly larger with per-key maps) that we rewrite it whole on
+every save. Zen-mode sessions are deliberately excluded.
+
+v0.3.0 added two optional fields to `SessionRecord`:
+- `key_hits: HashMap<String, u64>` — per-key correct-press counts
+- `key_misses: HashMap<String, u64>` — per-key wrong/extra-press counts
+
+Both fields use `#[serde(default)]` so old records without them load cleanly
+as empty maps. The aggregation helpers (`streak`, `avg_wpm_last_n_days`,
+`personal_best_for_mode`, `key_accuracy`) all live in `storage.rs` and are
+pure functions over `&[SessionRecord]`.
 
 ### Cross-platform
 crossterm handles Windows Console API, ANSI escape codes, and raw mode in one

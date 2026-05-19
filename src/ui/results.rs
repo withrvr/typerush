@@ -60,6 +60,10 @@ pub fn render(f: &mut Frame, app: &App) {
     };
 
     // Per-mode personal best (v0.3.0).
+    // Zen sessions are never saved, so there's no meaningful per-mode PB for
+    // Zen — show a "no record kept" placeholder instead.
+    let is_zen = matches!(app.mode, crate::app::Mode::Zen);
+
     // Compare current session's WPM against all *previous* sessions of the
     // same mode (skipping the one just saved) to detect a new mode PB.
     let prev_mode_pb = sessions
@@ -72,28 +76,43 @@ pub fn render(f: &mut Frame, app: &App) {
             Some(best.map_or(w, |b: f64| b.max(w)))
         });
 
-    let is_new_mode_pb = match prev_mode_pb {
-        None => true, // first session for this mode
-        Some(prev) => wpm > prev,
-    };
-    let mode_pb_now = storage::personal_best_for_mode(&sessions, &mode_label).unwrap_or(wpm);
+    let is_new_mode_pb = !is_zen
+        && match prev_mode_pb {
+            None => true, // first session for this mode
+            Some(prev) => wpm > prev,
+        };
 
-    let pb_label = format!("  {:>13}", format!("{} best", mode_label));
-    let pb_value = Span::styled(
-        format!("{:>6.1} wpm", mode_pb_now),
-        Style::default()
-            .fg(theme.accent)
-            .add_modifier(Modifier::BOLD),
-    );
-    let new_pb_badge = if is_new_mode_pb {
-        Span::styled(
-            "  ★ new best!",
-            Style::default()
-                .fg(theme.correct)
-                .add_modifier(Modifier::BOLD),
-        )
+    let pb_line = if is_zen {
+        Line::from(vec![
+            Span::styled("  best ever  ", Style::default().fg(theme.pending)),
+            Span::styled("  — (zen not saved)", Style::default().fg(theme.pending)),
+        ])
     } else {
-        Span::raw("")
+        let mode_pb_now = storage::personal_best_for_mode(&sessions, &mode_label).unwrap_or(wpm);
+        // Right-pad label to keep WPM value at a consistent column.
+        let raw_label = format!("{} best", mode_label);
+        let padded_label = format!("  {:<13}", raw_label);
+        let pb_value = Span::styled(
+            format!("{:>6.1} wpm", mode_pb_now),
+            Style::default()
+                .fg(theme.accent)
+                .add_modifier(Modifier::BOLD),
+        );
+        let badge = if is_new_mode_pb {
+            Span::styled(
+                "  ★ new best!",
+                Style::default()
+                    .fg(theme.correct)
+                    .add_modifier(Modifier::BOLD),
+            )
+        } else {
+            Span::raw("")
+        };
+        Line::from(vec![
+            Span::styled(padded_label, Style::default().fg(theme.pending)),
+            pb_value,
+            badge,
+        ])
     };
 
     let body_lines = vec![
@@ -129,11 +148,7 @@ pub fn render(f: &mut Frame, app: &App) {
             Span::styled("  mode       ", Style::default().fg(theme.pending)),
             Span::styled(&mode_label, Style::default().fg(theme.mode_tag)),
         ]),
-        Line::from(vec![
-            Span::styled(pb_label, Style::default().fg(theme.pending)),
-            pb_value,
-            new_pb_badge,
-        ]),
+        pb_line,
     ];
     let body = Paragraph::new(body_lines).block(
         Block::default()

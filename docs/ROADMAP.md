@@ -68,11 +68,11 @@ KEY:  ✅ done    🚧 in progress    🔲 planned    💡 idea
 
 ## 🔲 Planned
 
-### v0.3 — Smarter stats
-- 🔲 Per-key accuracy heatmap (find your problem keys)
-- 🔲 Per-mode personal bests (separate PB for time-30s vs words-50)
-- 🔲 Daily streak counter
-- 🔲 Average WPM over the last 7 / 30 days
+### ✅ v0.3 — Smarter stats
+- ✅ Per-key accuracy heatmap (find your problem keys)
+- ✅ Per-mode personal bests (separate PB for time-30s vs words-50)
+- ✅ Daily streak counter
+- ✅ Average WPM over the last 7 / 30 days
 
 ### v0.4 — More content & menu UX
 - 🔲 Bigger English word pool (10k)

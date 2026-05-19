@@ -13,6 +13,51 @@ _No unreleased changes yet._
 
 ---
 
+## [0.3.0] — smarter stats
+
+### Added
+
+- **Per-key accuracy heatmap.** TypeRush now tracks how often you type each
+  key correctly vs. incorrectly. After enough sessions the Stats screen shows
+  a "key accuracy" panel with up to 5 of your worst keys, including hit/total
+  counts and a colour-coded accuracy percentage (red < 80%, amber < 93%,
+  green otherwise). The panel shows "no key data yet (keep typing!)" until at
+  least one key has been pressed 3 or more times. Per-key data is stored in
+  `stats.json` alongside each session record.
+- **Per-mode personal bests.** The Results screen now shows the personal best
+  specifically for the mode you just finished (e.g. `time-30s best`) instead
+  of the all-time best across all modes. A `★ new best!` badge fires whenever
+  you beat your previous record for that mode, including on your first session.
+  Zen-mode results display `— (zen not saved)` since Zen sessions are not saved.
+- **Daily streak counter.** The Stats screen summary now shows how many
+  consecutive calendar days (in local time) you have at least one session on.
+  Streak counts backward from today (or yesterday — the streak is still active
+  if you haven't typed yet today). Displayed as "1 day", "N days", or "—" when
+  the streak is broken.
+- **Average WPM over the last 7 and 30 days.** Two rolling-window WPM
+  averages appear in the Stats screen summary. Both show "—" when no sessions
+  fall within the window.
+- **Backward-compatible stats file.** New `key_hits` / `key_misses` fields
+  use `#[serde(default)]` so existing `~/.typerush/stats.json` records without
+  them load cleanly — no migration needed.
+
+### Changed
+
+- **Stats screen layout redesigned.** The summary card and the new key-accuracy
+  heatmap sit side by side in a two-column top row, followed by the WPM
+  sparkline and the recent-sessions table. The sparkline is slightly shorter
+  (5 rows instead of 7) so the full screen still fits in a 24-row terminal.
+- **Results screen body expanded** from `Constraint::Length(9)` to
+  `Constraint::Length(10)` to accommodate the mode-specific best row.
+
+### Compatibility
+
+- Existing CLI flags, modes, config, and the stats file format are all
+  unchanged. Old `stats.json` records load correctly and contribute to
+  global stats; they just won't provide per-key heatmap data.
+
+---
+
 ## [0.2.0] — customization
 
 ### Added
@@ -110,6 +155,7 @@ _No unreleased changes yet._
   dedicated docs.
 - Demo GIF uses absolute GitHub raw URL for correct display on crates.io.
 
-[Unreleased]: https://github.com/withrvr/typerush/compare/v0.2.0...HEAD
+[Unreleased]: https://github.com/withrvr/typerush/compare/v0.3.0...HEAD
+[0.3.0]: https://github.com/withrvr/typerush/compare/v0.2.0...v0.3.0
 [0.2.0]: https://github.com/withrvr/typerush/compare/v0.1.1...v0.2.0
 [0.1.1]: https://github.com/withrvr/typerush/releases/tag/v0.1.1
