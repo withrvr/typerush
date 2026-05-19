@@ -59,3 +59,55 @@ pub const CODE_JS: &[&str] = &[
     "Promise.all(tasks).then(results => done(results));",
     "const unique = [...new Set(arr)];",
 ];
+
+pub const CODE_GO: &[&str] = &[
+    "package main; import \"fmt\"; func main() { fmt.Println(\"hi\") }",
+    "func add(a, b int) int { return a + b }",
+    "for i := 0; i < 10; i++ { fmt.Println(i) }",
+    "if err != nil { return err }",
+    "type Point struct { X, Y float64 }",
+    "ch := make(chan int, 4); ch <- 1; close(ch)",
+    "defer file.Close(); data, _ := io.ReadAll(file)",
+    "go func() { wg.Done() }()",
+    "m := map[string]int{\"one\": 1, \"two\": 2}",
+    "s := []int{1, 2, 3}; s = append(s, 4)",
+];
+
+pub const CODE_JAVA: &[&str] = &[
+    "public class Hello { public static void main(String[] a) { System.out.println(\"hi\"); } }",
+    "List<Integer> xs = new ArrayList<>(); xs.add(1); xs.add(2);",
+    "for (int i = 0; i < 10; i++) System.out.println(i);",
+    "Map<String, Integer> m = new HashMap<>(); m.put(\"a\", 1);",
+    "if (x != null && x.length() > 0) return x;",
+    "try { run(); } catch (Exception e) { e.printStackTrace(); }",
+    "int sum = nums.stream().mapToInt(Integer::intValue).sum();",
+    "record Point(double x, double y) {}",
+    "Optional<User> u = repo.findById(id);",
+    "String s = String.format(\"x = %d\", value);",
+];
+
+pub const CODE_SQL: &[&str] = &[
+    "SELECT id, name FROM users WHERE active = 1 ORDER BY name;",
+    "INSERT INTO logs (level, msg) VALUES ('info', 'started');",
+    "UPDATE products SET price = price * 1.1 WHERE category = 'food';",
+    "DELETE FROM sessions WHERE expires_at < NOW();",
+    "SELECT COUNT(*) FROM orders WHERE total > 100;",
+    "CREATE TABLE notes (id SERIAL PRIMARY KEY, body TEXT NOT NULL);",
+    "SELECT u.name, o.total FROM users u JOIN orders o ON o.user_id = u.id;",
+    "SELECT category, AVG(price) FROM products GROUP BY category;",
+    "WITH recent AS (SELECT * FROM events WHERE day >= '2024-01-01') SELECT * FROM recent;",
+    "ALTER TABLE users ADD COLUMN created_at TIMESTAMP DEFAULT NOW();",
+];
+
+pub const CODE_SHELL: &[&str] = &[
+    "for f in *.txt; do echo \"$f\"; done",
+    "grep -rn 'TODO' src/ | head -20",
+    "find . -type f -name '*.log' -mtime +7 -delete",
+    "tar -czf backup.tar.gz ./data && rm -rf ./data",
+    "if [ -f /etc/hosts ]; then cat /etc/hosts; fi",
+    "cat data.csv | awk -F, '{print $2}' | sort | uniq -c",
+    "curl -sSL https://example.com | jq '.items[].name'",
+    "while read line; do echo \"$line\"; done < input.txt",
+    "ps aux | grep node | awk '{print $2}' | xargs kill -9",
+    "export PATH=\"$HOME/.cargo/bin:$PATH\" && cargo build --release",
+];
