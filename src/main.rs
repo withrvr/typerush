@@ -13,6 +13,7 @@
 mod app;
 mod config;
 mod game;
+mod state;
 mod storage;
 mod theme;
 mod ui;
@@ -36,8 +37,10 @@ use crossterm::{
 use ratatui::{backend::CrosstermBackend, Terminal};
 
 use crate::app::{App, MenuAction, Mode, Screen};
+use crate::config::load::CliOverrides;
 use crate::storage::SessionRecord;
 use crate::theme::builtin;
+use crate::words::WordPool;
 
 /// Command-line interface. Run with no args to open the interactive menu; pass
 /// any of the mode flags to skip the menu and jump straight into a session.
@@ -65,13 +68,29 @@ struct Cli {
     #[arg(long)]
     quote: bool,
 
-    /// Skip the menu and start a code session: rust|python|js.
+    /// Skip the menu and start a code session: rust|python|js|go|java|sql|shell.
     #[arg(long)]
     code: Option<String>,
 
     /// Skip the menu and start zen mode.
     #[arg(long)]
     zen: bool,
+
+    /// Skip the menu and start a symbols-drill session of N tokens.
+    #[arg(long)]
+    symbols: Option<usize>,
+
+    /// Use the larger 10,000-word pool instead of the default ~1,000.
+    #[arg(long)]
+    big: bool,
+
+    /// Sprinkle punctuation marks onto random words during Time / Words modes.
+    #[arg(long)]
+    punctuation: bool,
+
+    /// Mix random number literals (1–4 digits) into Time / Words modes.
+    #[arg(long)]
+    numbers: bool,
 
     /// One-shot theme override: dark | light | monokai | dracula.
     /// Takes precedence over the `theme` setting in `~/.typerush/config.toml`.
@@ -81,12 +100,19 @@ struct Cli {
     /// Print available built-in theme names and exit.
     #[arg(long)]
     list_themes: bool,
+
+    /// Print every snippet name discovered under `~/.typerush/snippets/` and exit.
+    #[arg(long)]
+    list_snippets: bool,
 }
 
 fn main() -> Result<()> {
     let cli = Cli::parse();
     if cli.list_themes {
         print_themes_and_exit();
+    }
+    if cli.list_snippets {
+        print_snippets_and_exit();
     }
     install_panic_hook();
     let mut terminal = setup_terminal()?;
@@ -100,6 +126,22 @@ fn main() -> Result<()> {
 fn print_themes_and_exit() -> ! {
     for theme_name in builtin::names() {
         println!("{}", theme_name);
+    }
+    std::process::exit(0);
+}
+
+/// Print every snippet discovered under `~/.typerush/snippets/` and exit.
+/// Each line is `<name>\t<path>` so shell scripts can split on tab.
+fn print_snippets_and_exit() -> ! {
+    let discovered = words::snippets::discover_snippets();
+    if discovered.is_empty() {
+        eprintln!(
+            "no snippets found. Drop .txt files into {} to populate this list.",
+            words::snippets::snippets_dir().display()
+        );
+    }
+    for snippet in &discovered {
+        println!("{}\t{}", snippet.name, snippet.path.display());
     }
     std::process::exit(0);
 }
@@ -148,8 +190,24 @@ fn install_panic_hook() {
 /// enough that we're not busy-looping. `event::poll` blocks for the remainder
 /// of the tick interval so keystrokes are still handled instantly.
 fn run_app(terminal: &mut Tui, cli: Cli) -> Result<()> {
-    let (resolved, warnings) = config::load::load_or_default(cli.theme.as_deref());
-    let mut app = App::new(cli.file.clone(), resolved.palette, resolved.default_mode);
+    let overrides = CliOverrides {
+        theme: cli.theme.as_deref(),
+        word_pool: if cli.big {
+            Some(WordPool::Extended)
+        } else {
+            None
+        },
+        punctuation: if cli.punctuation { Some(true) } else { None },
+        numbers: if cli.numbers { Some(true) } else { None },
+    };
+    let (resolved, warnings) = config::load::load_or_default_with(overrides);
+    let mut app = App::new(
+        cli.file.clone(),
+        resolved.palette,
+        resolved.default_mode,
+        resolved.word_pool,
+        resolved.word_decor,
+    );
     // Surface the first config warning (if any) via the existing error modal.
     // We only show one — chaining them would force the user to dismiss N
     // popups before reaching the menu.
@@ -220,7 +278,7 @@ fn run_app(terminal: &mut Tui, cli: Cli) -> Result<()> {
 }
 
 /// If the user passed a mode flag (`--time`, `--words`, `--quote`, `--code`,
-/// `--zen`, `--file`) skip the menu and start that mode immediately.
+/// `--zen`, `--symbols`, `--file`) skip the menu and start that mode immediately.
 fn apply_cli_autostart(app: &mut App, cli: &Cli) -> Result<()> {
     if let Some(seconds) = cli.time {
         app.start_game(Mode::Time(seconds))?;
@@ -233,12 +291,21 @@ fn apply_cli_autostart(app: &mut App, cli: &Cli) -> Result<()> {
             "rust" | "rs" => words::CodeLang::Rust,
             "python" | "py" => words::CodeLang::Python,
             "js" | "javascript" => words::CodeLang::JavaScript,
+            "go" | "golang" => words::CodeLang::Go,
+            "java" => words::CodeLang::Java,
+            "sql" => words::CodeLang::Sql,
+            "shell" | "sh" | "bash" => words::CodeLang::Shell,
             other => return Err(anyhow::anyhow!("unknown code lang: {other}")),
         };
         app.start_game(Mode::Code(lang))?;
     } else if cli.zen {
         app.start_game(Mode::Zen)?;
-    } else if cli.file.is_some() {
+    } else if let Some(count) = cli.symbols {
+        app.start_game(Mode::Symbols(count))?;
+    } else if let Some(path) = cli.file.as_deref() {
+        // Remember the explicit `--file` path so the menu's Custom row stays
+        // useful on the next launch.
+        app.remember_custom_file(path);
         app.start_game(Mode::Custom)?;
     }
     Ok(())
@@ -288,20 +355,13 @@ fn toggle_help(app: &mut App) {
 /// Keymap for the main menu: arrow keys / j-k to navigate, Enter to act.
 fn handle_menu_key(app: &mut App, code: KeyCode, _mods: KeyModifiers) {
     match code {
-        KeyCode::Up | KeyCode::Char('k') => {
-            if app.menu_index == 0 {
-                app.menu_index = app.menu.len() - 1;
-            } else {
-                app.menu_index -= 1;
-            }
-        }
-        KeyCode::Down | KeyCode::Char('j') => {
-            app.menu_index = (app.menu_index + 1) % app.menu.len();
-        }
+        KeyCode::Up | KeyCode::Char('k') => move_menu_cursor(app, -1),
+        KeyCode::Down | KeyCode::Char('j') => move_menu_cursor(app, 1),
         KeyCode::Enter => {
             let item = &app.menu[app.menu_index];
             let action = item.action;
             let mode = item.mode;
+            let custom_path = item.custom_path.clone();
             match action {
                 MenuAction::Start => {
                     if let Some(m) = mode {
@@ -310,13 +370,49 @@ fn handle_menu_key(app: &mut App, code: KeyCode, _mods: KeyModifiers) {
                         }
                     }
                 }
+                MenuAction::StartCustom => {
+                    // Per-snippet rows carry their own path; the bare "Custom"
+                    // row uses whatever `app.custom_file` holds (set by
+                    // `--file` or by a previous session via state.json).
+                    if let Some(path) = custom_path {
+                        app.remember_custom_file(&path);
+                    }
+                    if let Err(e) = app.start_game(Mode::Custom) {
+                        app.error_message = Some(e.to_string());
+                    }
+                }
                 MenuAction::ShowStats => app.screen = Screen::Stats,
                 MenuAction::Quit => app.should_quit = true,
+                MenuAction::Separator => {}
             }
         }
         KeyCode::Tab => app.screen = Screen::Stats,
         KeyCode::Char('q') => app.should_quit = true,
         _ => {}
+    }
+}
+
+/// Move the menu highlight by `step` (positive = down) and skip any
+/// separator rows that fall in the way. Wraps around at the ends. Safe even
+/// if every row is a separator (caller terminates after one full lap).
+fn move_menu_cursor(app: &mut App, step: i32) {
+    let len = app.menu.len();
+    if len == 0 {
+        return;
+    }
+    let mut idx = app.menu_index as i32;
+    for _ in 0..len as i32 {
+        idx += step;
+        if idx < 0 {
+            idx += len as i32;
+        }
+        if idx >= len as i32 {
+            idx -= len as i32;
+        }
+        if !matches!(app.menu[idx as usize].action, MenuAction::Separator) {
+            app.menu_index = idx as usize;
+            return;
+        }
     }
 }
 
@@ -437,7 +533,13 @@ mod tests {
     use crate::theme::ThemePalette;
 
     fn make_typing_app() -> App {
-        let mut app = App::new(None, ThemePalette::default(), DefaultMode::Time(15));
+        let mut app = App::new(
+            None,
+            ThemePalette::default(),
+            DefaultMode::Time(15),
+            Default::default(),
+            Default::default(),
+        );
         app.screen = Screen::Typing;
         app.mode = Mode::Words(2);
         app.words = vec![Word::new("hello".into()), Word::new("world".into())];
@@ -506,5 +608,90 @@ mod tests {
         handle_typing_key(&mut app, KeyCode::Char('a'), KeyModifiers::CONTROL);
         handle_typing_key(&mut app, KeyCode::Char('z'), KeyModifiers::CONTROL);
         assert_eq!(app.words[0].typed, "hel");
+    }
+
+    // ── v0.4.0: menu navigation with section separators ─────────────────────
+
+    fn make_menu_app() -> App {
+        let mut app = App::new(
+            None,
+            ThemePalette::default(),
+            DefaultMode::Time(15),
+            Default::default(),
+            Default::default(),
+        );
+        app.screen = Screen::Menu;
+        app
+    }
+
+    /// Arrow-down navigation must skip past separator rows so the user never
+    /// "lands" on a decorative section header.
+    #[test]
+    fn arrow_down_skips_separators() {
+        let mut app = make_menu_app();
+        // Find the first non-separator row.
+        let first_non_sep = app
+            .menu
+            .iter()
+            .position(|m| !matches!(m.action, MenuAction::Separator))
+            .unwrap();
+        app.menu_index = first_non_sep;
+        // Move down once and ensure the new row isn't a separator.
+        handle_menu_key(&mut app, KeyCode::Down, KeyModifiers::NONE);
+        assert!(
+            !matches!(app.menu[app.menu_index].action, MenuAction::Separator),
+            "landed on a separator at index {}: {:?}",
+            app.menu_index,
+            app.menu[app.menu_index].label
+        );
+    }
+
+    /// Arrow-up wraps around past the trailing separators back to a real row.
+    #[test]
+    fn arrow_up_skips_separators_and_wraps() {
+        let mut app = make_menu_app();
+        // Start at index 0 — likely a separator. Pressing Up should wrap to
+        // the very last selectable row.
+        app.menu_index = 0;
+        handle_menu_key(&mut app, KeyCode::Up, KeyModifiers::NONE);
+        assert!(!matches!(
+            app.menu[app.menu_index].action,
+            MenuAction::Separator
+        ));
+    }
+
+    /// Pressing Enter on a separator is a no-op — never starts a game.
+    #[test]
+    fn enter_on_separator_does_nothing() {
+        let mut app = make_menu_app();
+        let sep_idx = app
+            .menu
+            .iter()
+            .position(|m| matches!(m.action, MenuAction::Separator))
+            .expect("menu must contain a separator");
+        app.menu_index = sep_idx;
+        handle_menu_key(&mut app, KeyCode::Enter, KeyModifiers::NONE);
+        // Still on the menu, no error fired.
+        assert_eq!(app.screen, Screen::Menu);
+        assert!(app.error_message.is_none());
+    }
+
+    /// Hitting Enter on the Custom row with no remembered file surfaces a
+    /// friendly error instead of crashing.
+    #[test]
+    fn custom_row_without_file_shows_error() {
+        let mut app = make_menu_app();
+        let idx = app
+            .menu
+            .iter()
+            .position(|m| matches!(m.action, MenuAction::StartCustom) && m.custom_path.is_none())
+            .expect("custom row missing");
+        app.menu_index = idx;
+        // Ensure no file is remembered.
+        app.custom_file = None;
+        handle_menu_key(&mut app, KeyCode::Enter, KeyModifiers::NONE);
+        assert!(app.error_message.is_some());
+        // Still on the menu — didn't transition to Typing.
+        assert_eq!(app.screen, Screen::Menu);
     }
 }

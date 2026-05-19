@@ -1,12 +1,17 @@
 //! Main menu screen — ASCII banner up top, a centered list of modes in the
 //! middle, and a one-line hint footer at the bottom.
+//!
+//! The list contains two row types: regular start-mode rows and
+//! `MenuAction::Separator` rows. Separators render as muted section labels
+//! (e.g. "── Time ──") and are skipped by the keyboard navigation handler in
+//! `main.rs`, so the user never lands on one with `Enter`.
 
 use ratatui::{
     prelude::*,
     widgets::{Block, Borders, List, ListItem, ListState, Paragraph, Wrap},
 };
 
-use crate::app::App;
+use crate::app::{App, MenuAction};
 
 /// Render the menu screen. `app.menu_index` highlights the active row.
 pub fn render(f: &mut Frame, app: &App) {
@@ -54,7 +59,20 @@ pub fn render(f: &mut Frame, app: &App) {
     let items: Vec<ListItem> = app
         .menu
         .iter()
-        .map(|m| ListItem::new(Line::from(m.label)))
+        .map(|m| {
+            if matches!(m.action, MenuAction::Separator) {
+                // Section headers: italicised, muted, no highlight target.
+                let span = Span::styled(
+                    m.label.clone(),
+                    Style::default()
+                        .fg(app.theme.pending)
+                        .add_modifier(Modifier::ITALIC),
+                );
+                ListItem::new(Line::from(span))
+            } else {
+                ListItem::new(Line::from(m.label.clone()))
+            }
+        })
         .collect();
     let list = List::new(items)
         // Unselected items inherit this fg. Without it, ratatui leaves cells

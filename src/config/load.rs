@@ -12,6 +12,7 @@ use ratatui::style::Color;
 use super::{Colors, Config};
 use crate::storage;
 use crate::theme::{self, builtin, ThemePalette};
+use crate::words::{WordDecor, WordPool};
 
 /// Final, fully-resolved configuration the rest of the app consumes.
 ///
@@ -24,6 +25,11 @@ pub struct ResolvedConfig {
     pub palette: ThemePalette,
     /// Pre-selected mode for the menu (and starting `App::mode`).
     pub default_mode: DefaultMode,
+    /// Which English word pool to use in Time / Words / Zen modes. Default
+    /// is the legacy `Common` pool so a missing config behaves like v0.3.
+    pub word_pool: WordPool,
+    /// Punctuation / numbers decoration toggles (v0.4.0).
+    pub word_decor: WordDecor,
 }
 
 /// Coarse picker for which menu row to highlight on launch. Distinct from
@@ -41,6 +47,8 @@ pub enum DefaultMode {
     Code(CodeLangKind),
     /// Zen mode.
     Zen,
+    /// `symbols-N` — value is N (symbol tokens). Added in v0.4.0.
+    Symbols(usize),
 }
 
 /// Mirror of `crate::words::CodeLang` for config-resolution purposes.
@@ -50,6 +58,10 @@ pub enum CodeLangKind {
     Rust,
     Python,
     JavaScript,
+    Go,
+    Java,
+    Sql,
+    Shell,
 }
 
 impl Default for ResolvedConfig {
@@ -58,6 +70,8 @@ impl Default for ResolvedConfig {
             palette: ThemePalette::default(),
             // Picked in agreement with the v0.2.0 spec: "default scheme time 15 sec".
             default_mode: DefaultMode::Time(15),
+            word_pool: WordPool::Common,
+            word_decor: WordDecor::default(),
         }
     }
 }
@@ -74,8 +88,29 @@ pub fn config_path() -> PathBuf {
 ///   - unknown theme name  → fall back to dark, one warning
 ///   - bad color override  → keep the theme's slot, one warning per bad slot
 ///
-/// `cli_theme_override` lets `--theme` win over whatever the config says.
-pub fn load_or_default(cli_theme_override: Option<&str>) -> (ResolvedConfig, Vec<String>) {
+/// CLI overrides that should take precedence over whatever the config file
+/// says. Anything set to `None` falls through to the config value (or its
+/// hardcoded default).
+#[derive(Debug, Default, Clone)]
+pub struct CliOverrides<'a> {
+    /// `--theme <name>`.
+    pub theme: Option<&'a str>,
+    /// `--big` → `Some(WordPool::Extended)`.
+    pub word_pool: Option<WordPool>,
+    /// `--punctuation` → `Some(true)`; `--no-punctuation` → `Some(false)`.
+    pub punctuation: Option<bool>,
+    /// `--numbers` → `Some(true)`; `--no-numbers` → `Some(false)`.
+    pub numbers: Option<bool>,
+}
+
+/// Read and resolve the config from disk, then apply CLI overrides on top.
+///
+/// Always succeeds:
+///   - missing file        → defaults, no warnings
+///   - unparseable file    → defaults, one warning
+///   - unknown theme name  → fall back to dark, one warning
+///   - bad color override  → keep the theme's slot, one warning per bad slot
+pub fn load_or_default_with(cli: CliOverrides<'_>) -> (ResolvedConfig, Vec<String>) {
     let path = config_path();
     let raw_config = if path.exists() {
         match std::fs::read_to_string(&path) {
@@ -94,17 +129,28 @@ pub fn load_or_default(cli_theme_override: Option<&str>) -> (ResolvedConfig, Vec
     } else {
         Config::default()
     };
-    resolve(raw_config, cli_theme_override)
+    resolve_with(raw_config, cli)
 }
 
 /// Pure resolver — easier to unit-test than the disk-touching variant.
+/// Compat shim: takes a single `--theme` override only.
+#[cfg(test)]
 fn resolve(raw: Config, cli_theme_override: Option<&str>) -> (ResolvedConfig, Vec<String>) {
+    resolve_with(
+        raw,
+        CliOverrides {
+            theme: cli_theme_override,
+            ..Default::default()
+        },
+    )
+}
+
+/// Full pure resolver. Applies CLI overrides after the file-derived defaults.
+fn resolve_with(raw: Config, cli: CliOverrides<'_>) -> (ResolvedConfig, Vec<String>) {
     let mut warnings = vec![];
 
     // Theme: CLI wins over config. Unknown name → warn, use dark.
-    let theme_choice = cli_theme_override
-        .map(str::to_string)
-        .or_else(|| raw.theme.clone());
+    let theme_choice = cli.theme.map(str::to_string).or_else(|| raw.theme.clone());
     let palette_base = match theme_choice.as_deref() {
         None => builtin::DARK,
         Some(name) => match builtin::by_name(name) {
@@ -128,14 +174,57 @@ fn resolve(raw: Config, cli_theme_override: Option<&str>) -> (ResolvedConfig, Ve
     };
 
     let default_mode = resolve_default_mode(raw.defaults.as_ref(), &mut warnings);
+    let (mut word_pool, mut word_decor) = resolve_words_section(raw.words.as_ref(), &mut warnings);
+
+    // CLI overrides win.
+    if let Some(p) = cli.word_pool {
+        word_pool = p;
+    }
+    if let Some(p) = cli.punctuation {
+        word_decor.punctuation = p;
+    }
+    if let Some(n) = cli.numbers {
+        word_decor.numbers = n;
+    }
 
     (
         ResolvedConfig {
             palette,
             default_mode,
+            word_pool,
+            word_decor,
         },
         warnings,
     )
+}
+
+/// Translate the optional `[words]` section into a (pool, decor) pair.
+fn resolve_words_section(
+    words: Option<&super::Words>,
+    warnings: &mut Vec<String>,
+) -> (WordPool, WordDecor) {
+    let Some(words) = words else {
+        return (WordPool::Common, WordDecor::default());
+    };
+    let pool = match words.pool.as_deref() {
+        None => WordPool::Common,
+        Some(name) => match name.to_lowercase().as_str() {
+            "common" | "small" | "1000" | "1k" => WordPool::Common,
+            "extended" | "big" | "10000" | "10k" => WordPool::Extended,
+            other => {
+                warnings.push(format!(
+                    "unknown word pool '{}', falling back to 'common'",
+                    other
+                ));
+                WordPool::Common
+            }
+        },
+    };
+    let decor = WordDecor {
+        punctuation: words.punctuation.unwrap_or(false),
+        numbers: words.numbers.unwrap_or(false),
+    };
+    (pool, decor)
 }
 
 fn apply_color_overrides(
@@ -182,6 +271,7 @@ fn resolve_default_mode(
             warnings,
         )),
         "zen" => DefaultMode::Zen,
+        "symbols" => DefaultMode::Symbols(defaults.symbol_count.unwrap_or(25)),
         other => {
             warnings.push(format!(
                 "unknown default mode '{}', falling back to 'time'",
@@ -192,11 +282,18 @@ fn resolve_default_mode(
     }
 }
 
-fn parse_code_lang(name: &str, warnings: &mut Vec<String>) -> CodeLangKind {
+/// Parse a code-lang config value into the canonical [`CodeLangKind`].
+/// Public so the CLI parser in `main.rs` can use the same accepted-alias
+/// table and warning style.
+pub fn parse_code_lang(name: &str, warnings: &mut Vec<String>) -> CodeLangKind {
     match name.to_lowercase().as_str() {
         "rust" | "rs" => CodeLangKind::Rust,
         "python" | "py" => CodeLangKind::Python,
         "js" | "javascript" => CodeLangKind::JavaScript,
+        "go" | "golang" => CodeLangKind::Go,
+        "java" => CodeLangKind::Java,
+        "sql" => CodeLangKind::Sql,
+        "shell" | "sh" | "bash" => CodeLangKind::Shell,
         other => {
             warnings.push(format!(
                 "unknown code_lang '{}', falling back to 'rust'",
@@ -343,5 +440,176 @@ mod tests {
             resolved.default_mode,
             DefaultMode::Code(CodeLangKind::Python)
         );
+    }
+
+    // ── v0.4.0 additions ────────────────────────────────────────────────────
+
+    #[test]
+    fn new_code_langs_resolve_correctly() {
+        use crate::config::Defaults;
+        for (input, expected) in [
+            ("go", CodeLangKind::Go),
+            ("golang", CodeLangKind::Go),
+            ("java", CodeLangKind::Java),
+            ("sql", CodeLangKind::Sql),
+            ("shell", CodeLangKind::Shell),
+            ("bash", CodeLangKind::Shell),
+            ("sh", CodeLangKind::Shell),
+        ] {
+            let raw = Config {
+                defaults: Some(Defaults {
+                    mode: Some("code".into()),
+                    code_lang: Some(input.into()),
+                    ..Default::default()
+                }),
+                ..Default::default()
+            };
+            let (resolved, warnings) = resolve(raw, None);
+            assert!(
+                warnings.is_empty(),
+                "warnings for {}: {:?}",
+                input,
+                warnings
+            );
+            assert_eq!(resolved.default_mode, DefaultMode::Code(expected));
+        }
+    }
+
+    #[test]
+    fn symbols_mode_resolves() {
+        use crate::config::Defaults;
+        let raw = Config {
+            defaults: Some(Defaults {
+                mode: Some("symbols".into()),
+                symbol_count: Some(40),
+                ..Default::default()
+            }),
+            ..Default::default()
+        };
+        let (resolved, warnings) = resolve(raw, None);
+        assert!(warnings.is_empty());
+        assert_eq!(resolved.default_mode, DefaultMode::Symbols(40));
+    }
+
+    #[test]
+    fn symbols_mode_default_count_is_25() {
+        use crate::config::Defaults;
+        let raw = Config {
+            defaults: Some(Defaults {
+                mode: Some("symbols".into()),
+                ..Default::default()
+            }),
+            ..Default::default()
+        };
+        let (resolved, _) = resolve(raw, None);
+        assert_eq!(resolved.default_mode, DefaultMode::Symbols(25));
+    }
+
+    #[test]
+    fn words_section_default_is_common_pool_no_decor() {
+        let raw = Config::default();
+        let (resolved, warnings) = resolve(raw, None);
+        assert!(warnings.is_empty());
+        assert_eq!(resolved.word_pool, WordPool::Common);
+        assert_eq!(resolved.word_decor, WordDecor::default());
+    }
+
+    #[test]
+    fn words_section_extended_pool() {
+        use crate::config::Words;
+        let raw = Config {
+            words: Some(Words {
+                pool: Some("extended".into()),
+                ..Default::default()
+            }),
+            ..Default::default()
+        };
+        let (resolved, warnings) = resolve(raw, None);
+        assert!(warnings.is_empty());
+        assert_eq!(resolved.word_pool, WordPool::Extended);
+    }
+
+    #[test]
+    fn words_section_unknown_pool_warns() {
+        use crate::config::Words;
+        let raw = Config {
+            words: Some(Words {
+                pool: Some("hyper".into()),
+                ..Default::default()
+            }),
+            ..Default::default()
+        };
+        let (resolved, warnings) = resolve(raw, None);
+        assert_eq!(resolved.word_pool, WordPool::Common);
+        assert!(!warnings.is_empty());
+        assert!(warnings[0].contains("hyper"));
+    }
+
+    #[test]
+    fn words_section_decor_toggles_apply() {
+        use crate::config::Words;
+        let raw = Config {
+            words: Some(Words {
+                punctuation: Some(true),
+                numbers: Some(true),
+                ..Default::default()
+            }),
+            ..Default::default()
+        };
+        let (resolved, _) = resolve(raw, None);
+        assert!(resolved.word_decor.punctuation);
+        assert!(resolved.word_decor.numbers);
+    }
+
+    #[test]
+    fn cli_overrides_beat_config_pool_and_decor() {
+        use crate::config::Words;
+        let raw = Config {
+            words: Some(Words {
+                pool: Some("common".into()),
+                punctuation: Some(false),
+                numbers: Some(false),
+            }),
+            ..Default::default()
+        };
+        let (resolved, _) = resolve_with(
+            raw,
+            CliOverrides {
+                word_pool: Some(WordPool::Extended),
+                punctuation: Some(true),
+                numbers: Some(true),
+                ..Default::default()
+            },
+        );
+        assert_eq!(resolved.word_pool, WordPool::Extended);
+        assert!(resolved.word_decor.punctuation);
+        assert!(resolved.word_decor.numbers);
+    }
+
+    #[test]
+    fn pool_aliases_all_resolve_to_extended() {
+        use crate::config::Words;
+        for alias in ["extended", "big", "10000", "10k", "EXTENDED"] {
+            let raw = Config {
+                words: Some(Words {
+                    pool: Some(alias.into()),
+                    ..Default::default()
+                }),
+                ..Default::default()
+            };
+            let (resolved, warnings) = resolve(raw, None);
+            assert!(
+                warnings.is_empty(),
+                "warning for alias {}: {:?}",
+                alias,
+                warnings
+            );
+            assert_eq!(
+                resolved.word_pool,
+                WordPool::Extended,
+                "alias {} did not resolve to Extended",
+                alias
+            );
+        }
     }
 }

@@ -41,8 +41,12 @@ pub fn render(f: &mut Frame, app: &App) {
         Line::from("  Time           type as many words as you can"),
         Line::from("  Words          type a fixed number of words"),
         Line::from("  Quote          a famous programming quote"),
-        Line::from("  Code           real Rust / Python / JS snippets"),
+        Line::from("  Code           real Rust / Python / JS / Go / Java / SQL / Shell snippets"),
+        Line::from("  Symbols        drill punctuation: (){};=> and friends"),
         Line::from("  Zen            no timer, no stats — just flow"),
+        Line::from(
+            "  Custom         your own text file — drop .txt files in ~/.typerush/snippets/",
+        ),
         Line::raw(""),
         Line::from(Span::styled(
             "  Stats saved to ~/.typerush/stats.json",
@@ -50,6 +54,10 @@ pub fn render(f: &mut Frame, app: &App) {
         )),
         Line::from(Span::styled(
             "  Config: ~/.typerush/config.toml",
+            Style::default().fg(theme.pending),
+        )),
+        Line::from(Span::styled(
+            "  Snippets: ~/.typerush/snippets/*.txt",
             Style::default().fg(theme.pending),
         )),
     ];

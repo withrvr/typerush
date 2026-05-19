@@ -35,6 +35,8 @@ pub struct Config {
     pub defaults: Option<Defaults>,
     /// Optional per-slot color overrides applied on top of the chosen theme.
     pub colors: Option<Colors>,
+    /// Word source / decoration toggles (v0.4.0).
+    pub words: Option<Words>,
 }
 
 /// Default mode + per-mode defaults. Pre-selects the matching row in the menu
@@ -42,14 +44,33 @@ pub struct Config {
 #[derive(Debug, Default, Deserialize, PartialEq)]
 #[serde(deny_unknown_fields)]
 pub struct Defaults {
-    /// Which menu row to pre-select: `time` | `words` | `quote` | `code` | `zen`.
+    /// Which menu row to pre-select: `time` | `words` | `quote` | `code` |
+    /// `zen` | `symbols`.
     pub mode: Option<String>,
     /// Seconds for `Mode::Time` (and for the time-mode menu row pre-selection).
     pub time_seconds: Option<u64>,
     /// Word count for `Mode::Words`.
     pub word_count: Option<usize>,
-    /// Language for `Mode::Code`: `rust` | `python` | `js`.
+    /// Language for `Mode::Code`: `rust` | `python` | `js` | `go` | `java`
+    /// | `sql` | `shell`.
     pub code_lang: Option<String>,
+    /// Token count for `Mode::Symbols` (v0.4.0).
+    pub symbol_count: Option<usize>,
+}
+
+/// `[words]` section: which pool to draw English words from and whether to
+/// decorate words with punctuation or numbers. Added in v0.4.0.
+#[derive(Debug, Default, Deserialize, PartialEq)]
+#[serde(deny_unknown_fields)]
+pub struct Words {
+    /// Pool name: `common` (default, ≈1k words) | `extended` (10k words).
+    pub pool: Option<String>,
+    /// When true, randomly attach punctuation marks (`,.;:?!"'` etc.) to
+    /// roughly a quarter of words and occasionally wrap a word in paired
+    /// brackets / quotes.
+    pub punctuation: Option<bool>,
+    /// When true, replace ~12% of slots with a random 1–4 digit number.
+    pub numbers: Option<bool>,
 }
 
 /// Per-slot color overrides. Any field that's `Some` overrides the corresponding

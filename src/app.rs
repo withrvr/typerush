@@ -18,8 +18,10 @@ use std::time::{Duration, Instant};
 
 use crate::config::load::{CodeLangKind, DefaultMode};
 use crate::game::{get_char_states, CharState};
+use crate::state::{self, AppState};
 use crate::storage::{self, AggregateStats, SessionRecord};
 use crate::theme::ThemePalette;
+use crate::words::{snippets::Snippet, WordDecor, WordPool};
 
 /// One of the high-level screens the user can be looking at. The current
 /// `Screen` drives both the renderer dispatch in `ui::render` and the keymap
@@ -53,14 +55,22 @@ pub enum Mode {
     Code(crate::words::CodeLang),
     /// No timer, no stats. Just type.
     Zen,
-    /// Words sourced from a user-supplied text file (`--file path.txt`).
+    /// Words sourced from a user-supplied text file (`--file path.txt` or a
+    /// snippet picked from `~/.typerush/snippets/`).
     Custom,
+    /// Drill programming punctuation: type N short symbol tokens like `=>`,
+    /// `(){};` and other characters typists usually under-train.
+    Symbols(usize),
 }
 
 impl Mode {
     /// Short tag used when saving sessions to disk and in the UI ("time-30s",
     /// "words-50", "code-rust", …). Keeping the format stable means old stats
     /// stay readable across releases.
+    ///
+    /// `Mode::Code(JavaScript)` deliberately serialises as `"code-javascript"`
+    /// rather than the slug `"js"` — old session records use that string and
+    /// per-mode PB lookup matches by exact label, so we must not regress it.
     pub fn label(&self) -> String {
         match self {
             Mode::Time(seconds) => format!("time-{}s", seconds),
@@ -69,6 +79,7 @@ impl Mode {
             Mode::Code(lang) => format!("code-{:?}", lang).to_lowercase(),
             Mode::Zen => "zen".to_string(),
             Mode::Custom => "custom".to_string(),
+            Mode::Symbols(count) => format!("symbols-{}", count),
         }
     }
 }
@@ -97,21 +108,35 @@ impl Word {
 
 /// One row in the main menu.
 pub struct MenuItem {
-    pub label: &'static str,
-    /// Set for "start a game" rows; `None` for rows like "Stats" or "Quit".
+    /// User-visible row label. Owned `String` so dynamic rows (e.g. the
+    /// "Custom · last/file.txt" row, or one per discovered snippet) can show
+    /// runtime data.
+    pub label: String,
+    /// Set for "start a game" rows; `None` for rows like "Stats" or "Quit"
+    /// or visual section separators.
     pub mode: Option<Mode>,
     pub action: MenuAction,
+    /// For `MenuAction::StartCustom`, the snippet path to use as the word
+    /// source. `None` for every other row.
+    pub custom_path: Option<String>,
 }
 
 /// What pressing Enter on a menu item should do.
-#[derive(Clone, Copy)]
+#[derive(Clone, Copy, Debug)]
 pub enum MenuAction {
     /// Start the game in `MenuItem::mode`.
     Start,
+    /// Start a custom-file session using `MenuItem::custom_path`. If the path
+    /// is `None`, falls back to the remembered last custom file from
+    /// `state.json`; if that's also missing, surfaces a friendly error.
+    StartCustom,
     /// Jump to the historical stats screen.
     ShowStats,
     /// Quit the application.
     Quit,
+    /// Decorative section header / spacer — Enter does nothing and the
+    /// keymap skips over it when navigating with arrow keys.
+    Separator,
 }
 
 /// Translate a `DefaultMode` (the config-side enum) into a runtime `Mode`.
@@ -124,7 +149,12 @@ fn mode_for(default_mode: DefaultMode) -> Mode {
         DefaultMode::Code(CodeLangKind::Rust) => Mode::Code(CodeLang::Rust),
         DefaultMode::Code(CodeLangKind::Python) => Mode::Code(CodeLang::Python),
         DefaultMode::Code(CodeLangKind::JavaScript) => Mode::Code(CodeLang::JavaScript),
+        DefaultMode::Code(CodeLangKind::Go) => Mode::Code(CodeLang::Go),
+        DefaultMode::Code(CodeLangKind::Java) => Mode::Code(CodeLang::Java),
+        DefaultMode::Code(CodeLangKind::Sql) => Mode::Code(CodeLang::Sql),
+        DefaultMode::Code(CodeLangKind::Shell) => Mode::Code(CodeLang::Shell),
         DefaultMode::Zen => Mode::Zen,
+        DefaultMode::Symbols(count) => Mode::Symbols(count),
     }
 }
 
@@ -146,91 +176,129 @@ fn best_menu_match(menu: &[MenuItem], default_mode: DefaultMode) -> usize {
                 | (Some(Mode::Code(_)), DefaultMode::Code(_))
                 | (Some(Mode::Quote), DefaultMode::Quote)
                 | (Some(Mode::Zen), DefaultMode::Zen)
+                | (Some(Mode::Symbols(_)), DefaultMode::Symbols(_))
         )
     });
-    family_match.unwrap_or(0)
+    // Skip separator rows when no other match exists.
+    family_match
+        .or_else(|| {
+            menu.iter()
+                .position(|item| !matches!(item.action, MenuAction::Separator))
+        })
+        .unwrap_or(0)
 }
 
-/// Build the default menu shown on startup.
-pub fn default_menu() -> Vec<MenuItem> {
+/// Build a menu row representing a visual section header. Rows with
+/// `MenuAction::Separator` are skipped by arrow-key navigation and rendered
+/// in muted style by the menu UI.
+fn separator(label: &str) -> MenuItem {
+    MenuItem {
+        label: label.to_string(),
+        mode: None,
+        action: MenuAction::Separator,
+        custom_path: None,
+    }
+}
+
+/// Convenience constructor for a "start this mode" row.
+fn start_row(label: impl Into<String>, mode: Mode) -> MenuItem {
+    MenuItem {
+        label: label.into(),
+        mode: Some(mode),
+        action: MenuAction::Start,
+        custom_path: None,
+    }
+}
+
+/// Build the default menu shown on startup, plus any user-discovered
+/// snippets. `last_custom_file` (if any) populates the "Custom" row with the
+/// last path so a one-key restart works.
+pub fn build_menu(snippets: &[Snippet], last_custom_file: Option<&str>) -> Vec<MenuItem> {
     use crate::words::CodeLang;
-    vec![
-        MenuItem {
-            label: "Time · 15s",
-            mode: Some(Mode::Time(15)),
-            action: MenuAction::Start,
-        },
-        MenuItem {
-            label: "Time · 30s",
-            mode: Some(Mode::Time(30)),
-            action: MenuAction::Start,
-        },
-        MenuItem {
-            label: "Time · 60s",
-            mode: Some(Mode::Time(60)),
-            action: MenuAction::Start,
-        },
-        MenuItem {
-            label: "Time · 120s",
-            mode: Some(Mode::Time(120)),
-            action: MenuAction::Start,
-        },
-        MenuItem {
-            label: "Words · 10",
-            mode: Some(Mode::Words(10)),
-            action: MenuAction::Start,
-        },
-        MenuItem {
-            label: "Words · 25",
-            mode: Some(Mode::Words(25)),
-            action: MenuAction::Start,
-        },
-        MenuItem {
-            label: "Words · 50",
-            mode: Some(Mode::Words(50)),
-            action: MenuAction::Start,
-        },
-        MenuItem {
-            label: "Words · 100",
-            mode: Some(Mode::Words(100)),
-            action: MenuAction::Start,
-        },
-        MenuItem {
-            label: "Quote",
-            mode: Some(Mode::Quote),
-            action: MenuAction::Start,
-        },
-        MenuItem {
-            label: "Code · Rust",
-            mode: Some(Mode::Code(CodeLang::Rust)),
-            action: MenuAction::Start,
-        },
-        MenuItem {
-            label: "Code · Python",
-            mode: Some(Mode::Code(CodeLang::Python)),
-            action: MenuAction::Start,
-        },
-        MenuItem {
-            label: "Code · JavaScript",
-            mode: Some(Mode::Code(CodeLang::JavaScript)),
-            action: MenuAction::Start,
-        },
-        MenuItem {
-            label: "Zen",
-            mode: Some(Mode::Zen),
-            action: MenuAction::Start,
-        },
-        MenuItem {
-            label: "Stats",
-            mode: None,
-            action: MenuAction::ShowStats,
-        },
-        MenuItem {
-            label: "Quit",
-            mode: None,
-            action: MenuAction::Quit,
-        },
-    ]
+    let mut menu: Vec<MenuItem> = vec![
+        separator("── Time ──"),
+        start_row("Time · 15s", Mode::Time(15)),
+        start_row("Time · 30s", Mode::Time(30)),
+        start_row("Time · 60s", Mode::Time(60)),
+        start_row("Time · 120s", Mode::Time(120)),
+        separator("── Words ──"),
+        start_row("Words · 10", Mode::Words(10)),
+        start_row("Words · 25", Mode::Words(25)),
+        start_row("Words · 50", Mode::Words(50)),
+        start_row("Words · 100", Mode::Words(100)),
+        separator("── Quote ──"),
+        start_row("Quote", Mode::Quote),
+        separator("── Code ──"),
+        start_row("Code · Rust", Mode::Code(CodeLang::Rust)),
+        start_row("Code · Python", Mode::Code(CodeLang::Python)),
+        start_row("Code · JavaScript", Mode::Code(CodeLang::JavaScript)),
+        start_row("Code · Go", Mode::Code(CodeLang::Go)),
+        start_row("Code · Java", Mode::Code(CodeLang::Java)),
+        start_row("Code · SQL", Mode::Code(CodeLang::Sql)),
+        start_row("Code · Shell", Mode::Code(CodeLang::Shell)),
+        separator("── Symbols ──"),
+        start_row("Symbols · 25", Mode::Symbols(25)),
+        start_row("Symbols · 50", Mode::Symbols(50)),
+        separator("── Zen ──"),
+        start_row("Zen", Mode::Zen),
+        separator("── Custom ──"),
+        custom_row(last_custom_file),
+    ];
+    for snippet in snippets {
+        menu.push(MenuItem {
+            label: format!("Snippet · {}", snippet.name),
+            mode: Some(Mode::Custom),
+            action: MenuAction::StartCustom,
+            custom_path: Some(snippet.path.to_string_lossy().to_string()),
+        });
+    }
+    menu.push(separator("── More ──"));
+    menu.push(MenuItem {
+        label: "Stats".to_string(),
+        mode: None,
+        action: MenuAction::ShowStats,
+        custom_path: None,
+    });
+    menu.push(MenuItem {
+        label: "Quit".to_string(),
+        mode: None,
+        action: MenuAction::Quit,
+        custom_path: None,
+    });
+    menu
+}
+
+/// "Custom" menu row. Shows the last-used path (truncated) when one exists,
+/// otherwise a hint that the user should pass `--file` or drop snippets.
+fn custom_row(last_custom_file: Option<&str>) -> MenuItem {
+    let label = match last_custom_file {
+        Some(path) => format!("Custom · {}", truncate_for_menu(path, 48)),
+        None => "Custom · (pass --file or drop a .txt in ~/.typerush/snippets/)".to_string(),
+    };
+    MenuItem {
+        label,
+        mode: Some(Mode::Custom),
+        action: MenuAction::StartCustom,
+        custom_path: None,
+    }
+}
+
+/// Shorten `path` to at most `max` characters (not bytes) by replacing the
+/// middle with `…`, keeping the head and (more importantly) the file name
+/// visible.
+fn truncate_for_menu(path: &str, max: usize) -> String {
+    let chars: Vec<char> = path.chars().collect();
+    if chars.len() <= max {
+        return path.to_string();
+    }
+    // Reserve one slot for the ellipsis itself; weight the kept text toward
+    // the tail so the file name on the right stays visible.
+    let keep = max.saturating_sub(1);
+    let head = keep / 3;
+    let tail = keep - head;
+    let head_s: String = chars.iter().take(head).collect();
+    let tail_s: String = chars.iter().skip(chars.len() - tail).collect();
+    format!("{}…{}", head_s, tail_s)
 }
 
 /// The entire mutable state of the application.
@@ -280,6 +348,13 @@ pub struct App {
     pub tick_count: u64,
     /// Active color palette — read by every UI module on every frame.
     pub theme: ThemePalette,
+    /// Which English-word pool to draw from in Time / Words modes. Picked at
+    /// startup from config + CLI; can be toggled at runtime from the menu.
+    pub word_pool: WordPool,
+    /// Punctuation / numbers decoration to apply to randomly-picked words.
+    pub word_decor: WordDecor,
+    /// Persistent UI state (last custom file, etc.) loaded once at startup.
+    pub app_state: AppState,
 
     // --- per-key accuracy (v0.3.0) ---
     /// Number of times each key was typed at the correct position.
@@ -303,12 +378,25 @@ impl App {
     /// `default_mode` (from `~/.typerush/config.toml`) controls which menu row
     /// is pre-selected and what `app.mode` starts as. `palette` is the active
     /// color theme — UI modules read it on every frame.
+    ///
+    /// Discovers `~/.typerush/snippets/*.txt` and loads `state.json` so the
+    /// "Custom" row and snippet rows are populated immediately.
     pub fn new(
         custom_file: Option<String>,
         palette: ThemePalette,
         default_mode: DefaultMode,
+        word_pool: WordPool,
+        word_decor: WordDecor,
     ) -> Self {
-        let menu = default_menu();
+        let app_state = state::load_state();
+        let snippets = crate::words::snippets::discover_snippets();
+        // `--file` from the CLI always wins for the initial custom path; if
+        // unset, fall back to the last-used file we persisted in state.json so
+        // the "Custom" menu row works on a bare `typerush` launch.
+        let effective_custom_file = custom_file
+            .clone()
+            .or_else(|| app_state.last_custom_file.clone());
+        let menu = build_menu(&snippets, effective_custom_file.as_deref());
         let initial_mode = mode_for(default_mode);
         let menu_index = best_menu_match(&menu, default_mode);
         Self {
@@ -324,11 +412,14 @@ impl App {
             correct_chars: 0,
             total_typed_chars: 0,
             backspaces: 0,
-            custom_file,
+            custom_file: effective_custom_file,
             should_quit: false,
             error_message: None,
             tick_count: 0,
             theme: palette,
+            word_pool,
+            word_decor,
+            app_state,
             key_hits: HashMap::new(),
             key_misses: HashMap::new(),
             stats_cache: None,
@@ -350,6 +441,18 @@ impl App {
                 agg
             },
         }
+    }
+
+    /// Record that the user just ran a custom-file session against `path` and
+    /// persist that to `~/.typerush/state.json` so the next launch's "Custom"
+    /// menu row points back at it. Best-effort.
+    pub fn remember_custom_file(&mut self, path: &str) {
+        self.app_state.last_custom_file = Some(path.to_string());
+        self.custom_file = Some(path.to_string());
+        state::save_state(&self.app_state);
+        // Rebuild the menu so the Custom row's label reflects the new path.
+        let snippets = crate::words::snippets::discover_snippets();
+        self.menu = build_menu(&snippets, Some(path));
     }
 
     /// How long the user has been (or was) typing during the current session.
@@ -403,12 +506,14 @@ impl App {
         }
     }
 
-    /// In `Mode::Words`, `(words_completed, words_total)`. `None` for all other modes.
+    /// In `Mode::Words` / `Mode::Symbols`, `(items_completed, items_total)`.
+    /// `None` for all other modes.
     pub fn progress(&self) -> Option<(usize, usize)> {
-        if let Mode::Words(target) = self.mode {
-            Some((self.current_word.min(target), target))
-        } else {
-            None
+        match self.mode {
+            Mode::Words(target) | Mode::Symbols(target) => {
+                Some((self.current_word.min(target), target))
+            }
+            _ => None,
         }
     }
 
@@ -420,13 +525,15 @@ impl App {
     pub fn start_game(&mut self, mode: Mode) -> anyhow::Result<()> {
         use crate::words;
         self.mode = mode;
+        let pool = self.word_pool;
+        let decor = self.word_decor;
         self.words = match mode {
             // Time mode just needs *enough* words that no one runs out.
-            Mode::Time(_) => words::random_words(300)
+            Mode::Time(_) => words::random_words_from(300, pool, decor)
                 .into_iter()
                 .map(Word::new)
                 .collect(),
-            Mode::Words(count) => words::random_words(count)
+            Mode::Words(count) => words::random_words_from(count, pool, decor)
                 .into_iter()
                 .map(Word::new)
                 .collect(),
@@ -435,7 +542,8 @@ impl App {
                 .into_iter()
                 .map(Word::new)
                 .collect(),
-            Mode::Zen => words::random_words(500)
+            // Zen intentionally ignores decoration toggles to stay calm.
+            Mode::Zen => words::random_words_from(500, pool, WordDecor::default())
                 .into_iter()
                 .map(Word::new)
                 .collect(),
@@ -447,9 +555,15 @@ impl App {
                     }
                     loaded.into_iter().map(Word::new).collect()
                 } else {
-                    return Err(anyhow::anyhow!("no custom file provided"));
+                    return Err(anyhow::anyhow!(
+                        "no custom file. Pass --file <path> or drop a .txt in ~/.typerush/snippets/"
+                    ));
                 }
             }
+            Mode::Symbols(count) => words::random_symbol_tokens(count)
+                .into_iter()
+                .map(Word::new)
+                .collect(),
         };
         self.current_word = 0;
         self.started_at = None;
@@ -580,11 +694,14 @@ impl App {
         self.current_word += 1;
 
         // Word-count modes: stop once the user has hit the target.
-        if let Mode::Words(target) = self.mode {
-            if self.current_word >= target {
-                self.finish_game();
-                return;
+        match self.mode {
+            Mode::Words(target) | Mode::Symbols(target) => {
+                if self.current_word >= target {
+                    self.finish_game();
+                    return;
+                }
             }
+            _ => {}
         }
         // Quote / code / custom-file modes: stop when there's nothing left to type.
         if matches!(self.mode, Mode::Quote | Mode::Code(_) | Mode::Custom)
@@ -617,14 +734,14 @@ mod tests {
 
     #[test]
     fn best_menu_match_exact_time() {
-        let menu = default_menu();
+        let menu = build_menu(&[], None);
         let index = best_menu_match(&menu, DefaultMode::Time(30));
         assert_eq!(menu[index].label, "Time · 30s");
     }
 
     #[test]
     fn best_menu_match_exact_words() {
-        let menu = default_menu();
+        let menu = build_menu(&[], None);
         let index = best_menu_match(&menu, DefaultMode::Words(100));
         assert_eq!(menu[index].label, "Words · 100");
     }
@@ -633,21 +750,21 @@ mod tests {
     fn best_menu_match_falls_back_to_first_time_row() {
         // 45 isn't one of the four standard time rows; we expect the first
         // time row ("Time · 15s") rather than something unrelated.
-        let menu = default_menu();
+        let menu = build_menu(&[], None);
         let index = best_menu_match(&menu, DefaultMode::Time(45));
         assert_eq!(menu[index].label, "Time · 15s");
     }
 
     #[test]
     fn best_menu_match_falls_back_to_first_words_row() {
-        let menu = default_menu();
+        let menu = build_menu(&[], None);
         let index = best_menu_match(&menu, DefaultMode::Words(7));
         assert_eq!(menu[index].label, "Words · 10");
     }
 
     #[test]
     fn best_menu_match_picks_zen_row() {
-        let menu = default_menu();
+        let menu = build_menu(&[], None);
         let index = best_menu_match(&menu, DefaultMode::Zen);
         assert_eq!(menu[index].label, "Zen");
     }
@@ -659,6 +776,8 @@ mod tests {
             None,
             crate::theme::ThemePalette::default(),
             DefaultMode::Time(15),
+            Default::default(),
+            Default::default(),
         );
         app.screen = Screen::Typing;
         app.mode = Mode::Words(1);
@@ -720,7 +839,13 @@ mod tests {
     #[test]
     fn custom_mode_finishes_after_last_word() {
         let palette = crate::theme::ThemePalette::default();
-        let mut app = App::new(None, palette, DefaultMode::Time(15));
+        let mut app = App::new(
+            None,
+            palette,
+            DefaultMode::Time(15),
+            Default::default(),
+            Default::default(),
+        );
         app.mode = Mode::Custom;
         app.words = vec![Word::new("hi".into()), Word::new("bye".into())];
         app.screen = Screen::Typing;
@@ -732,5 +857,232 @@ mod tests {
 
         assert_eq!(app.screen, Screen::Results);
         assert!(app.ended_at.is_some());
+    }
+
+    // ── v0.4.0 ─────────────────────────────────────────────────────────────
+
+    /// Symbols mode behaves like Words mode: it finishes after the user
+    /// submits the configured number of tokens.
+    #[test]
+    fn symbols_mode_finishes_after_target_tokens() {
+        let palette = crate::theme::ThemePalette::default();
+        let mut app = App::new(
+            None,
+            palette,
+            DefaultMode::Time(15),
+            Default::default(),
+            Default::default(),
+        );
+        app.mode = Mode::Symbols(3);
+        app.words = vec![
+            Word::new("()".into()),
+            Word::new("=>".into()),
+            Word::new("{}".into()),
+        ];
+        app.screen = Screen::Typing;
+
+        for ch in "() => {} ".chars() {
+            app.handle_char(ch);
+        }
+        assert_eq!(app.screen, Screen::Results);
+    }
+
+    /// `Mode::Symbols` exposes progress() like `Mode::Words` so the gauge
+    /// works.
+    #[test]
+    fn symbols_mode_reports_progress() {
+        let palette = crate::theme::ThemePalette::default();
+        let mut app = App::new(
+            None,
+            palette,
+            DefaultMode::Time(15),
+            Default::default(),
+            Default::default(),
+        );
+        app.mode = Mode::Symbols(10);
+        app.current_word = 3;
+        assert_eq!(app.progress(), Some((3, 10)));
+    }
+
+    /// Per-mode label for Symbols mode is "symbols-N" so per-mode PB tracking
+    /// keys by token count.
+    #[test]
+    fn symbols_mode_label_includes_count() {
+        assert_eq!(Mode::Symbols(25).label(), "symbols-25");
+        assert_eq!(Mode::Symbols(50).label(), "symbols-50");
+    }
+
+    /// Code mode labels stay backwards-compatible: `code-javascript` for the
+    /// JS variant (not the slug "js"), and lowercase for new variants.
+    #[test]
+    fn code_mode_labels_are_stable_for_pb_lookup() {
+        use crate::words::CodeLang;
+        assert_eq!(Mode::Code(CodeLang::Rust).label(), "code-rust");
+        assert_eq!(Mode::Code(CodeLang::Python).label(), "code-python");
+        assert_eq!(Mode::Code(CodeLang::JavaScript).label(), "code-javascript");
+        assert_eq!(Mode::Code(CodeLang::Go).label(), "code-go");
+        assert_eq!(Mode::Code(CodeLang::Java).label(), "code-java");
+        assert_eq!(Mode::Code(CodeLang::Sql).label(), "code-sql");
+        assert_eq!(Mode::Code(CodeLang::Shell).label(), "code-shell");
+    }
+
+    /// The menu must include exactly one row per built-in mode plus
+    /// separator rows for visual grouping. Separator rows are decorative;
+    /// only one row should match the default-mode pre-selection.
+    #[test]
+    fn menu_contains_all_new_v04_modes() {
+        let menu = build_menu(&[], None);
+        let labels: Vec<&str> = menu.iter().map(|m| m.label.as_str()).collect();
+
+        assert!(labels.iter().any(|l| l.contains("Symbols · 25")));
+        assert!(labels.iter().any(|l| l.contains("Symbols · 50")));
+        assert!(labels.iter().any(|l| l.contains("Code · Go")));
+        assert!(labels.iter().any(|l| l.contains("Code · Java")));
+        assert!(labels.iter().any(|l| l.contains("Code · SQL")));
+        assert!(labels.iter().any(|l| l.contains("Code · Shell")));
+        assert!(labels.iter().any(|l| l.starts_with("Custom")));
+    }
+
+    /// Visual separators are present in the menu and clearly distinguishable
+    /// from start rows by their `MenuAction::Separator` action.
+    #[test]
+    fn menu_has_visual_section_separators() {
+        let menu = build_menu(&[], None);
+        let separator_count = menu
+            .iter()
+            .filter(|m| matches!(m.action, MenuAction::Separator))
+            .count();
+        // Time, Words, Quote, Code, Symbols, Zen, Custom, More → 8 sections.
+        assert!(
+            separator_count >= 7,
+            "expected ≥7 separators, got {separator_count}"
+        );
+    }
+
+    /// The custom row labels with the truncated path when one is provided.
+    #[test]
+    fn custom_row_shows_last_path_when_known() {
+        let menu = build_menu(&[], Some("/tmp/my-typing-fodder.txt"));
+        let custom = menu
+            .iter()
+            .find(|m| matches!(m.action, MenuAction::StartCustom))
+            .expect("custom row missing");
+        assert!(custom.label.contains("Custom"));
+        assert!(custom.label.contains(".txt"));
+    }
+
+    /// Long paths are truncated in the middle so the file name remains visible.
+    #[test]
+    fn truncate_for_menu_collapses_long_paths() {
+        let long = "/very/deeply/nested/and/long/directory/structure/somewhere/finally/file.txt";
+        let truncated = truncate_for_menu(long, 30);
+        // Character count — not byte count — since `…` is a 3-byte char.
+        let char_count = truncated.chars().count();
+        assert!(
+            char_count <= 30,
+            "got {} chars: {:?}",
+            char_count,
+            truncated
+        );
+        assert!(truncated.contains('…'));
+        assert!(truncated.ends_with("file.txt"));
+    }
+
+    /// Short paths are passed through unchanged.
+    #[test]
+    fn truncate_for_menu_passes_short_paths_through() {
+        let short = "/tmp/x.txt";
+        assert_eq!(truncate_for_menu(short, 30), short);
+    }
+
+    /// Snippet rows are appended to the menu under the Custom section.
+    #[test]
+    fn snippets_appear_as_their_own_rows() {
+        use crate::words::snippets::Snippet;
+        let snippets = vec![
+            Snippet {
+                name: "alpha".into(),
+                path: std::path::PathBuf::from("/tmp/alpha.txt"),
+            },
+            Snippet {
+                name: "beta".into(),
+                path: std::path::PathBuf::from("/tmp/beta.txt"),
+            },
+        ];
+        let menu = build_menu(&snippets, None);
+        let snippet_rows: Vec<&MenuItem> = menu
+            .iter()
+            .filter(|m| {
+                matches!(m.action, MenuAction::StartCustom) && m.label.starts_with("Snippet ·")
+            })
+            .collect();
+        assert_eq!(snippet_rows.len(), 2);
+        assert!(snippet_rows[0].label.contains("alpha"));
+        assert!(snippet_rows[1].label.contains("beta"));
+        assert_eq!(
+            snippet_rows[0].custom_path.as_deref(),
+            Some("/tmp/alpha.txt")
+        );
+    }
+
+    /// Starting a session uses the configured word pool. With the extended
+    /// pool the words list comes from the larger dictionary; the test just
+    /// confirms `start_game` doesn't crash with either setting.
+    #[test]
+    fn start_game_with_extended_pool() {
+        let palette = crate::theme::ThemePalette::default();
+        let mut app = App::new(
+            None,
+            palette,
+            DefaultMode::Words(10),
+            WordPool::Extended,
+            Default::default(),
+        );
+        assert_eq!(app.word_pool, WordPool::Extended);
+        app.start_game(Mode::Words(10)).unwrap();
+        assert_eq!(app.words.len(), 10);
+    }
+
+    /// Punctuation decoration produces words that contain non-alphabetic
+    /// characters at least some of the time. With a 25% chance per slot,
+    /// 200 words is virtually guaranteed.
+    #[test]
+    fn start_game_with_punctuation_decor_adds_punctuation() {
+        let palette = crate::theme::ThemePalette::default();
+        let decor = WordDecor {
+            punctuation: true,
+            numbers: false,
+        };
+        let mut app = App::new(
+            None,
+            palette,
+            DefaultMode::Words(200),
+            WordPool::Common,
+            decor,
+        );
+        app.start_game(Mode::Words(200)).unwrap();
+        let any_punct = app.words.iter().any(|w| {
+            w.text
+                .chars()
+                .any(|c| !c.is_ascii_alphanumeric() && !c.is_whitespace())
+        });
+        assert!(any_punct, "expected at least one punctuated word");
+    }
+
+    /// Zen mode ignores decoration toggles to keep the screen calm.
+    #[test]
+    fn zen_mode_ignores_punctuation_toggle() {
+        let palette = crate::theme::ThemePalette::default();
+        let decor = WordDecor {
+            punctuation: true,
+            numbers: true,
+        };
+        let mut app = App::new(None, palette, DefaultMode::Zen, WordPool::Common, decor);
+        app.start_game(Mode::Zen).unwrap();
+        let plain = app
+            .words
+            .iter()
+            .all(|w| w.text.chars().all(|c| c.is_ascii_alphabetic()));
+        assert!(plain, "zen-mode words were decorated: {:?}", app.words);
     }
 }
