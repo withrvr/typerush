@@ -204,9 +204,13 @@ fn run_app(terminal: &mut Tui, cli: Cli) -> Result<()> {
             session_saved_for_this_results_screen = false;
         }
 
-        // Populate the session cache once when entering the Stats screen so
-        // the render path never reads stats.json on every frame.
-        if app.screen == Screen::Stats && last_screen != Screen::Stats {
+        // Populate the session cache once when entering the Stats or Results
+        // screen so the render path never reads stats.json on every frame.
+        // (On Results entry this runs *after* the save above, so the cache
+        // includes the session that was just recorded.)
+        if (app.screen == Screen::Stats || app.screen == Screen::Results)
+            && last_screen != app.screen
+        {
             app.stats_cache = storage::load_sessions().ok();
         }
 

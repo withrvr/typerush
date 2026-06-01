@@ -38,7 +38,7 @@ pub fn render(f: &mut Frame, app: &App) {
     let elapsed = app.elapsed().as_secs_f64();
     let mode_label = app.mode.label();
 
-    let sessions = storage::load_sessions().unwrap_or_default();
+    let sessions: &[storage::SessionRecord] = app.stats_cache.as_deref().unwrap_or(&[]);
 
     // Delta vs the previous any-mode session (skip the one we just saved).
     let last_wpm = sessions.iter().rev().nth(1).map(|s| s.wpm);
@@ -88,7 +88,7 @@ pub fn render(f: &mut Frame, app: &App) {
             Span::styled("  — (zen not saved)", Style::default().fg(theme.pending)),
         ])
     } else {
-        let mode_pb_now = storage::personal_best_for_mode(&sessions, &mode_label).unwrap_or(wpm);
+        let mode_pb_now = storage::personal_best_for_mode(sessions, &mode_label).unwrap_or(wpm);
         // Right-pad label to keep WPM value at a consistent column.
         let raw_label = format!("{} best", mode_label);
         let padded_label = format!("  {:<13}", raw_label);

@@ -111,6 +111,11 @@ hurts accuracy) but never toward correct chars.
 `~/.typerush/stats.json` — a plain JSON array. Back it up if you care about your
 history; delete it if you want a fresh start.
 
+`~/.typerush/aggregate.json` — a small running tally of per-key accuracy totals,
+used to render the key-accuracy heatmap quickly without rescanning your whole
+history. It's derived data: delete it and TypeRush rebuilds it from
+`stats.json` on the next launch.
+
 Zen-mode sessions are intentionally **not** saved.
 
 ### What the Stats screen shows (v0.3.0+)
