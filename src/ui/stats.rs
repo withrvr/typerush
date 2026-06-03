@@ -6,7 +6,7 @@
 //! v0.3.0 additions:
 //!  - Daily streak counter (top summary card)
 //!  - Average WPM over the last 7 and 30 days (top summary card)
-//!  - Per-key accuracy heatmap (worst 8 keys, min 3 presses each)
+//!  - Per-key accuracy heatmap (worst 5 keys, min 3 presses each)
 
 use ratatui::{
     prelude::*,

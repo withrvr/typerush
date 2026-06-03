@@ -79,7 +79,7 @@ _No unreleased changes yet._
 
 ---
 
-## [0.3.0] — smarter stats
+## [0.3.0] — 2026-06-01 — smarter stats
 
 ### Added
 
@@ -115,6 +115,24 @@ _No unreleased changes yet._
   (5 rows instead of 7) so the full screen still fits in a 24-row terminal.
 - **Results screen body expanded** from `Constraint::Length(9)` to
   `Constraint::Length(10)` to accommodate the mode-specific best row.
+
+### Performance
+
+- **Stats and Results screens no longer read `stats.json` on every frame.**
+  The session history is loaded once when you enter either screen and cached
+  in memory for the duration of the visit, then invalidated when a new session
+  is saved.
+- **Per-key accuracy is now O(1) to display.** A small running aggregate
+  (`~/.typerush/aggregate.json`) keeps cumulative per-key hit/miss totals,
+  updated incrementally on each save, so the heatmap no longer rescans the full
+  history every render. The aggregate is rebuilt automatically from existing
+  sessions on first launch after upgrading.
+
+### Fixed
+
+- **Stable ordering in the key-accuracy panel.** Keys with identical accuracy
+  (e.g. two keys both at 80%) are now broken ties alphabetically, so they no
+  longer swap positions and flicker between renders.
 
 ### Compatibility
 
