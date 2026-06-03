@@ -56,6 +56,9 @@ pub fn render(f: &mut Frame, app: &App) {
     f.render_widget(banner, layout[1]);
 
     let inner = centered_rect(60, 100, layout[2]);
+    // Borrow each label (`&str`) rather than cloning a fresh `String` per
+    // frame — the menu re-renders at 10 fps and dozens of small allocations
+    // would be wasted churn for static text.
     let items: Vec<ListItem> = app
         .menu
         .iter()
@@ -63,14 +66,14 @@ pub fn render(f: &mut Frame, app: &App) {
             if matches!(m.action, MenuAction::Separator) {
                 // Section headers: italicised, muted, no highlight target.
                 let span = Span::styled(
-                    m.label.clone(),
+                    m.label.as_str(),
                     Style::default()
                         .fg(app.theme.pending)
                         .add_modifier(Modifier::ITALIC),
                 );
                 ListItem::new(Line::from(span))
             } else {
-                ListItem::new(Line::from(m.label.clone()))
+                ListItem::new(Line::from(m.label.as_str()))
             }
         })
         .collect();

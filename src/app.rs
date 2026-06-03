@@ -355,6 +355,10 @@ pub struct App {
     pub word_decor: WordDecor,
     /// Persistent UI state (last custom file, etc.) loaded once at startup.
     pub app_state: AppState,
+    /// User snippet library discovered at startup from
+    /// `~/.typerush/snippets/*.txt`. Held here so the menu can be rebuilt
+    /// (e.g. when the Custom row label changes) without re-scanning the disk.
+    pub snippets: Vec<Snippet>,
 
     // --- per-key accuracy (v0.3.0) ---
     /// Number of times each key was typed at the correct position.
@@ -420,6 +424,7 @@ impl App {
             word_pool,
             word_decor,
             app_state,
+            snippets,
             key_hits: HashMap::new(),
             key_misses: HashMap::new(),
             stats_cache: None,
@@ -446,13 +451,23 @@ impl App {
     /// Record that the user just ran a custom-file session against `path` and
     /// persist that to `~/.typerush/state.json` so the next launch's "Custom"
     /// menu row points back at it. Best-effort.
+    ///
+    /// Re-uses the snippet list cached on `App` rather than re-scanning the
+    /// snippets directory — snippets don't change while the app is running,
+    /// and Enter-on-a-snippet is on the keystroke path.
     pub fn remember_custom_file(&mut self, path: &str) {
-        self.app_state.last_custom_file = Some(path.to_string());
-        self.custom_file = Some(path.to_string());
+        let owned = path.to_string();
+        self.custom_file = Some(owned.clone());
+        self.app_state.last_custom_file = Some(owned);
         state::save_state(&self.app_state);
-        // Rebuild the menu so the Custom row's label reflects the new path.
-        let snippets = crate::words::snippets::discover_snippets();
-        self.menu = build_menu(&snippets, Some(path));
+        // Preserve the highlight on whichever row the user is currently on
+        // (e.g. the snippet row they just pressed Enter on). `build_menu`
+        // produces a stable row order, so the index stays valid.
+        let previous_index = self.menu_index;
+        self.menu = build_menu(&self.snippets, self.custom_file.as_deref());
+        if previous_index < self.menu.len() {
+            self.menu_index = previous_index;
+        }
     }
 
     /// How long the user has been (or was) typing during the current session.
@@ -1023,6 +1038,48 @@ mod tests {
             snippet_rows[0].custom_path.as_deref(),
             Some("/tmp/alpha.txt")
         );
+    }
+
+    /// `remember_custom_file` updates the persisted path and the menu's
+    /// Custom row label, and preserves the user's current menu position.
+    /// Calling it twice in a row also works without re-rebuilding the menu
+    /// from a stale snippet snapshot.
+    #[test]
+    fn remember_custom_file_updates_menu_and_state() {
+        let palette = crate::theme::ThemePalette::default();
+        let mut app = App::new(
+            None,
+            palette,
+            DefaultMode::Time(15),
+            Default::default(),
+            Default::default(),
+        );
+        let original_index = app.menu_index;
+        app.remember_custom_file("/tmp/abc.txt");
+        assert_eq!(app.custom_file.as_deref(), Some("/tmp/abc.txt"));
+        assert_eq!(
+            app.app_state.last_custom_file.as_deref(),
+            Some("/tmp/abc.txt")
+        );
+        // Menu index is preserved (build_menu produces a stable row order).
+        assert_eq!(app.menu_index, original_index);
+        // The custom row reflects the new path.
+        let custom_row = app
+            .menu
+            .iter()
+            .find(|m| matches!(m.action, MenuAction::StartCustom) && m.custom_path.is_none())
+            .expect("custom row missing");
+        assert!(custom_row.label.contains("abc.txt"));
+
+        // Second call rotates to a different path without going stale.
+        app.remember_custom_file("/tmp/xyz.txt");
+        let custom_row = app
+            .menu
+            .iter()
+            .find(|m| matches!(m.action, MenuAction::StartCustom) && m.custom_path.is_none())
+            .expect("custom row missing");
+        assert!(custom_row.label.contains("xyz.txt"));
+        assert!(!custom_row.label.contains("abc.txt"));
     }
 
     /// Starting a session uses the configured word pool. With the extended
