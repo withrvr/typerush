@@ -37,10 +37,10 @@ use crossterm::{
 use ratatui::{backend::CrosstermBackend, Terminal};
 
 use crate::app::{App, MenuAction, Mode, Screen};
-use crate::config::load::CliOverrides;
+use crate::config::load::{parse_code_lang, CliOverrides, CodeLangKind};
 use crate::storage::SessionRecord;
 use crate::theme::builtin;
-use crate::words::WordPool;
+use crate::words::{CodeLang, WordPool};
 
 /// Command-line interface. Run with no args to open the interactive menu; pass
 /// any of the mode flags to skip the menu and jump straight into a session.
@@ -291,15 +291,23 @@ fn apply_cli_autostart(app: &mut App, cli: &Cli) -> Result<()> {
     } else if cli.quote {
         app.start_game(Mode::Quote)?;
     } else if let Some(lang_string) = cli.code.as_deref() {
-        let lang = match lang_string.to_lowercase().as_str() {
-            "rust" | "rs" => words::CodeLang::Rust,
-            "python" | "py" => words::CodeLang::Python,
-            "js" | "javascript" => words::CodeLang::JavaScript,
-            "go" | "golang" => words::CodeLang::Go,
-            "java" => words::CodeLang::Java,
-            "sql" => words::CodeLang::Sql,
-            "shell" | "sh" | "bash" => words::CodeLang::Shell,
-            other => return Err(anyhow::anyhow!("unknown code lang: {other}")),
+        // Share the alias table with `parse_code_lang` so a new alias only
+        // needs to be added once. Unknown names here are a CLI error
+        // (`--code hyperspeed`) rather than a config warning, so we peek at
+        // the warnings vec and convert it into a hard error.
+        let mut warnings = vec![];
+        let kind = parse_code_lang(lang_string, &mut warnings);
+        if !warnings.is_empty() {
+            return Err(anyhow::anyhow!("unknown code lang: {lang_string}"));
+        }
+        let lang = match kind {
+            CodeLangKind::Rust => CodeLang::Rust,
+            CodeLangKind::Python => CodeLang::Python,
+            CodeLangKind::JavaScript => CodeLang::JavaScript,
+            CodeLangKind::Go => CodeLang::Go,
+            CodeLangKind::Java => CodeLang::Java,
+            CodeLangKind::Sql => CodeLang::Sql,
+            CodeLangKind::Shell => CodeLang::Shell,
         };
         app.start_game(Mode::Code(lang))?;
     } else if cli.zen {
@@ -307,10 +315,13 @@ fn apply_cli_autostart(app: &mut App, cli: &Cli) -> Result<()> {
     } else if let Some(count) = cli.symbols {
         app.start_game(Mode::Symbols(count))?;
     } else if let Some(path) = cli.file.as_deref() {
-        // Remember the explicit `--file` path so the menu's Custom row stays
-        // useful on the next launch.
-        app.remember_custom_file(path);
+        // Stage the path first (start_game reads it from `custom_file`) but
+        // only persist to `state.json` after the session actually boots —
+        // otherwise a broken `--file foo.txt` invocation would strand the
+        // user with a menu row that fails on every restart.
+        app.set_custom_file(path);
         app.start_game(Mode::Custom)?;
+        app.persist_custom_file();
     }
     Ok(())
 }
@@ -379,10 +390,11 @@ fn handle_menu_key(app: &mut App, code: KeyCode, _mods: KeyModifiers) {
                     // row uses whatever `app.custom_file` holds (set by
                     // `--file` or by a previous session via state.json).
                     if let Some(path) = custom_path {
-                        app.remember_custom_file(&path);
+                        app.set_custom_file(&path);
                     }
-                    if let Err(e) = app.start_game(Mode::Custom) {
-                        app.error_message = Some(e.to_string());
+                    match app.start_game(Mode::Custom) {
+                        Ok(()) => app.persist_custom_file(),
+                        Err(e) => app.error_message = Some(e.to_string()),
                     }
                 }
                 MenuAction::ShowStats => app.screen = Screen::Stats,

@@ -14,6 +14,24 @@ use serde::{Deserialize, Serialize};
 
 use crate::storage;
 
+// Per-thread override for the `state.json` location. `App::new` and
+// `persist_custom_file` both touch disk, so tests that construct an `App`
+// would otherwise clobber the real user's `~/.typerush/state.json`. A
+// thread-local path lets each test point at its own tempdir without
+// coordinating a global mutex.
+#[cfg(test)]
+thread_local! {
+    static TEST_STATE_PATH: std::cell::RefCell<Option<PathBuf>> =
+        const { std::cell::RefCell::new(None) };
+}
+
+/// Redirect `state_path()` to `path` for the current thread. Test-only.
+/// Pass `None` to clear the override and go back to `~/.typerush/state.json`.
+#[cfg(test)]
+pub(crate) fn set_test_state_path(path: Option<PathBuf>) {
+    TEST_STATE_PATH.with(|cell| *cell.borrow_mut() = path);
+}
+
 /// On-disk shape of `state.json`.
 ///
 /// Every field is optional and uses `#[serde(default)]` so the loader can
@@ -27,8 +45,15 @@ pub struct AppState {
     pub last_custom_file: Option<String>,
 }
 
-/// Path to `~/.typerush/state.json`.
+/// Path to `~/.typerush/state.json` (or the thread-local test override,
+/// when the caller is a `cfg(test)` build that installed one).
 pub fn state_path() -> PathBuf {
+    #[cfg(test)]
+    {
+        if let Some(p) = TEST_STATE_PATH.with(|c| c.borrow().clone()) {
+            return p;
+        }
+    }
     storage::data_dir().join("state.json")
 }
 

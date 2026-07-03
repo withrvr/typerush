@@ -448,17 +448,33 @@ impl App {
         }
     }
 
-    /// Record that the user just ran a custom-file session against `path` and
-    /// persist that to `~/.typerush/state.json` so the next launch's "Custom"
-    /// menu row points back at it. Best-effort.
+    /// Stage `path` as the target for the next `Mode::Custom` session, in
+    /// memory only. **Does not touch disk** — pair with
+    /// [`App::persist_custom_file`] after `start_game` succeeds so a
+    /// broken path doesn't pollute `state.json`.
+    pub fn set_custom_file(&mut self, path: &str) {
+        self.custom_file = Some(path.to_string());
+    }
+
+    /// Persist the currently-staged `custom_file` (if any) to
+    /// `~/.typerush/state.json` and refresh the menu's "Custom" row so its
+    /// label reflects the new path. Call this **after** a successful
+    /// `start_game(Mode::Custom)` — writing state before the session boots
+    /// would strand the user with a menu row that fails on every restart.
     ///
-    /// Re-uses the snippet list cached on `App` rather than re-scanning the
-    /// snippets directory — snippets don't change while the app is running,
-    /// and Enter-on-a-snippet is on the keystroke path.
-    pub fn remember_custom_file(&mut self, path: &str) {
-        let owned = path.to_string();
-        self.custom_file = Some(owned.clone());
-        self.app_state.last_custom_file = Some(owned);
+    /// Best-effort: any disk error is swallowed. Idempotent when the path
+    /// hasn't changed since the last persist. Re-uses the snippet list
+    /// cached on `App` so keystroke-time menu rebuilds skip the disk scan.
+    pub fn persist_custom_file(&mut self) {
+        let Some(path) = self.custom_file.clone() else {
+            return;
+        };
+        // Skip the disk write and menu rebuild when nothing changed —
+        // spares a needless JSON serialization on Ctrl+R restarts.
+        if self.app_state.last_custom_file.as_deref() == Some(path.as_str()) {
+            return;
+        }
+        self.app_state.last_custom_file = Some(path.clone());
         state::save_state(&self.app_state);
         // Preserve the highlight on whichever row the user is currently on
         // (e.g. the snippet row they just pressed Enter on). `build_menu`
@@ -1040,23 +1056,78 @@ mod tests {
         );
     }
 
-    /// `remember_custom_file` updates the persisted path and the menu's
-    /// Custom row label, and preserves the user's current menu position.
-    /// Calling it twice in a row also works without re-rebuilding the menu
-    /// from a stale snippet snapshot.
-    #[test]
-    fn remember_custom_file_updates_menu_and_state() {
+    /// Guard that redirects `state::state_path()` at the start and clears
+    /// the override on drop. Ensures `persist_custom_file` writes to a
+    /// tempdir instead of the real `~/.typerush/state.json`.
+    struct StateSandbox {
+        _dir: tempfile::TempDir,
+    }
+
+    impl StateSandbox {
+        fn enter() -> Self {
+            let dir = tempfile::tempdir().unwrap();
+            crate::state::set_test_state_path(Some(dir.path().join("state.json")));
+            Self { _dir: dir }
+        }
+    }
+
+    impl Drop for StateSandbox {
+        fn drop(&mut self) {
+            crate::state::set_test_state_path(None);
+        }
+    }
+
+    /// Isolated App builder for menu/state tests: skips reading the real
+    /// `~/.typerush/state.json` and `~/.typerush/snippets/`, so tests don't
+    /// see or clobber whatever the user (or another test) left behind.
+    /// Any field added to `App` in the future must be reflected here.
+    fn make_isolated_app(snippets: Vec<Snippet>) -> App {
         let palette = crate::theme::ThemePalette::default();
-        let mut app = App::new(
-            None,
-            palette,
-            DefaultMode::Time(15),
-            Default::default(),
-            Default::default(),
-        );
+        let app_state = AppState::default();
+        let menu = build_menu(&snippets, None);
+        App {
+            screen: Screen::Menu,
+            previous_screen: Screen::Menu,
+            menu,
+            menu_index: 0,
+            mode: mode_for(DefaultMode::Time(15)),
+            words: vec![],
+            current_word: 0,
+            started_at: None,
+            ended_at: None,
+            correct_chars: 0,
+            total_typed_chars: 0,
+            backspaces: 0,
+            custom_file: None,
+            should_quit: false,
+            error_message: None,
+            tick_count: 0,
+            theme: palette,
+            word_pool: WordPool::Common,
+            word_decor: WordDecor::default(),
+            app_state,
+            snippets,
+            key_hits: HashMap::new(),
+            key_misses: HashMap::new(),
+            stats_cache: None,
+            aggregate: AggregateStats::default(),
+        }
+    }
+
+    /// `set_custom_file` stages a path in memory only; `persist_custom_file`
+    /// writes it and rebuilds the menu.
+    #[test]
+    fn set_then_persist_custom_file_updates_menu_and_state() {
+        let _sandbox = StateSandbox::enter();
+        let mut app = make_isolated_app(vec![]);
         let original_index = app.menu_index;
-        app.remember_custom_file("/tmp/abc.txt");
+
+        app.set_custom_file("/tmp/abc.txt");
+        // set alone stages the in-memory path but doesn't persist.
         assert_eq!(app.custom_file.as_deref(), Some("/tmp/abc.txt"));
+        assert_eq!(app.app_state.last_custom_file.as_deref(), None);
+
+        app.persist_custom_file();
         assert_eq!(
             app.app_state.last_custom_file.as_deref(),
             Some("/tmp/abc.txt")
@@ -1072,7 +1143,8 @@ mod tests {
         assert!(custom_row.label.contains("abc.txt"));
 
         // Second call rotates to a different path without going stale.
-        app.remember_custom_file("/tmp/xyz.txt");
+        app.set_custom_file("/tmp/xyz.txt");
+        app.persist_custom_file();
         let custom_row = app
             .menu
             .iter()
@@ -1080,6 +1152,37 @@ mod tests {
             .expect("custom row missing");
         assert!(custom_row.label.contains("xyz.txt"));
         assert!(!custom_row.label.contains("abc.txt"));
+    }
+
+    /// Regression: `set_custom_file` alone must not persist state.json. This
+    /// guards the "don't strand the user with a broken remembered path"
+    /// behavior — if `start_game` fails, we never call persist and the
+    /// previous good path stays intact.
+    #[test]
+    fn set_custom_file_alone_does_not_persist() {
+        let _sandbox = StateSandbox::enter();
+        let mut app = make_isolated_app(vec![]);
+        app.set_custom_file("/tmp/broken.txt");
+        assert_eq!(app.custom_file.as_deref(), Some("/tmp/broken.txt"));
+        // Persisted state is untouched.
+        assert!(app.app_state.last_custom_file.is_none());
+    }
+
+    /// `persist_custom_file` is idempotent when nothing changed.
+    #[test]
+    fn persist_custom_file_is_idempotent() {
+        let _sandbox = StateSandbox::enter();
+        let mut app = make_isolated_app(vec![]);
+        app.set_custom_file("/tmp/same.txt");
+        app.persist_custom_file();
+        let menu_len_after_first = app.menu.len();
+        // Second call with the same path should short-circuit.
+        app.persist_custom_file();
+        assert_eq!(app.menu.len(), menu_len_after_first);
+        assert_eq!(
+            app.app_state.last_custom_file.as_deref(),
+            Some("/tmp/same.txt")
+        );
     }
 
     /// Starting a session uses the configured word pool. With the extended

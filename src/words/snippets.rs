@@ -46,7 +46,16 @@ pub fn discover_in(dir: &Path) -> Vec<Snippet> {
         .filter_map(|e| e.ok())
         .filter_map(|e| {
             let path = e.path();
-            if path.is_file() && path.extension().and_then(|s| s.to_str()) == Some("txt") {
+            // Case-insensitive `.txt` match so `NOTES.TXT` on
+            // case-preserving filesystems (Windows, macOS default) is picked
+            // up too — otherwise users on those platforms would drop a file
+            // in the snippets dir and see nothing appear.
+            let is_txt = path
+                .extension()
+                .and_then(|s| s.to_str())
+                .map(|s| s.eq_ignore_ascii_case("txt"))
+                .unwrap_or(false);
+            if path.is_file() && is_txt {
                 let name = path
                     .file_stem()
                     .and_then(|s| s.to_str())
@@ -114,5 +123,24 @@ mod tests {
         let snippets = discover_in(dir.path());
         assert_eq!(snippets.len(), 1);
         assert_eq!(snippets[0].name, "real");
+    }
+
+    /// Case-preserving filesystems (Windows, macOS default) present `.TXT`
+    /// or `.Txt` as the stored extension. Users on those platforms would
+    /// have their snippets silently dropped without a case-insensitive
+    /// comparison.
+    #[test]
+    fn discovery_is_case_insensitive_for_txt() {
+        let dir = tempfile::tempdir().unwrap();
+        fs::write(dir.path().join("Uppercase.TXT"), "hi").unwrap();
+        fs::write(dir.path().join("Mixed.Txt"), "hi").unwrap();
+        fs::write(dir.path().join("lower.txt"), "hi").unwrap();
+
+        let snippets = discover_in(dir.path());
+        assert_eq!(snippets.len(), 3);
+        let names: Vec<&str> = snippets.iter().map(|s| s.name.as_str()).collect();
+        assert!(names.contains(&"Uppercase"));
+        assert!(names.contains(&"Mixed"));
+        assert!(names.contains(&"lower"));
     }
 }
