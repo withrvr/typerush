@@ -56,13 +56,13 @@ struct Cli {
     #[arg(short, long)]
     file: Option<String>,
 
-    /// Start directly in time mode for N seconds (15/30/60/120).
-    #[arg(long)]
+    /// Start directly in time mode for N seconds (must be ≥ 1; standard rows: 15/30/60/120).
+    #[arg(long, value_parser = clap::value_parser!(u64).range(1..))]
     time: Option<u64>,
 
-    /// Start directly in words mode for N words.
-    #[arg(long)]
-    words: Option<usize>,
+    /// Start directly in words mode for N words (must be ≥ 1; standard rows: 10/25/50/100).
+    #[arg(long, value_parser = clap::value_parser!(u64).range(1..))]
+    words: Option<u64>,
 
     /// Skip the menu and start a quote session.
     #[arg(long)]
@@ -76,9 +76,9 @@ struct Cli {
     #[arg(long)]
     zen: bool,
 
-    /// Skip the menu and start a symbols-drill session of N tokens.
-    #[arg(long)]
-    symbols: Option<usize>,
+    /// Skip the menu and start a symbols-drill session of N tokens (must be ≥ 1).
+    #[arg(long, value_parser = clap::value_parser!(u64).range(1..))]
+    symbols: Option<u64>,
 
     /// Use the larger 10,000-word pool instead of the default ~1,000.
     #[arg(long)]
@@ -287,7 +287,13 @@ fn apply_cli_autostart(app: &mut App, cli: &Cli) -> Result<()> {
     if let Some(seconds) = cli.time {
         app.start_game(Mode::Time(seconds))?;
     } else if let Some(word_count) = cli.words {
-        app.start_game(Mode::Words(word_count))?;
+        // clap's u64 range validator guarantees ≥ 1; cast to usize for the
+        // Mode variant. `try_into` handles the edge case of platforms with
+        // 32-bit usize + `--words > u32::MAX`.
+        let count = usize::try_from(word_count).map_err(|_| {
+            anyhow::anyhow!("--words {} is out of range for this platform", word_count)
+        })?;
+        app.start_game(Mode::Words(count))?;
     } else if cli.quote {
         app.start_game(Mode::Quote)?;
     } else if let Some(lang_string) = cli.code.as_deref() {
@@ -313,6 +319,9 @@ fn apply_cli_autostart(app: &mut App, cli: &Cli) -> Result<()> {
     } else if cli.zen {
         app.start_game(Mode::Zen)?;
     } else if let Some(count) = cli.symbols {
+        let count = usize::try_from(count).map_err(|_| {
+            anyhow::anyhow!("--symbols {} is out of range for this platform", count)
+        })?;
         app.start_game(Mode::Symbols(count))?;
     } else if let Some(path) = cli.file.as_deref() {
         // Stage the path first (start_game reads it from `custom_file`) but
@@ -624,6 +633,22 @@ mod tests {
         handle_typing_key(&mut app, KeyCode::Char('a'), KeyModifiers::CONTROL);
         handle_typing_key(&mut app, KeyCode::Char('z'), KeyModifiers::CONTROL);
         assert_eq!(app.words[0].typed, "hel");
+    }
+
+    /// CLI zero-count args are rejected up front by clap. Previously,
+    /// `--time 0` / `--words 0` (v0.1) and `--symbols 0` (v0.4) all left
+    /// the app in an un-finishable state (no words, no timer, only Esc).
+    /// clap's range validator now returns Err before the app starts.
+    #[test]
+    fn zero_counts_are_rejected_by_clap() {
+        use clap::Parser;
+        assert!(Cli::try_parse_from(["typerush", "--time", "0"]).is_err());
+        assert!(Cli::try_parse_from(["typerush", "--words", "0"]).is_err());
+        assert!(Cli::try_parse_from(["typerush", "--symbols", "0"]).is_err());
+        // Positive values still parse.
+        assert!(Cli::try_parse_from(["typerush", "--time", "30"]).is_ok());
+        assert!(Cli::try_parse_from(["typerush", "--words", "50"]).is_ok());
+        assert!(Cli::try_parse_from(["typerush", "--symbols", "25"]).is_ok());
     }
 
     // ── v0.4.0: menu navigation with section separators ─────────────────────

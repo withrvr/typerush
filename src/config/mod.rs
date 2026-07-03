@@ -4,21 +4,30 @@
 //! malformed file means defaults plus a warning surfaced once via the error
 //! modal. We never crash the app over a config problem.
 //!
-//! ## Schema
+//! ## Schema (v0.4.0)
 //!
 //! ```toml
 //! theme = "monokai"            # built-in name: dark | light | monokai | dracula
 //!
 //! [defaults]
-//! mode = "time"                 # time | words | quote | code | zen
+//! mode = "time"                 # time | words | quote | code | zen | symbols
 //! time_seconds = 15             # default duration for time mode
 //! word_count = 25               # default count for words mode
-//! code_lang = "rust"            # rust | python | js
+//! code_lang = "rust"            # rust | python | js | go | java | sql | shell
+//! symbol_count = 25             # default token count for symbols mode (v0.4.0)
+//!
+//! [words]                       # v0.4.0 — English pool + decoration toggles
+//! pool = "common"               # "common" (≈1k words, default) | "extended" (10k)
+//! punctuation = false           # sprinkle commas/periods/quotes on ~25% of words
+//! numbers = false               # replace ~12% of slots with random 1–4 digit numbers
 //!
 //! [colors]                      # optional — overrides slots of the chosen theme
 //! accent = "#FF00FF"
 //! correct = "green"
 //! ```
+//!
+//! Complete inline docs for every knob live in `config.example.toml` at the
+//! repo root; keep the two in sync when adding a new field.
 
 pub mod load;
 
