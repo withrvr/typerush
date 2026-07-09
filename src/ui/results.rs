@@ -40,8 +40,14 @@ pub fn render(f: &mut Frame, app: &App) {
 
     let sessions: &[storage::SessionRecord] = app.stats_cache.as_deref().unwrap_or(&[]);
 
-    // Delta vs the previous any-mode session (skip the one we just saved).
-    let last_wpm = sessions.iter().rev().nth(1).map(|s| s.wpm);
+    // If this session was written to stats.json, the last history entry IS
+    // this session — skip it when comparing against "previous" sessions.
+    // Unsaved sessions (Zen, <1s, zero keystrokes) don't appear in history,
+    // so the last entry is already a previous session.
+    let skip_current = usize::from(app.session_just_saved);
+
+    // Delta vs the previous any-mode session.
+    let last_wpm = sessions.iter().rev().nth(skip_current).map(|s| s.wpm);
     let delta = match last_wpm {
         Some(prev) => {
             let diff = wpm - prev;
@@ -65,18 +71,20 @@ pub fn render(f: &mut Frame, app: &App) {
     let is_zen = matches!(app.mode, crate::app::Mode::Zen);
 
     // Compare current session's WPM against all *previous* sessions of the
-    // same mode (skipping the one just saved) to detect a new mode PB.
+    // same mode to detect a new mode PB. Only a session that was actually
+    // recorded can claim a new best — otherwise a 0.9-second sprint could
+    // flash "new best!" for a record that was never kept.
     let prev_mode_pb = sessions
         .iter()
         .rev()
-        .skip(1) // skip the session we just saved
+        .skip(skip_current)
         .filter(|s| s.mode == mode_label)
         .map(|s| s.wpm)
         .fold(None::<f64>, |best, w| {
             Some(best.map_or(w, |b: f64| b.max(w)))
         });
 
-    let is_new_mode_pb = !is_zen
+    let is_new_mode_pb = app.session_just_saved
         && match prev_mode_pb {
             None => true, // first session for this mode
             Some(prev) => wpm > prev,

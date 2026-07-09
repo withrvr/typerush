@@ -374,6 +374,11 @@ pub struct App {
     /// Loaded from `aggregate.json` at startup; kept current in memory after
     /// each save so the key-accuracy panel never re-reads the full history.
     pub aggregate: AggregateStats,
+    /// Whether the session currently shown on the Results screen was actually
+    /// written to stats.json. False for Zen, sub-1-second, and zero-keystroke
+    /// sessions (and on disk failure) — the Results screen uses this to know
+    /// whether the last history entry is the current session or a previous one.
+    pub session_just_saved: bool,
 }
 
 impl App {
@@ -428,6 +433,7 @@ impl App {
             key_hits: HashMap::new(),
             key_misses: HashMap::new(),
             stats_cache: None,
+            session_just_saved: false,
             aggregate: {
                 let mut agg = storage::load_aggregate();
                 // One-time O(n) rebuild when upgrading from a version that
@@ -1110,6 +1116,7 @@ mod tests {
             key_hits: HashMap::new(),
             key_misses: HashMap::new(),
             stats_cache: None,
+            session_just_saved: false,
             aggregate: AggregateStats::default(),
         }
     }

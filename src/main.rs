@@ -514,6 +514,9 @@ fn handle_stats_key(app: &mut App, code: KeyCode, _mods: KeyModifiers) {
 /// File I/O errors are intentionally swallowed — losing a stat row is never a
 /// good reason to crash on the user.
 fn save_current_session(app: &mut App) {
+    // Assume not saved until the disk write succeeds; the Results screen
+    // reads this to know whether the last history entry is this session.
+    app.session_just_saved = false;
     if matches!(app.mode, Mode::Zen) {
         return;
     }
@@ -542,7 +545,7 @@ fn save_current_session(app: &mut App) {
             .collect(),
     };
     // Persist to stats.json (save_session also updates aggregate.json on disk).
-    let _ = storage::save_session(&record);
+    app.session_just_saved = storage::save_session(&record).is_ok();
     // Keep the in-memory aggregate current so the Stats panel stays accurate
     // without an extra disk read.
     storage::apply_session_to_aggregate(&mut app.aggregate, &record);
