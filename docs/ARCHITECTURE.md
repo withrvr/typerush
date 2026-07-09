@@ -106,7 +106,8 @@ src/
 ├── state.rs             Tiny key-value persistence at
 │                        ~/.typerush/state.json — currently just the last
 │                        custom-file path so the menu "Custom" row works
-│                        across launches. Best-effort, never crashes.
+│                        across launches. Best-effort, never crashes;
+│                        writes atomically via storage::write_atomic.
 │
 ├── theme/
 │   ├── mod.rs           ThemePalette struct (10 themable color slots)

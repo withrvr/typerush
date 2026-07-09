@@ -63,6 +63,21 @@ _No unreleased changes yet._
   serializing to `"code-javascript"` (not the slug `"js"`) for backward
   compatibility with v0.3 and earlier `stats.json` records.
 
+### Fixed
+
+- **`state.json` is written atomically** (temp file + rename), the same
+  crash-safety guarantee `stats.json` and `aggregate.json` gained in
+  v0.3.0 — a crash mid-save can never truncate the file or lose the
+  remembered custom-file path. Works on Linux, macOS, and Windows.
+- **The remembered custom-file path is only persisted after the session
+  actually starts.** Previously a typo'd `--file` path could overwrite a
+  previously-working remembered path before the error surfaced.
+- **Snippet discovery is case-insensitive** — `NOTES.TXT` and `Mixed.Txt`
+  on case-preserving filesystems (Windows, default macOS) now appear in
+  the menu like their lowercase siblings.
+- **`--time 0`, `--words 0`, and `--symbols 0` are rejected at the CLI**
+  with a clear error instead of starting an un-finishable session.
+
 ### Compatibility
 
 - Existing CLI flags (`--time`, `--words`, `--quote`, `--code`, `--zen`,
