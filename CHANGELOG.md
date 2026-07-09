@@ -77,6 +77,11 @@ _No unreleased changes yet._
   the menu like their lowercase siblings.
 - **`--time 0`, `--words 0`, and `--symbols 0` are rejected at the CLI**
   with a clear error instead of starting an un-finishable session.
+- **Opening the `?` Help overlay from the Results screen no longer
+  duplicates the session.** Previously, Results → `?` → Esc re-saved the
+  just-finished session — a duplicate record in `stats.json`, double-counted
+  key aggregates, and a misleading "+0 vs last" delta. (Pre-existing defect
+  since v0.1; surfaced by the v0.4 review pass.)
 
 ### Compatibility
 
