@@ -71,13 +71,15 @@ pub fn load_from_path(path: &Path) -> AppState {
 }
 
 /// Persist `state` to `~/.typerush/state.json`. Best-effort — never panics.
+/// Uses the same atomic temp-file + rename as `stats.json` so a crash
+/// mid-write can never truncate the file.
 pub fn save_state(state: &AppState) {
     let path = state_path();
     if let Some(parent) = path.parent() {
         let _ = fs::create_dir_all(parent);
     }
     if let Ok(json) = serde_json::to_string_pretty(state) {
-        let _ = fs::write(path, json);
+        let _ = storage::write_atomic(&path, &json);
     }
 }
 
@@ -89,7 +91,7 @@ fn save_to_path(path: &Path, state: &AppState) -> std::io::Result<()> {
     }
     let json = serde_json::to_string_pretty(state)
         .map_err(|e| std::io::Error::new(std::io::ErrorKind::InvalidData, e))?;
-    fs::write(path, json)
+    storage::write_atomic(path, &json)
 }
 
 #[cfg(test)]
@@ -149,5 +151,21 @@ mod tests {
         .unwrap();
         let state = load_from_path(&path);
         assert_eq!(state.last_custom_file.as_deref(), Some("/tmp/x.txt"));
+    }
+
+    /// Same atomic-write invariant `stats.json` has: after a save there is
+    /// no stray `.tmp` sibling and the target parses as valid JSON.
+    #[test]
+    fn atomic_save_leaves_no_tmp_file_and_valid_json() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("state.json");
+        let state = AppState {
+            last_custom_file: Some("/tmp/atomic.txt".to_string()),
+        };
+        save_to_path(&path, &state).unwrap();
+        assert!(!dir.path().join("state.json.tmp").exists());
+        let raw = fs::read_to_string(&path).unwrap();
+        let parsed: AppState = serde_json::from_str(&raw).unwrap();
+        assert_eq!(parsed, state);
     }
 }
