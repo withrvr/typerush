@@ -258,7 +258,7 @@ fn run_app(terminal: &mut Tui, cli: Cli) -> Result<()> {
             save_current_session(&mut app);
             session_saved_for_this_results_screen = true;
         }
-        if app.screen != Screen::Results {
+        if !results_save_flag_persists_on(app.screen) {
             session_saved_for_this_results_screen = false;
         }
 
@@ -279,6 +279,21 @@ fn run_app(terminal: &mut Tui, cli: Cli) -> Result<()> {
         }
     }
     Ok(())
+}
+
+/// Should the "session already saved for this Results visit" flag survive
+/// while `screen` is displayed?
+///
+/// It must persist on `Results` itself and on `Help` — the Help overlay is
+/// reachable *from* Results (`?`) and returns *to* Results (Esc / `?` / `q`),
+/// so resetting the flag there would make the return transition look like a
+/// fresh Results entry and re-save the same session: a duplicate record in
+/// stats.json, double-counted key aggregates, and a bogus "+0 vs last" delta
+/// (the session compared against its own duplicate). Every other screen
+/// resets the flag, since Results can only be re-entered from them by
+/// finishing a genuinely new session.
+fn results_save_flag_persists_on(screen: Screen) -> bool {
+    matches!(screen, Screen::Results | Screen::Help)
 }
 
 /// If the user passed a mode flag (`--time`, `--words`, `--quote`, `--code`,
@@ -636,6 +651,23 @@ mod tests {
         handle_typing_key(&mut app, KeyCode::Char('a'), KeyModifiers::CONTROL);
         handle_typing_key(&mut app, KeyCode::Char('z'), KeyModifiers::CONTROL);
         assert_eq!(app.words[0].typed, "hel");
+    }
+
+    /// Regression: opening the Help overlay from the Results screen and
+    /// closing it again must NOT re-save the session. The save-once flag
+    /// persists across Results ⇄ Help transitions and resets everywhere
+    /// else. Before this fix, Results → `?` → Esc appended a duplicate
+    /// SessionRecord to stats.json and double-counted the key aggregate.
+    #[test]
+    fn results_save_flag_survives_help_overlay() {
+        // Persists on Results itself and on the Help overlay above it.
+        assert!(results_save_flag_persists_on(Screen::Results));
+        assert!(results_save_flag_persists_on(Screen::Help));
+        // Resets on every screen from which Results can only be re-entered
+        // by finishing a genuinely new session.
+        assert!(!results_save_flag_persists_on(Screen::Menu));
+        assert!(!results_save_flag_persists_on(Screen::Typing));
+        assert!(!results_save_flag_persists_on(Screen::Stats));
     }
 
     /// CLI zero-count args are rejected up front by clap. Previously,
