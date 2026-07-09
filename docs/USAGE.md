@@ -111,7 +111,29 @@ hurts accuracy) but never toward correct chars.
 `~/.typerush/stats.json` — a plain JSON array. Back it up if you care about your
 history; delete it if you want a fresh start.
 
+`~/.typerush/aggregate.json` — a small running tally of per-key accuracy totals,
+used to render the key-accuracy heatmap quickly without rescanning your whole
+history. It's derived data: delete it and TypeRush rebuilds it from
+`stats.json` on the next launch.
+
 Zen-mode sessions are intentionally **not** saved.
+
+### What the Stats screen shows (v0.3.0+)
+
+Open the Stats screen from the menu (`Tab`) or results screen (`s`).
+
+| Section | What it shows |
+| ------- | ------------- |
+| **Summary (left)** | All-time best WPM · Average accuracy · Session count · Last WPM · **Daily streak** · **7-day avg WPM** · **30-day avg WPM** |
+| **Key accuracy (right)** | Up to 5 of your worst keys (≥ 3 presses). Colour-coded: red < 80%, amber < 93%, green otherwise. Shows `no key data yet` until enough data is collected. |
+| **WPM trend** | Sparkline of your last 20 sessions |
+| **Recent sessions** | Last 10 sessions with date, mode, WPM, accuracy, and time |
+
+### Per-mode personal bests
+
+On the **Results screen**, the "best" line now shows your personal best
+specifically for the mode you just finished (e.g. `time-30s best: 78.4 wpm`).
+A `★ new best!` badge appears when you beat your previous record for that mode.
 
 ---
 

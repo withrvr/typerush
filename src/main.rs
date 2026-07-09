@@ -197,12 +197,23 @@ fn run_app(terminal: &mut Tui, cli: Cli) -> Result<()> {
             && last_screen != Screen::Results
             && !session_saved_for_this_results_screen
         {
-            save_current_session(&app);
+            save_current_session(&mut app);
             session_saved_for_this_results_screen = true;
         }
         if app.screen != Screen::Results {
             session_saved_for_this_results_screen = false;
         }
+
+        // Populate the session cache once when entering the Stats or Results
+        // screen so the render path never reads stats.json on every frame.
+        // (On Results entry this runs *after* the save above, so the cache
+        // includes the session that was just recorded.)
+        if (app.screen == Screen::Stats || app.screen == Screen::Results)
+            && last_screen != app.screen
+        {
+            app.stats_cache = storage::load_sessions().ok();
+        }
+
         last_screen = app.screen;
 
         if app.should_quit {
@@ -385,7 +396,10 @@ fn handle_stats_key(app: &mut App, code: KeyCode, _mods: KeyModifiers) {
 ///
 /// File I/O errors are intentionally swallowed — losing a stat row is never a
 /// good reason to crash on the user.
-fn save_current_session(app: &App) {
+fn save_current_session(app: &mut App) {
+    // Assume not saved until the disk write succeeds; the Results screen
+    // reads this to know whether the last history entry is this session.
+    app.session_just_saved = false;
     if matches!(app.mode, Mode::Zen) {
         return;
     }
@@ -402,8 +416,24 @@ fn save_current_session(app: &App) {
         total_chars: app.total_typed_chars,
         duration_secs: duration,
         timestamp: chrono::Local::now(),
+        key_hits: app
+            .key_hits
+            .iter()
+            .map(|(k, v)| (k.to_string(), *v))
+            .collect(),
+        key_misses: app
+            .key_misses
+            .iter()
+            .map(|(k, v)| (k.to_string(), *v))
+            .collect(),
     };
-    let _ = storage::save_session(&record);
+    // Persist to stats.json (save_session also updates aggregate.json on disk).
+    app.session_just_saved = storage::save_session(&record).is_ok();
+    // Keep the in-memory aggregate current so the Stats panel stays accurate
+    // without an extra disk read.
+    storage::apply_session_to_aggregate(&mut app.aggregate, &record);
+    // Invalidate the session cache so the next Stats screen visit reloads fresh data.
+    app.stats_cache = None;
 }
 
 #[cfg(test)]

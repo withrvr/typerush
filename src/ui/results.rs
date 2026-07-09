@@ -1,8 +1,9 @@
 //! Results screen — shown immediately after a session ends.
 //!
 //! Displays final WPM, accuracy, elapsed time, character counts, the chosen
-//! mode, and the user's all-time best WPM. Includes a +/- delta against the
-//! previous session and a mini sparkline of recent WPM scores.
+//! mode, the user's all-time best, and (v0.3.0) the per-mode personal best.
+//! Includes a +/- delta against the previous session and a mini sparkline of
+//! recent WPM scores.
 
 use ratatui::{
     prelude::*,
@@ -17,7 +18,7 @@ pub fn render(f: &mut Frame, app: &App) {
     let theme = &app.theme;
     let layout = Layout::vertical([
         Constraint::Length(3),
-        Constraint::Length(9),
+        Constraint::Length(10),
         Constraint::Length(6),
         Constraint::Min(0),
         Constraint::Length(3),
@@ -35,10 +36,18 @@ pub fn render(f: &mut Frame, app: &App) {
     let wpm = app.wpm();
     let acc = app.accuracy();
     let elapsed = app.elapsed().as_secs_f64();
+    let mode_label = app.mode.label();
 
-    let sessions = storage::load_sessions().unwrap_or_default();
-    let pb = storage::personal_best(&sessions).unwrap_or(0.0);
-    let last_wpm = sessions.iter().rev().nth(1).map(|s| s.wpm);
+    let sessions: &[storage::SessionRecord] = app.stats_cache.as_deref().unwrap_or(&[]);
+
+    // If this session was written to stats.json, the last history entry IS
+    // this session — skip it when comparing against "previous" sessions.
+    // Unsaved sessions (Zen, <1s, zero keystrokes) don't appear in history,
+    // so the last entry is already a previous session.
+    let skip_current = usize::from(app.session_just_saved);
+
+    // Delta vs the previous any-mode session.
+    let last_wpm = sessions.iter().rev().nth(skip_current).map(|s| s.wpm);
     let delta = match last_wpm {
         Some(prev) => {
             let diff = wpm - prev;
@@ -54,6 +63,64 @@ pub fn render(f: &mut Frame, app: &App) {
             )
         }
         None => Span::raw(""),
+    };
+
+    // Per-mode personal best (v0.3.0).
+    // Zen sessions are never saved, so there's no meaningful per-mode PB for
+    // Zen — show a "no record kept" placeholder instead.
+    let is_zen = matches!(app.mode, crate::app::Mode::Zen);
+
+    // Compare current session's WPM against all *previous* sessions of the
+    // same mode to detect a new mode PB. Only a session that was actually
+    // recorded can claim a new best — otherwise a 0.9-second sprint could
+    // flash "new best!" for a record that was never kept.
+    let prev_mode_pb = sessions
+        .iter()
+        .rev()
+        .skip(skip_current)
+        .filter(|s| s.mode == mode_label)
+        .map(|s| s.wpm)
+        .fold(None::<f64>, |best, w| {
+            Some(best.map_or(w, |b: f64| b.max(w)))
+        });
+
+    let is_new_mode_pb = app.session_just_saved
+        && match prev_mode_pb {
+            None => true, // first session for this mode
+            Some(prev) => wpm > prev,
+        };
+
+    let pb_line = if is_zen {
+        Line::from(vec![
+            Span::styled("  best ever  ", Style::default().fg(theme.pending)),
+            Span::styled("  — (zen not saved)", Style::default().fg(theme.pending)),
+        ])
+    } else {
+        let mode_pb_now = storage::personal_best_for_mode(sessions, &mode_label).unwrap_or(wpm);
+        // Right-pad label to keep WPM value at a consistent column.
+        let raw_label = format!("{} best", mode_label);
+        let padded_label = format!("  {:<13}", raw_label);
+        let pb_value = Span::styled(
+            format!("{:>6.1} wpm", mode_pb_now),
+            Style::default()
+                .fg(theme.accent)
+                .add_modifier(Modifier::BOLD),
+        );
+        let badge = if is_new_mode_pb {
+            Span::styled(
+                "  ★ new best!",
+                Style::default()
+                    .fg(theme.correct)
+                    .add_modifier(Modifier::BOLD),
+            )
+        } else {
+            Span::raw("")
+        };
+        Line::from(vec![
+            Span::styled(padded_label, Style::default().fg(theme.pending)),
+            pb_value,
+            badge,
+        ])
     };
 
     let body_lines = vec![
@@ -87,17 +154,9 @@ pub fn render(f: &mut Frame, app: &App) {
         ]),
         Line::from(vec![
             Span::styled("  mode       ", Style::default().fg(theme.pending)),
-            Span::styled(app.mode.label(), Style::default().fg(theme.mode_tag)),
+            Span::styled(&mode_label, Style::default().fg(theme.mode_tag)),
         ]),
-        Line::from(vec![
-            Span::styled("  best ever  ", Style::default().fg(theme.pending)),
-            Span::styled(
-                format!("{:>6.1} wpm", pb),
-                Style::default()
-                    .fg(theme.accent)
-                    .add_modifier(Modifier::BOLD),
-            ),
-        ]),
+        pb_line,
     ];
     let body = Paragraph::new(body_lines).block(
         Block::default()

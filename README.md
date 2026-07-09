@@ -107,7 +107,12 @@ Full keymap: see [`docs/USAGE.md`](docs/USAGE.md).
 
 Every (non-zen) session is saved to `~/.typerush/stats.json`. The Stats screen
 shows your personal best, average accuracy, a trend sparkline, and your last
-10 runs.
+10 runs — plus, as of v0.3:
+
+- 🔥 **Daily streak** — consecutive days you've practiced
+- 📅 **7- and 30-day rolling WPM averages**
+- ⌨️ **Per-key accuracy heatmap** — find the keys that slow you down
+- 🏅 **Per-mode personal bests** — a separate record for `time-30s`, `words-50`, etc.
 
 ---
 

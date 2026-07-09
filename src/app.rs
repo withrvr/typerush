@@ -13,10 +13,12 @@
 //!   └────────────── Esc / 'm' ───────────────────┘
 //! ```
 
+use std::collections::HashMap;
 use std::time::{Duration, Instant};
 
 use crate::config::load::{CodeLangKind, DefaultMode};
 use crate::game::{get_char_states, CharState};
+use crate::storage::{self, AggregateStats, SessionRecord};
 use crate::theme::ThemePalette;
 
 /// One of the high-level screens the user can be looking at. The current
@@ -278,6 +280,26 @@ pub struct App {
     pub tick_count: u64,
     /// Active color palette — read by every UI module on every frame.
     pub theme: ThemePalette,
+
+    // --- per-key accuracy (v0.3.0) ---
+    /// Number of times each key was typed at the correct position.
+    pub key_hits: HashMap<char, u64>,
+    /// Number of times each key was typed but did not match (wrong key or extra).
+    pub key_misses: HashMap<char, u64>,
+
+    // --- stats caching (v0.3.0) ---
+    /// Full session history, loaded once when the Stats screen is entered and
+    /// invalidated on each session save. `None` until the first Stats visit.
+    pub stats_cache: Option<Vec<SessionRecord>>,
+    /// Running aggregate of per-key hit/miss totals across all sessions.
+    /// Loaded from `aggregate.json` at startup; kept current in memory after
+    /// each save so the key-accuracy panel never re-reads the full history.
+    pub aggregate: AggregateStats,
+    /// Whether the session currently shown on the Results screen was actually
+    /// written to stats.json. False for Zen, sub-1-second, and zero-keystroke
+    /// sessions (and on disk failure) — the Results screen uses this to know
+    /// whether the last history entry is the current session or a previous one.
+    pub session_just_saved: bool,
 }
 
 impl App {
@@ -312,6 +334,27 @@ impl App {
             error_message: None,
             tick_count: 0,
             theme: palette,
+            key_hits: HashMap::new(),
+            key_misses: HashMap::new(),
+            stats_cache: None,
+            session_just_saved: false,
+            aggregate: {
+                let mut agg = storage::load_aggregate();
+                // One-time O(n) rebuild when upgrading from a version that
+                // predates aggregate.json — after this the file exists and
+                // subsequent startups are O(1).
+                if agg.key_hits.is_empty() && agg.key_misses.is_empty() {
+                    if let Ok(sessions) = storage::load_sessions() {
+                        for s in &sessions {
+                            storage::apply_session_to_aggregate(&mut agg, s);
+                        }
+                        if !agg.key_hits.is_empty() || !agg.key_misses.is_empty() {
+                            storage::save_aggregate(&agg);
+                        }
+                    }
+                }
+                agg
+            },
         }
     }
 
@@ -420,6 +463,8 @@ impl App {
         self.correct_chars = 0;
         self.total_typed_chars = 0;
         self.backspaces = 0;
+        self.key_hits.clear();
+        self.key_misses.clear();
         self.screen = Screen::Typing;
         Ok(())
     }
@@ -474,7 +519,13 @@ impl App {
         if let Some(&expected_char) = target_chars.get(cursor_position) {
             if expected_char == typed_char {
                 self.correct_chars += 1;
+                *self.key_hits.entry(typed_char).or_insert(0) += 1;
+            } else {
+                *self.key_misses.entry(typed_char).or_insert(0) += 1;
             }
+        } else {
+            // Extra character typed past the end of the target word.
+            *self.key_misses.entry(typed_char).or_insert(0) += 1;
         }
     }
 
@@ -605,6 +656,68 @@ mod tests {
         let menu = default_menu();
         let index = best_menu_match(&menu, DefaultMode::Zen);
         assert_eq!(menu[index].label, "Zen");
+    }
+
+    // ── per-key accuracy tracking (v0.3.0) ──────────────────────────────────
+
+    fn make_app_with_word(word: &str) -> App {
+        let mut app = App::new(
+            None,
+            crate::theme::ThemePalette::default(),
+            DefaultMode::Time(15),
+        );
+        app.screen = Screen::Typing;
+        app.mode = Mode::Words(1);
+        app.words = vec![Word::new(word.into())];
+        app
+    }
+
+    #[test]
+    fn correct_char_increments_key_hits() {
+        let mut app = make_app_with_word("abc");
+        app.handle_char('a');
+        assert_eq!(*app.key_hits.get(&'a').unwrap_or(&0), 1);
+        assert_eq!(*app.key_misses.get(&'a').unwrap_or(&0), 0);
+    }
+
+    #[test]
+    fn wrong_char_increments_key_misses() {
+        let mut app = make_app_with_word("abc");
+        app.handle_char('z'); // expected 'a', typed 'z'
+        assert_eq!(*app.key_hits.get(&'z').unwrap_or(&0), 0);
+        assert_eq!(*app.key_misses.get(&'z').unwrap_or(&0), 1);
+    }
+
+    #[test]
+    fn extra_char_increments_key_misses() {
+        let mut app = make_app_with_word("ab");
+        app.handle_char('a');
+        app.handle_char('b');
+        // Now at position 2, past the end of "ab".
+        app.handle_char('x');
+        assert_eq!(*app.key_misses.get(&'x').unwrap_or(&0), 1);
+        assert_eq!(*app.key_hits.get(&'x').unwrap_or(&0), 0);
+    }
+
+    #[test]
+    fn key_tracking_accumulates_across_chars() {
+        let mut app = make_app_with_word("aaa");
+        app.handle_char('a'); // hit
+        app.handle_char('a'); // hit
+        app.handle_char('b'); // miss (expected 'a', typed 'b')
+        assert_eq!(*app.key_hits.get(&'a').unwrap_or(&0), 2);
+        assert_eq!(*app.key_misses.get(&'b').unwrap_or(&0), 1);
+    }
+
+    #[test]
+    fn start_game_clears_key_tracking() {
+        let mut app = make_app_with_word("abc");
+        app.handle_char('a'); // builds up some key_hits
+        assert!(!app.key_hits.is_empty());
+        // Restart to clear.
+        app.start_game(Mode::Words(1)).unwrap();
+        assert!(app.key_hits.is_empty());
+        assert!(app.key_misses.is_empty());
     }
 
     /// Regression: custom-file mode must auto-finish when the user completes

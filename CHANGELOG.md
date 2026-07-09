@@ -13,6 +13,77 @@ _No unreleased changes yet._
 
 ---
 
+## [0.3.0] — 2026-07-09 — smarter stats
+
+### Added
+
+- **Per-key accuracy heatmap.** TypeRush now tracks how often you type each
+  key correctly vs. incorrectly. After enough sessions the Stats screen shows
+  a "key accuracy" panel with up to 5 of your worst keys, including hit/total
+  counts and a colour-coded accuracy percentage (red < 80%, amber < 93%,
+  green otherwise). The panel shows "no key data yet (keep typing!)" until at
+  least one key has been pressed 3 or more times. Per-key data is stored in
+  `stats.json` alongside each session record.
+- **Per-mode personal bests.** The Results screen now shows the personal best
+  specifically for the mode you just finished (e.g. `time-30s best`) instead
+  of the all-time best across all modes. A `★ new best!` badge fires whenever
+  you beat your previous record for that mode, including on your first session.
+  Zen-mode results display `— (zen not saved)` since Zen sessions are not saved.
+- **Daily streak counter.** The Stats screen summary now shows how many
+  consecutive calendar days (in local time) you have at least one session on.
+  Streak counts backward from today (or yesterday — the streak is still active
+  if you haven't typed yet today). Displayed as "1 day", "N days", or "—" when
+  the streak is broken.
+- **Average WPM over the last 7 and 30 days.** Two rolling-window WPM
+  averages appear in the Stats screen summary. Both show "—" when no sessions
+  fall within the window.
+- **Backward-compatible stats file.** New `key_hits` / `key_misses` fields
+  use `#[serde(default)]` so existing `~/.typerush/stats.json` records without
+  them load cleanly — no migration needed.
+
+### Changed
+
+- **Stats screen layout redesigned.** The summary card and the new key-accuracy
+  heatmap sit side by side in a two-column top row, followed by the WPM
+  sparkline and the recent-sessions table. The sparkline is slightly shorter
+  (5 rows instead of 7) so the full screen still fits in a 24-row terminal.
+- **Results screen body expanded** from `Constraint::Length(9)` to
+  `Constraint::Length(10)` to accommodate the mode-specific best row.
+
+### Performance
+
+- **Stats and Results screens no longer read `stats.json` on every frame.**
+  The session history is loaded once when you enter either screen and cached
+  in memory for the duration of the visit, then invalidated when a new session
+  is saved.
+- **Per-key accuracy is now O(1) to display.** A small running aggregate
+  (`~/.typerush/aggregate.json`) keeps cumulative per-key hit/miss totals,
+  updated incrementally on each save, so the heatmap no longer rescans the full
+  history every render. The aggregate is rebuilt automatically from existing
+  sessions on first launch after upgrading.
+
+### Fixed
+
+- **Stable ordering in the key-accuracy panel.** Keys with identical accuracy
+  (e.g. two keys both at 80%) are now broken ties alphabetically, so they no
+  longer swap positions and flicker between renders.
+- **Crash-safe stats writes.** `stats.json` and `aggregate.json` are now
+  written atomically (temp file + rename), so a crash or power loss mid-save
+  can never corrupt the file — and can never silently wipe your history on
+  the next save. Works on Linux, macOS, and Windows.
+- **Accurate Results screen for unsaved sessions.** Sessions that are not
+  recorded (Zen mode, shorter than 1 second, or zero keystrokes) no longer
+  shift the "vs last" delta by one session, and can no longer flash a
+  `★ new best!` badge for a record that was never kept.
+
+### Compatibility
+
+- Existing CLI flags, modes, config, and the stats file format are all
+  unchanged. Old `stats.json` records load correctly and contribute to
+  global stats; they just won't provide per-key heatmap data.
+
+---
+
 ## [0.2.0] — customization
 
 ### Added
@@ -110,6 +181,7 @@ _No unreleased changes yet._
   dedicated docs.
 - Demo GIF uses absolute GitHub raw URL for correct display on crates.io.
 
-[Unreleased]: https://github.com/withrvr/typerush/compare/v0.2.0...HEAD
+[Unreleased]: https://github.com/withrvr/typerush/compare/v0.3.0...HEAD
+[0.3.0]: https://github.com/withrvr/typerush/compare/v0.2.0...v0.3.0
 [0.2.0]: https://github.com/withrvr/typerush/compare/v0.1.1...v0.2.0
 [0.1.1]: https://github.com/withrvr/typerush/releases/tag/v0.1.1
