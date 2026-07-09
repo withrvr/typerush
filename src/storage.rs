@@ -68,6 +68,19 @@ fn aggregate_path() -> PathBuf {
     data_dir().join("aggregate.json")
 }
 
+/// Write `contents` to `path` atomically: write a sibling `*.tmp` file first,
+/// then rename it over the target. `rename` is atomic on the same filesystem
+/// on Linux, macOS, and Windows, so a crash or power loss mid-write can never
+/// leave a half-written (corrupt) stats file behind — the old file survives
+/// intact until the new one is fully on disk.
+fn write_atomic(path: &Path, contents: &str) -> std::io::Result<()> {
+    let mut tmp = path.as_os_str().to_owned();
+    tmp.push(".tmp");
+    let tmp = PathBuf::from(tmp);
+    fs::write(&tmp, contents)?;
+    fs::rename(&tmp, path)
+}
+
 /// Cumulative per-key press totals across **all** saved sessions.
 ///
 /// Stored in `~/.typerush/aggregate.json` and updated with each session save
@@ -86,21 +99,29 @@ pub struct AggregateStats {
 /// Load the aggregate from disk. Returns a zeroed `AggregateStats` when the
 /// file is missing or unreadable (first run, or after manual deletion).
 pub fn load_aggregate() -> AggregateStats {
-    let path = aggregate_path();
+    load_aggregate_from_path(&aggregate_path())
+}
+
+/// Persist the aggregate to disk. Best-effort — never panics.
+pub fn save_aggregate(agg: &AggregateStats) {
+    save_aggregate_to_path(&aggregate_path(), agg);
+}
+
+/// Path-based variant of [`load_aggregate`]. Exposed for tests.
+pub fn load_aggregate_from_path(path: &Path) -> AggregateStats {
     if !path.exists() {
         return AggregateStats::default();
     }
-    let Ok(raw) = fs::read_to_string(&path) else {
+    let Ok(raw) = fs::read_to_string(path) else {
         return AggregateStats::default();
     };
     serde_json::from_str(&raw).unwrap_or_default()
 }
 
-/// Persist the aggregate to disk. Best-effort — never panics.
-pub fn save_aggregate(agg: &AggregateStats) {
-    let path = aggregate_path();
+/// Path-based variant of [`save_aggregate`]. Exposed for tests.
+pub fn save_aggregate_to_path(path: &Path, agg: &AggregateStats) {
     if let Ok(json) = serde_json::to_string_pretty(agg) {
-        let _ = fs::write(path, json);
+        let _ = write_atomic(path, &json);
     }
 }
 
@@ -146,7 +167,7 @@ pub fn save_session_to_path(path: &Path, record: &SessionRecord) -> Result<()> {
         vec![]
     };
     history.push(record.clone());
-    fs::write(path, serde_json::to_string_pretty(&history)?)?;
+    write_atomic(path, &serde_json::to_string_pretty(&history)?)?;
     Ok(())
 }
 
@@ -1144,5 +1165,106 @@ mod tests {
         // stats_path is data_dir + "stats.json".
         assert_eq!(stats.file_name().unwrap(), "stats.json");
         assert_eq!(stats.parent().unwrap(), dir);
+    }
+
+    // ═══════════════════════════════════════════════════════════════════════
+    //  AggregateStats — the production key-accuracy read path (v0.3.0)
+    // ═══════════════════════════════════════════════════════════════════════
+
+    #[test]
+    fn aggregate_apply_accumulates_across_sessions() {
+        let mut agg = AggregateStats::default();
+        let s1 = make_record_with_keys(50.0, "time-30s", 0, &[("a", 8), ("b", 3)], &[("a", 2)]);
+        let s2 = make_record_with_keys(55.0, "words-25", 1, &[("a", 2)], &[("a", 8), ("c", 1)]);
+        apply_session_to_aggregate(&mut agg, &s1);
+        apply_session_to_aggregate(&mut agg, &s2);
+        assert_eq!(agg.key_hits.get("a"), Some(&10));
+        assert_eq!(agg.key_hits.get("b"), Some(&3));
+        assert_eq!(agg.key_misses.get("a"), Some(&10));
+        assert_eq!(agg.key_misses.get("c"), Some(&1));
+    }
+
+    #[test]
+    fn aggregate_result_matches_full_history_scan() {
+        // The incremental aggregate must produce byte-identical results to
+        // the reference full-scan implementation over the same history.
+        let sessions = scenario_10_varied();
+        let mut agg = AggregateStats::default();
+        for s in &sessions {
+            apply_session_to_aggregate(&mut agg, s);
+        }
+        let from_agg = key_accuracy_from_aggregate(&agg, 1);
+        let from_scan = key_accuracy(&sessions, 1);
+        assert_eq!(from_agg.len(), from_scan.len());
+        for (a, b) in from_agg.iter().zip(from_scan.iter()) {
+            assert_eq!(a.key, b.key);
+            assert_eq!(a.total, b.total);
+            assert_eq!(a.hits, b.hits);
+            assert!((a.accuracy - b.accuracy).abs() < 1e-9);
+        }
+    }
+
+    #[test]
+    fn aggregate_key_accuracy_stable_tiebreak_and_min_presses() {
+        let mut agg = AggregateStats::default();
+        // 'r' and 'n' both 80% (4/5); 'q' only pressed twice (filtered at 3).
+        agg.key_hits.insert("r".into(), 4);
+        agg.key_misses.insert("r".into(), 1);
+        agg.key_hits.insert("n".into(), 4);
+        agg.key_misses.insert("n".into(), 1);
+        agg.key_hits.insert("q".into(), 2);
+        let stats = key_accuracy_from_aggregate(&agg, 3);
+        assert_eq!(stats.len(), 2);
+        assert_eq!(stats[0].key, 'n'); // alphabetical tiebreak — stable order
+        assert_eq!(stats[1].key, 'r');
+    }
+
+    #[test]
+    fn aggregate_roundtrip_via_path() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("aggregate.json");
+        let mut agg = AggregateStats::default();
+        agg.key_hits.insert("e".into(), 100);
+        agg.key_misses.insert("e".into(), 7);
+        save_aggregate_to_path(&path, &agg);
+        let loaded = load_aggregate_from_path(&path);
+        assert_eq!(loaded.key_hits.get("e"), Some(&100));
+        assert_eq!(loaded.key_misses.get("e"), Some(&7));
+    }
+
+    #[test]
+    fn aggregate_missing_or_corrupt_file_loads_default() {
+        let dir = tempfile::tempdir().unwrap();
+        let missing = dir.path().join("nope.json");
+        let loaded = load_aggregate_from_path(&missing);
+        assert!(loaded.key_hits.is_empty() && loaded.key_misses.is_empty());
+
+        let corrupt = dir.path().join("aggregate.json");
+        std::fs::write(&corrupt, "not { json").unwrap();
+        let loaded = load_aggregate_from_path(&corrupt);
+        assert!(loaded.key_hits.is_empty() && loaded.key_misses.is_empty());
+    }
+
+    // ── Atomic writes — crash mid-write must never corrupt history ─────────
+
+    #[test]
+    fn atomic_save_leaves_no_tmp_file_and_valid_json() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("stats.json");
+        for i in 0..5 {
+            let r = make_record(50.0 + i as f64, "time-30s", 0);
+            save_session_to_path(&path, &r).unwrap();
+        }
+        // The temp file must be gone after every successful save.
+        assert!(!dir.path().join("stats.json.tmp").exists());
+        // And the target must be complete, valid JSON with all 5 records.
+        let loaded = load_sessions_from_path(&path).unwrap();
+        assert_eq!(loaded.len(), 5);
+
+        // Same invariant for the aggregate.
+        let agg_path = dir.path().join("aggregate.json");
+        save_aggregate_to_path(&agg_path, &AggregateStats::default());
+        assert!(!dir.path().join("aggregate.json.tmp").exists());
+        assert!(agg_path.exists());
     }
 }

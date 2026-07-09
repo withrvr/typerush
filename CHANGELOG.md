@@ -13,7 +13,7 @@ _No unreleased changes yet._
 
 ---
 
-## [0.3.0] — 2026-06-01 — smarter stats
+## [0.3.0] — 2026-07-09 — smarter stats
 
 ### Added
 
@@ -67,6 +67,14 @@ _No unreleased changes yet._
 - **Stable ordering in the key-accuracy panel.** Keys with identical accuracy
   (e.g. two keys both at 80%) are now broken ties alphabetically, so they no
   longer swap positions and flicker between renders.
+- **Crash-safe stats writes.** `stats.json` and `aggregate.json` are now
+  written atomically (temp file + rename), so a crash or power loss mid-save
+  can never corrupt the file — and can never silently wipe your history on
+  the next save. Works on Linux, macOS, and Windows.
+- **Accurate Results screen for unsaved sessions.** Sessions that are not
+  recorded (Zen mode, shorter than 1 second, or zero keystrokes) no longer
+  shift the "vs last" delta by one session, and can no longer flash a
+  `★ new best!` badge for a record that was never kept.
 
 ### Compatibility
 
