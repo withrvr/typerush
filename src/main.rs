@@ -529,6 +529,13 @@ fn handle_menu_key(app: &mut App, code: KeyCode, _mods: KeyModifiers) {
             match action {
                 MenuAction::Start => {
                     if let Some(m) = mode {
+                        // The Daily row's date was baked in when the menu was
+                        // built at launch — refresh it so an app left open
+                        // past midnight starts *today's* challenge.
+                        let m = match m {
+                            Mode::Daily(_) => Mode::Daily(chrono::Local::now().date_naive()),
+                            other => other,
+                        };
                         if let Err(e) = app.start_game(m) {
                             app.error_message = Some(e.to_string());
                         }
@@ -919,6 +926,31 @@ mod tests {
         handle_typing_key(&mut app, KeyCode::Char('p'), KeyModifiers::NONE);
         assert_eq!(app.words[0].typed, "p");
         assert!(!app.is_paused());
+    }
+
+    // ── v0.5.0: daily challenge keymap ──────────────────────────────────────
+
+    /// The Daily row's date is refreshed at Enter time, so an app left open
+    /// past midnight starts today's challenge, not the launch day's.
+    #[test]
+    fn menu_enter_on_daily_refreshes_date() {
+        let mut app = make_menu_app();
+        let idx = app
+            .menu
+            .iter()
+            .position(|m| matches!(m.mode, Some(Mode::Daily(_))))
+            .expect("Daily row missing");
+        // Simulate a menu built "yesterday".
+        let stale = chrono::Local::now().date_naive() - chrono::Duration::days(1);
+        app.menu[idx].mode = Some(Mode::Daily(stale));
+        app.menu_index = idx;
+        handle_menu_key(&mut app, KeyCode::Enter, KeyModifiers::NONE);
+        assert_eq!(app.screen, Screen::Typing);
+        assert_eq!(
+            app.mode,
+            Mode::Daily(chrono::Local::now().date_naive()),
+            "daily session should use today's date, not the menu-build date"
+        );
     }
 
     // ── v0.5.0: settings keymap (navigation only — cycling hits the real

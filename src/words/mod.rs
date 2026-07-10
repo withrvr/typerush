@@ -313,15 +313,14 @@ mod tests {
     }
 
     /// Pin the generator's output for one known date. If this test ever
-    /// fails, the day's challenge changed under someone's feet — that is a
-    /// compatibility break, not a refactor.
+    /// fails, the day's challenge changed under someone's feet (generator or
+    /// pool edit) — that is a compatibility break, not a refactor.
     #[test]
     fn daily_words_output_is_pinned_for_known_date() {
         let date = chrono::NaiveDate::from_ymd_opt(2026, 7, 10).unwrap();
         let first_run = daily_words(date);
-        // Deterministic across calls in-process…
-        assert_eq!(first_run, daily_words(date));
-        // …and word picks are spread across the pool, not stuck on one index.
+        assert_eq!(&first_run[..3], ["save", "used", "now"]);
+        // Word picks are spread across the pool, not stuck on one index.
         let distinct: std::collections::HashSet<&String> = first_run.iter().collect();
         assert!(
             distinct.len() > DAILY_WORD_COUNT / 2,
