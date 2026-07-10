@@ -365,6 +365,44 @@ pub fn key_accuracy_from_aggregate(agg: &AggregateStats, min_presses: u64) -> Ve
     stats
 }
 
+/// Render the full session history as CSV (v0.5.0, `--export-csv`).
+///
+/// One row per session, oldest first — the same order as `stats.json`.
+/// Timestamps are RFC 3339 so spreadsheets and scripts parse them without
+/// guessing; numeric columns use two decimal places. Per-key maps and the
+/// replay word list are deliberately not exported — CSV is for the tabular
+/// stats, the JSON file remains the lossless source.
+pub fn sessions_to_csv(sessions: &[SessionRecord]) -> String {
+    let mut out = String::from(
+        "timestamp,mode,wpm,accuracy,word_count,correct_chars,total_chars,duration_secs\n",
+    );
+    for s in sessions {
+        out.push_str(&format!(
+            "{},{},{:.2},{:.2},{},{},{},{:.2}\n",
+            csv_escape(&s.timestamp.to_rfc3339()),
+            csv_escape(&s.mode),
+            s.wpm,
+            s.accuracy,
+            s.word_count,
+            s.correct_chars,
+            s.total_chars,
+            s.duration_secs,
+        ));
+    }
+    out
+}
+
+/// Minimal CSV quoting (RFC 4180): fields containing a comma, quote, or
+/// newline are wrapped in double quotes with inner quotes doubled. Everything
+/// else passes through untouched.
+fn csv_escape(field: &str) -> String {
+    if field.contains(',') || field.contains('"') || field.contains('\n') || field.contains('\r') {
+        format!("\"{}\"", field.replace('"', "\"\""))
+    } else {
+        field.to_string()
+    }
+}
+
 /// Accuracy statistics for a single key, used by the key-accuracy heatmap.
 #[derive(Debug, Clone)]
 pub struct KeyAccuracyStat {
@@ -1146,6 +1184,59 @@ mod tests {
         let stats = key_accuracy(&[s], 60);
         assert_eq!(stats.len(), 1);
         assert_eq!(stats[0].key, 'c');
+    }
+
+    // ── v0.5.0: CSV export ───────────────────────────────────────────────────
+
+    #[test]
+    fn csv_empty_history_is_header_only() {
+        let csv = sessions_to_csv(&[]);
+        assert_eq!(
+            csv,
+            "timestamp,mode,wpm,accuracy,word_count,correct_chars,total_chars,duration_secs\n"
+        );
+    }
+
+    #[test]
+    fn csv_row_per_session_in_history_order() {
+        let sessions = vec![
+            make_record(50.0, "time-30s", 1),
+            make_record(60.5, "words-50", 0),
+        ];
+        let csv = sessions_to_csv(&sessions);
+        let lines: Vec<&str> = csv.lines().collect();
+        assert_eq!(lines.len(), 3); // header + 2 rows
+        assert!(lines[1].contains("time-30s"));
+        assert!(lines[1].contains("50.00"));
+        assert!(lines[2].contains("words-50"));
+        assert!(lines[2].contains("60.50"));
+    }
+
+    #[test]
+    fn csv_rows_have_exactly_eight_columns() {
+        let sessions = vec![make_record(72.25, "code-rust", 0)];
+        let csv = sessions_to_csv(&sessions);
+        let row = csv.lines().nth(1).unwrap();
+        assert_eq!(row.split(',').count(), 8, "row was: {row}");
+        // Timestamp is RFC 3339 — contains a 'T' date/time separator.
+        assert!(row.split(',').next().unwrap().contains('T'));
+    }
+
+    #[test]
+    fn csv_escapes_commas_and_quotes() {
+        assert_eq!(csv_escape("plain"), "plain");
+        assert_eq!(csv_escape("a,b"), "\"a,b\"");
+        assert_eq!(csv_escape("say \"hi\""), "\"say \"\"hi\"\"\"");
+        assert_eq!(csv_escape("line\nbreak"), "\"line\nbreak\"");
+    }
+
+    #[test]
+    fn csv_does_not_leak_replay_words_or_key_maps() {
+        let mut record = make_record_with_keys(50.0, "time-30s", 0, &[("e", 5)], &[("t", 1)]);
+        record.words = vec!["secret-word".into()];
+        let csv = sessions_to_csv(&[record]);
+        assert!(!csv.contains("secret-word"));
+        assert!(!csv.contains("key_hits"));
     }
 
     // ── Scenario 25: data dir / stats path resolve correctly ───────────────

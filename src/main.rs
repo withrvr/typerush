@@ -104,6 +104,11 @@ struct Cli {
     /// Print every snippet name discovered under `~/.typerush/snippets/` and exit.
     #[arg(long)]
     list_snippets: bool,
+
+    /// Export the full session history as CSV and exit. Writes to the given
+    /// PATH, or to stdout when PATH is omitted.
+    #[arg(long, value_name = "PATH", num_args = 0..=1)]
+    export_csv: Option<Option<String>>,
 }
 
 fn main() -> Result<()> {
@@ -113,6 +118,9 @@ fn main() -> Result<()> {
     }
     if cli.list_snippets {
         print_snippets_and_exit();
+    }
+    if let Some(target) = &cli.export_csv {
+        export_csv_and_exit(target.as_deref());
     }
     install_panic_hook();
     let mut terminal = setup_terminal()?;
@@ -142,6 +150,35 @@ fn print_snippets_and_exit() -> ! {
     }
     for snippet in &discovered {
         println!("{}\t{}", snippet.name, snippet.path.display());
+    }
+    std::process::exit(0);
+}
+
+/// Export the session history as CSV, then exit. `path = None` writes to
+/// stdout (pipe-friendly); `Some(path)` writes the file and confirms on
+/// stderr so the confirmation never pollutes redirected output.
+fn export_csv_and_exit(path: Option<&str>) -> ! {
+    let sessions = match storage::load_sessions() {
+        Ok(sessions) => sessions,
+        Err(err) => {
+            eprintln!(
+                "could not read {}: {}",
+                storage::stats_path().display(),
+                err
+            );
+            std::process::exit(1);
+        }
+    };
+    let csv = storage::sessions_to_csv(&sessions);
+    match path {
+        None => print!("{}", csv),
+        Some(path) => {
+            if let Err(err) = std::fs::write(path, &csv) {
+                eprintln!("could not write {}: {}", path, err);
+                std::process::exit(1);
+            }
+            eprintln!("exported {} session(s) to {}", sessions.len(), path);
+        }
     }
     std::process::exit(0);
 }
