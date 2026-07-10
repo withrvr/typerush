@@ -20,6 +20,7 @@
 //! correct = "green"
 //! ```
 
+pub mod edit;
 pub mod load;
 
 use serde::Deserialize;

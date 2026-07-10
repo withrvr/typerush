@@ -26,7 +26,7 @@ use std::{
 };
 
 use anyhow::Result;
-use clap::Parser;
+use clap::{Parser, Subcommand};
 use crossterm::{
     event::{
         self, DisableMouseCapture, EnableMouseCapture, Event, KeyCode, KeyEventKind, KeyModifiers,
@@ -114,10 +114,50 @@ struct Cli {
     /// PATH, or to stdout when PATH is omitted.
     #[arg(long, value_name = "PATH", num_args = 0..=1)]
     export_csv: Option<Option<String>>,
+
+    /// Write a starter config with inline documentation to
+    /// `~/.typerush/config.toml` and exit. Refuses to overwrite an existing file.
+    #[arg(long)]
+    init_config: bool,
+
+    #[command(subcommand)]
+    command: Option<Command>,
+}
+
+/// Top-level subcommands. Running plain `typerush` (no subcommand) opens the
+/// interactive menu exactly as before.
+#[derive(Subcommand, Debug)]
+enum Command {
+    /// Read or edit ~/.typerush/config.toml without opening an editor.
+    Config {
+        #[command(subcommand)]
+        action: ConfigAction,
+    },
+}
+
+/// `typerush config <action>` — every action prints its result and exits.
+#[derive(Subcommand, Debug)]
+enum ConfigAction {
+    /// Print the value of KEY (e.g. `theme`, `defaults.mode`, `words.pool`,
+    /// `colors.accent`), or its built-in default when unset.
+    Get { key: String },
+    /// Set KEY to VALUE. Validates the value and preserves every comment in
+    /// the file. Creates the file when missing.
+    Set { key: String, value: String },
+    /// Print the config file contents.
+    Show,
+    /// Return to built-in defaults: back up the config file to
+    /// `config.toml.bak` and remove it.
+    Reset,
+    /// Print the config file path.
+    Path,
 }
 
 fn main() -> Result<()> {
     let cli = Cli::parse();
+    if let Some(Command::Config { action }) = &cli.command {
+        run_config_command_and_exit(action);
+    }
     if cli.list_themes {
         print_themes_and_exit();
     }
@@ -126,6 +166,9 @@ fn main() -> Result<()> {
     }
     if let Some(target) = &cli.export_csv {
         export_csv_and_exit(target.as_deref());
+    }
+    if cli.init_config {
+        init_config_and_exit();
     }
     install_panic_hook();
     let mut terminal = setup_terminal()?;
@@ -186,6 +229,75 @@ fn export_csv_and_exit(path: Option<&str>) -> ! {
         }
     }
     std::process::exit(0);
+}
+
+/// Handle `typerush config <action>`: print the result and exit. Errors go
+/// to stderr with exit code 1 — never a panic, never a broken terminal
+/// (raw mode hasn't been enabled yet at this point).
+fn run_config_command_and_exit(action: &ConfigAction) -> ! {
+    use crate::config::edit;
+    let path = config::load::config_path();
+    let outcome: Result<(), String> = match action {
+        ConfigAction::Get { key } => edit::get_value(&path, key).map(|value| match value {
+            Some(value) => println!("{}", value),
+            None => println!("{}", edit::describe_default(key)),
+        }),
+        ConfigAction::Set { key, value } => edit::set_value(&path, key, value)
+            .map(|()| println!("set {} = {} in {}", key, value, path.display())),
+        ConfigAction::Show => {
+            if path.exists() {
+                match std::fs::read_to_string(&path) {
+                    Ok(contents) => {
+                        print!("{}", contents);
+                        Ok(())
+                    }
+                    Err(e) => Err(format!("could not read {}: {}", path.display(), e)),
+                }
+            } else {
+                println!(
+                    "no config file at {} — running on built-in defaults\n(create one with `typerush --init-config`)",
+                    path.display()
+                );
+                Ok(())
+            }
+        }
+        ConfigAction::Reset => edit::reset(&path).map(|backup| match backup {
+            Some(backup) => println!(
+                "reset: {} removed (backup at {})",
+                path.display(),
+                backup.display()
+            ),
+            None => println!("nothing to reset — no config file at {}", path.display()),
+        }),
+        ConfigAction::Path => {
+            println!("{}", path.display());
+            Ok(())
+        }
+    };
+    match outcome {
+        Ok(()) => std::process::exit(0),
+        Err(message) => {
+            eprintln!("{}", message);
+            std::process::exit(1);
+        }
+    }
+}
+
+/// Handle `--init-config`: write the starter config and exit. Refusal to
+/// overwrite an existing file is an error (exit 1) with a pointer to
+/// `config set` / `config reset`.
+fn init_config_and_exit() -> ! {
+    let path = config::load::config_path();
+    match config::edit::init_config(&path) {
+        Ok(()) => {
+            println!("wrote starter config to {}", path.display());
+            std::process::exit(0);
+        }
+        Err(message) => {
+            eprintln!("{}", message);
+            std::process::exit(1);
+        }
+    }
 }
 
 /// Type alias to keep function signatures readable.
