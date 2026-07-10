@@ -73,7 +73,22 @@ _No unreleased changes yet._
 
 ### Fixed
 
-- Nothing — no open defects were carried into this release.
+- **Cross-terminal glyph safety.** The pause indicator and the Settings title
+  no longer use `⏸` / `⚙` — both carry the Unicode *Emoji* property and render
+  double-width on macOS Terminal/iTerm2 and some Windows font stacks while the
+  layout budgets one column, smearing adjacent cells. The paused header now
+  simply shows the frozen timer (the modal conveys the state) and Settings
+  uses the same `◆` as the Stats title.
+- **Clear error when editing a schema-invalid config.** `config set` (and the
+  Settings screen) on a `config.toml` containing an unknown key used to fail
+  with a confusing "internal error"; it now names the file, quotes the schema
+  problem, and points at `typerush config reset`.
+- **ASCII-safe CLI messages.** The plain-console messages new in v0.5.0
+  (`config show`/`reset` notes, the `--init-config` refusal) no longer contain
+  em-dashes, which garble under legacy Windows code pages (cp437/cp1252) in
+  `cmd.exe` pipes and scripts.
+- `config set` with an integer larger than i64 (e.g. `time_seconds
+  18446744073709551615`) is now a clean validation error instead of a panic.
 
 ### Compatibility
 

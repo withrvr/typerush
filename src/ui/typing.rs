@@ -54,9 +54,11 @@ fn render_pause_overlay(f: &mut Frame, app: &App, area: Rect) {
         height,
     };
     f.render_widget(Clear, popup);
+    // ASCII-only heading: emoji-property glyphs (⏸) render double-width on
+    // several terminals and would smear the modal border.
     let lines = vec![
         Line::from(Span::styled(
-            "  ⏸ paused",
+            "  paused",
             Style::default()
                 .fg(theme.accent)
                 .add_modifier(Modifier::BOLD),
@@ -82,9 +84,11 @@ fn render_header(f: &mut Frame, app: &App, area: Rect) {
     let is_zen_mode = matches!(app.mode, Mode::Zen);
     let theme = &app.theme;
 
-    let timer_text = if app.is_paused() {
-        "  ⏸".to_string()
-    } else if let Some(remaining) = app.time_remaining() {
+    // While paused, elapsed() is frozen so the timer value simply stops
+    // moving — the pause modal communicates the state. (No glyph swap here:
+    // U+23F8 "⏸" renders double-width as emoji on macOS/iTerm2 and some
+    // Windows fonts while ratatui budgets one column, smearing the header.)
+    let timer_text = if let Some(remaining) = app.time_remaining() {
         format!("{:>3}s", remaining.as_secs())
     } else {
         format!("{:>5.1}s", app.elapsed().as_secs_f64())

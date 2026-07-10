@@ -238,9 +238,16 @@ fn run_config_command_and_exit(action: &ConfigAction) -> ! {
     use crate::config::edit;
     let path = config::load::config_path();
     let outcome: Result<(), String> = match action {
-        ConfigAction::Get { key } => edit::get_value(&path, key).map(|value| match value {
-            Some(value) => println!("{}", value),
-            None => println!("{}", edit::describe_default(key)),
+        ConfigAction::Get { key } => edit::get_value(&path, key).map(|value| {
+            match value {
+                Some(value) => println!("{}", value),
+                None => println!("{}", edit::describe_default(key)),
+            }
+            // The printed value is only honored if the whole file passes the
+            // schema — warn (on stderr, so pipes stay clean) when it doesn't.
+            if let Some(warning) = edit::schema_warning(&path) {
+                eprintln!("{}", warning);
+            }
         }),
         ConfigAction::Set { key, value } => edit::set_value(&path, key, value)
             .map(|()| println!("set {} = {} in {}", key, value, path.display())),
@@ -249,13 +256,18 @@ fn run_config_command_and_exit(action: &ConfigAction) -> ! {
                 match std::fs::read_to_string(&path) {
                     Ok(contents) => {
                         print!("{}", contents);
+                        if let Some(warning) = edit::schema_warning(&path) {
+                            eprintln!("{}", warning);
+                        }
                         Ok(())
                     }
                     Err(e) => Err(format!("could not read {}: {}", path.display(), e)),
                 }
             } else {
+                // ASCII-only: plain-CLI output may be consumed by cmd.exe
+                // scripts under legacy code pages where em-dashes garble.
                 println!(
-                    "no config file at {} — running on built-in defaults\n(create one with `typerush --init-config`)",
+                    "no config file at {} - running on built-in defaults\n(create one with `typerush --init-config`)",
                     path.display()
                 );
                 Ok(())
@@ -267,7 +279,7 @@ fn run_config_command_and_exit(action: &ConfigAction) -> ! {
                 path.display(),
                 backup.display()
             ),
-            None => println!("nothing to reset — no config file at {}", path.display()),
+            None => println!("nothing to reset - no config file at {}", path.display()),
         }),
         ConfigAction::Path => {
             println!("{}", path.display());

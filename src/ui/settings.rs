@@ -26,8 +26,10 @@ pub fn render(f: &mut Frame, app: &App) {
     ])
     .split(area);
 
+    // "◆" matches the stats screen's title glyph and, unlike "⚙" (U+2699,
+    // Emoji property), renders single-width on every mainstream terminal.
     let title = Paragraph::new(Span::styled(
-        "  ⚙ settings",
+        "  ◆ settings",
         Style::default()
             .fg(theme.accent)
             .add_modifier(Modifier::BOLD),

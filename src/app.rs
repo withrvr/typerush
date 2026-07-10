@@ -1616,6 +1616,23 @@ mod tests {
         assert_eq!(app.default_mode, DefaultMode::Time(15));
     }
 
+    /// Cycling a picker over a schema-invalid config file surfaces the
+    /// actionable error via the modal (the live theme still changes — only
+    /// persistence fails).
+    #[test]
+    fn settings_cycle_on_invalid_config_shows_actionable_error() {
+        let (_dir, path, mut app) = make_settings_app();
+        std::fs::write(&path, "theme = \"dark\"\nfuture_setting = 42\n").unwrap();
+        app.settings_index = 0;
+        app.settings_cycle(1, &path);
+        // Live UI updated…
+        assert_eq!(app.theme_name, "light");
+        // …but persistence failed with the clear message.
+        let msg = app.error_message.expect("expected an error modal");
+        assert!(msg.contains("config reset"), "got: {msg}");
+        assert!(!msg.contains("internal error"), "got: {msg}");
+    }
+
     /// Enter on a picker row advances it, same as →.
     #[test]
     fn settings_enter_advances_picker() {

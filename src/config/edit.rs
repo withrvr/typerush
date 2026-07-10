@@ -202,6 +202,23 @@ fn validate(key: &str, value: &str) -> Result<ValueKind, String> {
     Ok(kind)
 }
 
+/// If the file at `path` exists but fails the app's schema (so the runtime
+/// ignores it and boots on defaults), return a one-line warning describing
+/// the problem. `None` when the file is missing or valid. Used by
+/// `config get` / `config show` so the user isn't shown values the app
+/// doesn't actually apply.
+pub fn schema_warning(path: &Path) -> Option<String> {
+    let raw = fs::read_to_string(path).ok()?;
+    match toml::from_str::<Config>(&raw) {
+        Ok(_) => None,
+        Err(e) => Some(format!(
+            "warning: {} does not match TypeRush's config schema ({}) - the app ignores it and runs on defaults",
+            path.display(),
+            e.message()
+        )),
+    }
+}
+
 /// Read the value of `key` from the config file at `path`.
 ///
 /// Returns `Ok(Some(value))` when the key is set, `Ok(None)` when the file or
@@ -260,6 +277,18 @@ pub fn set_value(path: &Path, key: &str, value: &str) -> Result<(), String> {
     } else {
         String::new()
     };
+    // The file must already satisfy the app's schema before we touch it —
+    // otherwise the post-edit sanity check below would fail and blame the
+    // edit ("internal error") for a problem that was in the user's file all
+    // along (e.g. a hand-added unknown key, which `deny_unknown_fields`
+    // rejects). Surface the real cause with a way out instead.
+    if let Err(e) = toml::from_str::<Config>(&raw) {
+        return Err(format!(
+            "cannot edit {}: the existing file does not match TypeRush's config schema ({}). Fix it by hand or run 'typerush config reset' to start over",
+            path.display(),
+            e.message()
+        ));
+    }
     let mut doc: toml_edit::DocumentMut = raw
         .parse()
         .map_err(|e| format!("could not parse {}: {}", path.display(), e))?;
@@ -319,8 +348,10 @@ pub fn reset(path: &Path) -> Result<Option<PathBuf>, String> {
 /// clears it, so overwriting silently would only lose user edits.
 pub fn init_config(path: &Path) -> Result<(), String> {
     if path.exists() {
+        // ASCII-only message: printed to a plain (possibly legacy-codepage)
+        // console, unlike the TUI which requires UTF-8 anyway.
         return Err(format!(
-            "{} already exists — edit it with `typerush config set <key> <value>`, or run `typerush config reset` first",
+            "{} already exists - edit it with `typerush config set <key> <value>`, or run `typerush config reset` first",
             path.display()
         ));
     }
@@ -433,6 +464,35 @@ mod tests {
         assert!(set_value(&path, "colors.accent", "not-a-color").is_err());
         // Nothing was written by any failed set.
         assert!(!path.exists());
+    }
+
+    /// A config that TOML-parses but violates the app schema (unknown key —
+    /// `deny_unknown_fields`) must produce a clear, actionable error naming
+    /// the file and pointing at `config reset` — never the old "internal
+    /// error" wording — and must leave the file byte-for-byte untouched.
+    #[test]
+    fn set_on_schema_invalid_config_gives_actionable_error() {
+        let (_dir, path) = temp_config();
+        let original = "theme = \"dark\"\nfuture_setting = 42\n";
+        std::fs::write(&path, original).unwrap();
+        let err = set_value(&path, "theme", "monokai").unwrap_err();
+        assert!(err.contains("cannot edit"), "got: {err}");
+        assert!(err.contains("config reset"), "got: {err}");
+        assert!(!err.contains("internal error"), "got: {err}");
+        assert_eq!(std::fs::read_to_string(&path).unwrap(), original);
+    }
+
+    /// `schema_warning` fires only for existing files the runtime would
+    /// reject — missing and valid files stay silent.
+    #[test]
+    fn schema_warning_only_for_invalid_existing_files() {
+        let (_dir, path) = temp_config();
+        assert_eq!(schema_warning(&path), None); // missing file
+        std::fs::write(&path, "theme = \"dark\"\n").unwrap();
+        assert_eq!(schema_warning(&path), None); // valid file
+        std::fs::write(&path, "theme = \"dark\"\nfuture_setting = 42\n").unwrap();
+        let warning = schema_warning(&path).expect("expected a warning");
+        assert!(warning.contains("ignores it"), "got: {warning}");
     }
 
     #[test]
