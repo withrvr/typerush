@@ -21,6 +21,7 @@ typerush --quote              # one programming quote
 typerush --code rust          # code-typing: rust | python | js | go | java | sql | shell
 typerush --zen                # zen mode (no timer, no stats)
 typerush --symbols 25         # symbols drill (N tokens; standard rows: 25 / 50)
+typerush --daily              # today's daily challenge (same words for everyone)
 typerush --file <path>        # type any text file you have
 typerush --big                # use the larger 10,000-word English pool
 typerush --punctuation        # mix punctuation marks into random words
@@ -28,6 +29,9 @@ typerush --numbers            # mix random number tokens into random words
 typerush --theme monokai      # one-shot theme override
 typerush --list-themes        # print available theme names and exit
 typerush --list-snippets      # print every snippet found in ~/.typerush/snippets/
+typerush --export-csv [path]  # export stats as CSV (stdout when path omitted)
+typerush --init-config        # write a starter config.toml to ~/.typerush/
+typerush config <action>      # get/set/show/reset/path — edit the config from the CLI
 ```
 
 You can pass `--file <path>` alone to use the file inside the menu's "Custom"
@@ -52,6 +56,7 @@ main menu and is loaded as the typing source when selected.
 | Symbols | Programming punctuation drill — type N short tokens like `=>` `(){};` | you complete the last token      |
 | Zen     | Soft, monochrome UI. No timer, no WPM, no score saved.                | you press `Esc`                  |
 | Custom  | Any whitespace-separated text file passed via `--file` or picked from `~/.typerush/snippets/` | you complete the last word |
+| Daily   | The seed-of-the-day challenge: 25 words picked deterministically from the date, so everyone types the same list on the same day. Saved as `daily-YYYY-MM-DD`, giving each day its own personal best. | you complete the last word |
 
 ---
 
@@ -73,9 +78,10 @@ main menu and is loaded as the typing source when selected.
 | `Tab`              | Jump to the historical stats view                               |
 | `q`                | Quit                                                            |
 
-The menu is grouped into visual sections — Time, Words, Quote, Code, Symbols,
-Zen, Custom, More — separated by muted `── Section ──` headers. Arrow-key
-navigation hops over headers so you always land on a selectable row.
+The menu is grouped into visual sections — Daily, Time, Words, Quote, Code,
+Symbols, Zen, Custom, More — separated by muted `── Section ──` headers.
+Arrow-key navigation hops over headers so you always land on a selectable
+row. The More section holds Stats, Settings, and Quit.
 
 ### While typing
 
@@ -87,24 +93,64 @@ navigation hops over headers so you always land on a selectable row.
 | `Ctrl+Backspace` | Delete the entire current word                  |
 | `Ctrl+W`         | Same — delete the entire current word            |
 | `Ctrl+H`         | Same — most terminals send this when you press `Ctrl+Backspace` |
+| `Ctrl+P`         | Pause / resume — the timer freezes; typing is disabled until you resume |
 | `Ctrl+R`         | Restart the same mode with a new word list      |
 | `Esc`            | End the session and go to the results screen    |
 
+While paused, only `Ctrl+P` (resume), `Esc` (end the session), and `Ctrl+C`
+(quit) do anything — every other key is ignored so you can't type into a
+paused session by accident. Paused time never counts toward your WPM or the
+time-mode countdown.
+
 ### Results screen
 
-| Key             | Action                            |
-| --------------- | --------------------------------- |
-| `Enter` / `r`   | Restart the same mode             |
-| `Tab` / `s`     | Open the stats history            |
-| `m` / `Esc`     | Back to the menu                  |
-| `q`             | Quit                              |
+| Key             | Action                                            |
+| --------------- | ------------------------------------------------- |
+| `Enter` / `r`   | Restart the same mode (fresh word list)           |
+| `p`             | Replay the session you just finished, word-for-word |
+| `Tab` / `s`     | Open the stats history                            |
+| `m` / `Esc`     | Back to the menu                                  |
+| `q`             | Quit                                              |
 
 ### Stats history
 
-| Key                | Action            |
-| ------------------ | ----------------- |
-| `m` / `Esc` / `Tab`| Back to the menu  |
-| `q`                | Quit              |
+| Key                | Action                                             |
+| ------------------ | -------------------------------------------------- |
+| `↑ / ↓` or `j / k` | Select a session in the recent-sessions table      |
+| `Enter` / `r`      | Replay the selected session word-for-word          |
+| `m` / `Esc` / `Tab`| Back to the menu                                   |
+| `q`                | Quit                                               |
+
+Replays run under the original session's mode — a `time-30s` replay gets the
+same 30-second clock over the same words. Sessions recorded before v0.5.0
+don't carry their word list, so replaying one shows a friendly "no replay
+data" message instead.
+
+### Settings screen (v0.5.0)
+
+Open it from the menu's **More → Settings** row.
+
+| Key                | Action                                        |
+| ------------------ | --------------------------------------------- |
+| `↑ / ↓` or `j / k` | Move between rows                             |
+| `← / →` or `h / l` | Cycle the highlighted picker                  |
+| `Enter`            | Apply (cycles a picker; fires the reset row)  |
+| `m` / `Esc`        | Back to the menu                              |
+| `q`                | Quit                                          |
+
+Three rows:
+
+- **theme** — cycles the built-in palettes. Applies to the UI instantly and
+  writes `theme = "<name>"` to `~/.typerush/config.toml` (comments in the
+  file are preserved). If you use per-slot `[colors]` overrides, the picker
+  shows `custom` until you choose a theme; your overrides stay in the file
+  and re-apply on top of the chosen theme at the next launch.
+- **default mode** — cycles the standard mode presets (time 15/30/60/120,
+  words 10/25/50/100, quote, each code language, zen, symbols 25/50). The
+  menu highlight follows immediately and `defaults.mode` (plus its paired
+  key) is written to the config.
+- **reset to defaults** — backs your config up to `config.toml.bak`, removes
+  it, and returns the app to the dark theme with the time-15s default.
 
 ---
 
@@ -139,11 +185,24 @@ Alongside the stats file, TypeRush keeps:
 
 | File                            | Purpose                                                  |
 | ------------------------------- | -------------------------------------------------------- |
-| `~/.typerush/stats.json`        | One JSON record per completed session.                   |
+| `~/.typerush/stats.json`        | One JSON record per completed session (as of v0.5.0, includes the session's word list for replay). |
 | `~/.typerush/aggregate.json`    | Pre-computed per-key hit/miss totals — O(1) Stats reads. |
 | `~/.typerush/state.json`        | Tiny UI state: the last `--file` path you typed against. |
 | `~/.typerush/config.toml`       | Optional user configuration (themes, defaults, words).   |
+| `~/.typerush/config.toml.bak`   | Automatic backup written by `config reset` / the in-app reset row. |
 | `~/.typerush/snippets/*.txt`    | Personal snippet library (each `.txt` is one menu row).  |
+
+### Exporting your stats as CSV (v0.5.0)
+
+```bash
+typerush --export-csv               # print CSV to stdout (pipe it anywhere)
+typerush --export-csv stats.csv     # write a file; confirmation goes to stderr
+```
+
+Columns: `timestamp` (RFC 3339), `mode`, `wpm`, `accuracy`, `word_count`,
+`correct_chars`, `total_chars`, `duration_secs` — one row per session, oldest
+first. The per-key maps and replay word lists are not exported; `stats.json`
+remains the lossless record.
 
 ### What the Stats screen shows (v0.3.0+)
 
@@ -247,6 +306,35 @@ library. Each file appears as a `Snippet · <name>` row in the main menu and is
 sourced as the typing target when selected. Files are discovered in
 alphabetical order so menu positions are stable across launches. Use
 `typerush --list-snippets` to print every snippet TypeRush has found.
+
+### Editing the config from the CLI (v0.5.0)
+
+You never have to open the file by hand — `typerush config` reads and edits
+it in place, preserving every comment:
+
+```bash
+typerush config path                      # where the file lives
+typerush config show                      # print the file (or a "no config" note)
+typerush config get theme                 # value if set, built-in default otherwise
+typerush config set theme dracula         # validated write, comments preserved
+typerush config set defaults.mode words
+typerush config set defaults.word_count 50
+typerush config set words.pool extended
+typerush config set colors.accent "#FF00FF"
+typerush config reset                     # back up to config.toml.bak, then remove
+```
+
+Accepted keys: `theme`, `defaults.mode`, `defaults.time_seconds`,
+`defaults.word_count`, `defaults.code_lang`, `defaults.symbol_count`,
+`words.pool`, `words.punctuation`, `words.numbers`, and `colors.<slot>` for
+all ten theme slots. Values are validated with the same rules the app applies
+at startup, so a `config set` can never leave you with a config that warns on
+launch. Unknown keys or bad values print an error and exit with status 1.
+
+`typerush --init-config` writes the fully commented starter config (the same
+`config.example.toml` shipped in the repo) to `~/.typerush/config.toml`. It
+refuses to overwrite an existing file — use `config set` to change values or
+`config reset` to start over.
 
 ### Precedence
 

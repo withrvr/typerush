@@ -42,14 +42,27 @@ The `Screen` enum in `src/app.rs` is the application's high-level state:
 
 ```
 [Menu] ──Enter──► [Typing] ──finish / Esc──► [Results]
-   ▲                                            │
-   │                                            │
-   │ ◄────── Esc / 'm' ─────────────────────────┘
+   ▲                 │  ▲                     │     │
+   │            Ctrl+P  │                     │     │ 'p' (replay) /
+   │                 ▼  │                     │     │ Enter on Stats row
+   │              (paused — same screen,      │     ▼
+   │               overlay + frozen clock)    │  [Typing]
+   │                                          │
+   │ ◄────── Esc / 'm' ───────────────────────┘
    │
    ├──── Tab ───► [Stats] ──── Esc ────► [Menu]
    │
+   ├─ Settings ─► [Settings] ── Esc ───► [Menu]
+   │   (menu row)
+   │
    └──── ? ─────► [Help]   (overlay; remembers prev screen)
 ```
+
+Pause is deliberately *not* a `Screen` variant: the typing screen stays on
+screen (with a modal overlay) and the pause state lives in two `App` fields —
+`paused_at: Option<Instant>` and `total_paused: Duration`. `App::elapsed()`
+subtracts pause time, which freezes WPM, the time-mode countdown, and the
+`tick()` timeout check all at once without any of them knowing about pause.
 
 Every state transition happens by setting `app.screen` from a keymap handler in
 `main.rs`.
@@ -120,11 +133,16 @@ src/
 ├── config/
 │   ├── mod.rs           Config / Defaults / Colors / Words structs read
 │   │                    from ~/.typerush/config.toml via serde.
-│   └── load.rs          load_or_default_with(CliOverrides) — disk read +
-│                        flattening into a ResolvedConfig (palette,
-│                        default_mode, word_pool, word_decor). Never
-│                        errors; bad files surface as a single
-│                        human-readable warning.
+│   ├── load.rs          load_or_default_with(CliOverrides) — disk read +
+│   │                    flattening into a ResolvedConfig (palette,
+│   │                    default_mode, word_pool, word_decor). Never
+│   │                    errors; bad files surface as a single
+│   │                    human-readable warning.
+│   └── edit.rs          Programmatic config editing (v0.5.0): whitelisted
+│                        dotted keys, value validation matching the loader,
+│                        comment-preserving writes via toml_edit. Shared by
+│                        the `config` CLI subcommands, `--init-config`, and
+│                        the in-app Settings screen.
 │
 ├── ui/
 │   ├── mod.rs           render() dispatcher. Paints theme.background on
@@ -132,15 +150,22 @@ src/
 │   ├── menu.rs          Main menu with the ASCII banner. Renders separator
 │   │                    rows in muted italics; keyboard handler in main.rs
 │   │                    skips over them.
-│   ├── typing.rs        The typing screen: header, progress gauge, words
+│   ├── typing.rs        The typing screen: header, progress gauge, words,
+│   │                    and the pause overlay (v0.5.0)
 │   ├── results.rs       Post-session screen with PB delta + sparkline
 │   ├── stats.rs         History view: summary, sparkline, recent table
+│   │                    (selectable for word-for-word replay, v0.5.0)
+│   ├── settings.rs      In-app Settings screen (v0.5.0): theme picker,
+│   │                    default-mode picker, reset-to-defaults
 │   └── help.rs          Floating ? overlay and error modal
 │
 └── words/
     ├── mod.rs           Word source picker (random, quote, code, symbols,
     │                    file). Owns WordPool / WordDecor enums and the
     │                    random_words_from helper used by every random mode.
+    │                    Also hosts daily_words (v0.5.0): the deterministic
+    │                    seed-of-the-day generator (self-contained SplitMix64
+    │                    so the day's list never changes under a rand bump).
     ├── english.rs       Built-in 200-, 1000-, and 10,000-word English pools.
     ├── quotes.rs        Programming quotes + Rust / Python / JS / Go /
     │                    Java / SQL / Shell snippets.
@@ -198,10 +223,33 @@ v0.3.0 added two optional fields to `SessionRecord`:
 - `key_hits: HashMap<String, u64>` — per-key correct-press counts
 - `key_misses: HashMap<String, u64>` — per-key wrong/extra-press counts
 
-Both fields use `#[serde(default)]` so old records without them load cleanly
-as empty maps. The aggregation helpers (`streak`, `avg_wpm_last_n_days`,
+v0.5.0 added one more:
+- `words: Vec<String>` — the session's full target word list (all 300 for a
+  time-mode session, so a replay is truly identical), powering word-for-word
+  replay. Records without it (pre-v0.5.0) surface a friendly "no replay
+  data" modal when a replay is attempted.
+
+All optional fields use `#[serde(default)]` so old records without them load
+cleanly. The aggregation helpers (`streak`, `avg_wpm_last_n_days`,
 `personal_best_for_mode`) all live in `storage.rs` and are pure functions over
-`&[SessionRecord]`.
+`&[SessionRecord]`; `sessions_to_csv` (v0.5.0) renders the tabular columns for
+`--export-csv`.
+
+### Replay and mode labels (v0.5.0)
+`Mode::label()` has always been the stable on-disk mode identifier
+("time-30s", "code-rust", …). v0.5.0 adds its inverse, `Mode::parse_label`,
+so a saved record can be replayed under its original timer / completion
+semantics. If a future release adds labels this build doesn't know, replay
+falls back to a plain words-mode session over the stored list.
+
+### Config editing (v0.5.0)
+`config/edit.rs` is the single write-path to `config.toml`, used by the
+`config get/set/show/reset/path` subcommands, `--init-config`, and the
+Settings screen. Writes go through `toml_edit` (comment-preserving) and every
+key/value is validated with the loader's own acceptance rules, then the edited
+document is re-parsed through the runtime `Config` deserializer as a safety
+net — a successful `set` can never produce a config that warns at launch.
+Reset never destroys data: the old file is copied to `config.toml.bak` first.
 
 ### Read-path performance (v0.3.0)
 

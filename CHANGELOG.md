@@ -13,6 +13,82 @@ _No unreleased changes yet._
 
 ---
 
+## [0.5.0] — quality of life
+
+### Added
+
+- **Pause / resume mid-session.** `Ctrl+P` freezes the session: the clock,
+  WPM, and time-mode countdown all stop, a "paused" modal appears, and every
+  key except `Ctrl+P` (resume), `Esc` (end session), and `Ctrl+C` (quit) is
+  ignored so you can't type into a paused session by accident. Paused time
+  never counts toward your stats.
+- **Word-for-word session replay.** Every saved session now records its full
+  target word list. Press `p` on the Results screen to immediately re-run the
+  words you just typed, or select any of your last 10 sessions on the Stats
+  screen (`↑/↓`, then `Enter`) to replay it under its original mode — a
+  `time-30s` replay gets the same 30-second clock over the same words.
+  Sessions recorded before v0.5.0 show a friendly "no replay data" message.
+- **CSV export.** `typerush --export-csv [path]` writes the whole session
+  history as CSV — to the given file (confirmation on stderr) or to stdout
+  when the path is omitted, so it pipes cleanly. Columns: RFC 3339
+  timestamp, mode, wpm, accuracy, word_count, correct_chars, total_chars,
+  duration_secs.
+- **Daily challenge.** A new `Daily challenge` menu row (and `--daily` flag)
+  runs 25 words picked deterministically from the date — everyone on the
+  planet types the same list on the same day, regardless of pool or
+  decoration settings. Sessions save as `daily-YYYY-MM-DD`, so each day has
+  its own personal best. The generator is a self-contained SplitMix64
+  sequence, guaranteed not to change under dependency upgrades (and a
+  building block for the future LAN race mode, which needs peers to agree on
+  a shared word list).
+- **`typerush config` subcommands.** `config get <key>`, `config set <key>
+  <value>`, `config show`, `config reset`, and `config path` edit
+  `~/.typerush/config.toml` without opening an editor. Keys are whitelisted
+  (`theme`, `defaults.*`, `words.*`, `colors.*`) and values are validated
+  with the exact rules the app applies at startup, so a successful `set` can
+  never produce a config that warns at launch. Edits preserve every comment
+  in the file; `reset` backs the file up to `config.toml.bak` before
+  removing it.
+- **In-app Settings screen.** A new `Settings` row under the menu's More
+  section opens a three-row screen: a theme picker and a default-mode picker
+  (`←/→` to cycle — changes apply to the live UI instantly and persist to
+  the config), plus a reset-to-defaults row that backs up and clears the
+  config file.
+- **`typerush --init-config`.** Writes the fully commented starter config
+  (the shipped `config.example.toml`) to `~/.typerush/config.toml` and
+  refuses to overwrite an existing file.
+
+### Changed
+
+- The typing-screen footer now reads `ctrl+p pause · ctrl+r restart · esc
+  menu · ctrl+c quit` (the old `? help` hint was misleading — `?` is a
+  typeable character during a session).
+- The Stats screen's recent-sessions table is selectable (highlight follows
+  `↑/↓`), and its footer documents the replay keys.
+- The menu's More section now holds Stats, Settings, and Quit.
+- Internal: the shared reset tail of `start_game` is factored into
+  `reset_session_counters`, reused by the new `start_replay`.
+
+### Fixed
+
+- Nothing — no open defects were carried into this release.
+
+### Compatibility
+
+- All existing CLI flags, modes, keybindings, themes, and config keys are
+  unchanged. New keys don't collide: `Ctrl+P` and Results-screen `p` were
+  previously unbound; the Stats screen's `↑/↓/Enter/r` were no-ops.
+- `~/.typerush/stats.json` gains one optional `words` field per new record
+  (`#[serde(default)]`): old records load fine (they just can't be
+  replayed), and older TypeRush versions ignore the extra field.
+- `state.json`, `aggregate.json`, and the `config.toml` schema are
+  untouched. The `config` subcommands and Settings screen only write keys
+  the loader already understood.
+- New dependency `toml_edit` (already present indirectly via `toml`) powers
+  comment-preserving config edits.
+
+---
+
 ## [0.4.0] — more content & menu UX
 
 ### Added
@@ -239,7 +315,8 @@ _No unreleased changes yet._
   dedicated docs.
 - Demo GIF uses absolute GitHub raw URL for correct display on crates.io.
 
-[Unreleased]: https://github.com/withrvr/typerush/compare/v0.4.0...HEAD
+[Unreleased]: https://github.com/withrvr/typerush/compare/v0.5.0...HEAD
+[0.5.0]: https://github.com/withrvr/typerush/compare/v0.4.0...v0.5.0
 [0.4.0]: https://github.com/withrvr/typerush/compare/v0.3.0...v0.4.0
 [0.3.0]: https://github.com/withrvr/typerush/compare/v0.2.0...v0.3.0
 [0.2.0]: https://github.com/withrvr/typerush/compare/v0.1.1...v0.2.0

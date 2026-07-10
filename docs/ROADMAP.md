@@ -83,14 +83,14 @@ KEY:  ✅ done    🚧 in progress    🔲 planned    💡 idea
 - ✅ "Custom" menu row + last-picked-file memory in `~/.typerush/state.json`
 - ✅ Visual section gaps in the main menu (Time / Words / Quote / Code / Symbols / Zen / Custom groups)
 
-### v0.5 — Quality of life
-- 🔲 Pause / resume mid-session
-- 🔲 Replay a recent session word-for-word
-- 🔲 Export stats as CSV
-- 🔲 Daily challenge (deterministic seed-of-the-day)
-- 🔲 `typerush config get/set/show/reset/path` CLI subcommands (edit `~/.typerush/config.toml` without opening it)
-- 🔲 In-app Settings screen — theme picker, default mode picker, reset-to-defaults
-- 🔲 `typerush --init-config` writes a starter `config.toml` to `~/.typerush/`
+### ✅ v0.5 — Quality of life
+- ✅ Pause / resume mid-session (`Ctrl+P`; the clock freezes while paused)
+- ✅ Replay a recent session word-for-word (`p` on Results; select + Enter on Stats)
+- ✅ Export stats as CSV (`--export-csv [path]`)
+- ✅ Daily challenge (deterministic seed-of-the-day; menu row + `--daily`)
+- ✅ `typerush config get/set/show/reset/path` CLI subcommands (edit `~/.typerush/config.toml` without opening it)
+- ✅ In-app Settings screen — theme picker, default mode picker, reset-to-defaults
+- ✅ `typerush --init-config` writes a starter `config.toml` to `~/.typerush/`
 
 ---
 

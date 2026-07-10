@@ -26,10 +26,13 @@ pub fn render(f: &mut Frame, app: &App) {
         Line::from("  ↑/↓ or j/k     navigate menu"),
         Line::from("  Enter          start / restart"),
         Line::from("  Esc            back to menu / end session"),
+        Line::from("  Ctrl+P         pause / resume the session"),
         Line::from("  Ctrl+R         restart current mode"),
         Line::from("  Ctrl+Backspace delete previous word"),
         Line::from("  Ctrl+C         quit immediately"),
         Line::from("  Tab            stats screen (from menu/results)"),
+        Line::from("  p              replay last session (results screen)"),
+        Line::from("  Enter          replay selected session (stats screen)"),
         Line::from("  ?              toggle this help"),
         Line::raw(""),
         Line::from(Span::styled(
@@ -38,6 +41,7 @@ pub fn render(f: &mut Frame, app: &App) {
                 .fg(theme.secondary)
                 .add_modifier(Modifier::BOLD),
         )),
+        Line::from("  Daily          seed-of-the-day challenge — same words for everyone"),
         Line::from("  Time           type as many words as you can"),
         Line::from("  Words          type a fixed number of words"),
         Line::from("  Quote          a famous programming quote"),
