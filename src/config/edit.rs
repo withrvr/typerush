@@ -147,10 +147,12 @@ fn validate(key: &str, value: &str) -> Result<ValueKind, String> {
             }
         }
         ValueKind::Integer => {
-            let parsed: u64 = value
+            // Parse as i64 — the widest integer TOML can represent — so the
+            // later `as i64` write in set_value can never overflow.
+            let parsed: i64 = value
                 .parse()
                 .map_err(|_| format!("'{}' is not a whole number", value))?;
-            if parsed == 0 {
+            if parsed <= 0 {
                 return Err(format!("{} must be greater than zero", key));
             }
         }
@@ -422,6 +424,10 @@ mod tests {
         assert!(set_value(&path, "defaults.mode", "hyperspeed").is_err());
         assert!(set_value(&path, "defaults.time_seconds", "abc").is_err());
         assert!(set_value(&path, "defaults.time_seconds", "0").is_err());
+        assert!(set_value(&path, "defaults.time_seconds", "-30").is_err());
+        // u64-but-not-i64 values must be a clean error, not an overflow
+        // panic in the TOML write.
+        assert!(set_value(&path, "defaults.time_seconds", "18446744073709551615").is_err());
         assert!(set_value(&path, "words.pool", "gigantic").is_err());
         assert!(set_value(&path, "words.numbers", "yes").is_err());
         assert!(set_value(&path, "colors.accent", "not-a-color").is_err());
