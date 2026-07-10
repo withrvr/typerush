@@ -11,7 +11,7 @@
 
 use ratatui::{
     prelude::*,
-    widgets::{Block, Borders, Gauge, Paragraph, Wrap},
+    widgets::{Block, Borders, Clear, Gauge, Paragraph, Wrap},
 };
 
 use crate::{
@@ -36,6 +36,44 @@ pub fn render(f: &mut Frame, app: &App) {
     render_progress(f, app, layout[1]);
     render_words(f, app, layout[2]);
     render_footer(f, app, layout[3]);
+    if app.is_paused() {
+        render_pause_overlay(f, app, area);
+    }
+}
+
+/// Small centered modal shown while the session is paused (v0.5.0). Drawn on
+/// top of the frozen typing screen so the user keeps their visual context.
+fn render_pause_overlay(f: &mut Frame, app: &App, area: Rect) {
+    let theme = &app.theme;
+    let width = 40.min(area.width);
+    let height = 5.min(area.height);
+    let popup = Rect {
+        x: area.x + (area.width.saturating_sub(width)) / 2,
+        y: area.y + (area.height.saturating_sub(height)) / 2,
+        width,
+        height,
+    };
+    f.render_widget(Clear, popup);
+    let lines = vec![
+        Line::from(Span::styled(
+            "  ⏸ paused",
+            Style::default()
+                .fg(theme.accent)
+                .add_modifier(Modifier::BOLD),
+        )),
+        Line::raw(""),
+        Line::from(Span::styled(
+            "  ctrl+p resume  ·  esc end session",
+            Style::default().fg(theme.neutral),
+        )),
+    ];
+    let modal = Paragraph::new(lines).block(
+        Block::default()
+            .borders(Borders::ALL)
+            .border_style(Style::default().fg(theme.accent))
+            .title(" paused "),
+    );
+    f.render_widget(modal, popup);
 }
 
 /// Renders the live WPM / accuracy / time / mode strip at the top of the screen.
@@ -44,7 +82,9 @@ fn render_header(f: &mut Frame, app: &App, area: Rect) {
     let is_zen_mode = matches!(app.mode, Mode::Zen);
     let theme = &app.theme;
 
-    let timer_text = if let Some(remaining) = app.time_remaining() {
+    let timer_text = if app.is_paused() {
+        "  ⏸".to_string()
+    } else if let Some(remaining) = app.time_remaining() {
         format!("{:>3}s", remaining.as_secs())
     } else {
         format!("{:>5.1}s", app.elapsed().as_secs_f64())
@@ -257,7 +297,7 @@ fn style_for_char(state: CharState, is_zen_mode: bool, theme: &ThemePalette) -> 
 
 /// Tiny hint strip at the bottom of the screen.
 fn render_footer(f: &mut Frame, app: &App, area: Rect) {
-    let footer = Paragraph::new("  ctrl+r restart  ·  esc menu  ·  ctrl+c quit  ·  ? help")
+    let footer = Paragraph::new("  ctrl+p pause  ·  ctrl+r restart  ·  esc menu  ·  ctrl+c quit")
         .style(Style::default().fg(app.theme.pending));
     f.render_widget(footer, area);
 }

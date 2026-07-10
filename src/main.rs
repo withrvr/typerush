@@ -423,9 +423,23 @@ fn move_menu_cursor(app: &mut App, step: i32) {
 /// Keymap for the typing screen. Note that '?' is **not** a help shortcut
 /// here — the user may legitimately need to type it.
 pub(crate) fn handle_typing_key(app: &mut App, code: KeyCode, mods: KeyModifiers) {
+    // While paused, the keyboard is inert except for resume (Ctrl+P), ending
+    // the session (Esc), and the global Ctrl+C handled upstream. Swallowing
+    // everything else prevents accidental typing into a paused session.
+    if app.is_paused() {
+        match code {
+            KeyCode::Char('p') if mods.contains(KeyModifiers::CONTROL) => app.toggle_pause(),
+            KeyCode::Esc => app.finish_game(),
+            _ => {}
+        }
+        return;
+    }
     match code {
         KeyCode::Esc => {
             app.finish_game();
+        }
+        KeyCode::Char('p') if mods.contains(KeyModifiers::CONTROL) => {
+            app.toggle_pause();
         }
         KeyCode::Char('r') if mods.contains(KeyModifiers::CONTROL) => {
             if let Err(e) = app.restart() {
@@ -612,6 +626,54 @@ mod tests {
         handle_typing_key(&mut app, KeyCode::Char('a'), KeyModifiers::CONTROL);
         handle_typing_key(&mut app, KeyCode::Char('z'), KeyModifiers::CONTROL);
         assert_eq!(app.words[0].typed, "hel");
+    }
+
+    // ── v0.5.0: pause / resume keymap ───────────────────────────────────────
+
+    /// Ctrl+P pauses and resumes the session from the typing keymap.
+    #[test]
+    fn ctrl_p_toggles_pause() {
+        let mut app = make_typing_app();
+        app.handle_char('h'); // arm the timer
+        handle_typing_key(&mut app, KeyCode::Char('p'), KeyModifiers::CONTROL);
+        assert!(app.is_paused());
+        handle_typing_key(&mut app, KeyCode::Char('p'), KeyModifiers::CONTROL);
+        assert!(!app.is_paused());
+    }
+
+    /// While paused, printable keys and backspace are swallowed — nothing
+    /// reaches the game state.
+    #[test]
+    fn keyboard_is_inert_while_paused() {
+        let mut app = make_typing_app();
+        app.handle_char('h');
+        handle_typing_key(&mut app, KeyCode::Char('p'), KeyModifiers::CONTROL);
+        assert!(app.is_paused());
+        handle_typing_key(&mut app, KeyCode::Char('x'), KeyModifiers::NONE);
+        handle_typing_key(&mut app, KeyCode::Backspace, KeyModifiers::NONE);
+        assert_eq!(app.words[0].typed, "h");
+        assert!(app.is_paused());
+    }
+
+    /// Esc during a pause still ends the session cleanly.
+    #[test]
+    fn esc_while_paused_finishes_session() {
+        let mut app = make_typing_app();
+        app.handle_char('h');
+        handle_typing_key(&mut app, KeyCode::Char('p'), KeyModifiers::CONTROL);
+        handle_typing_key(&mut app, KeyCode::Esc, KeyModifiers::NONE);
+        assert_eq!(app.screen, Screen::Results);
+        assert!(!app.is_paused());
+    }
+
+    /// A plain 'p' (no Ctrl) is still a typed character — pause must not
+    /// steal it.
+    #[test]
+    fn plain_p_is_typed_not_pause() {
+        let mut app = make_typing_app();
+        handle_typing_key(&mut app, KeyCode::Char('p'), KeyModifiers::NONE);
+        assert_eq!(app.words[0].typed, "p");
+        assert!(!app.is_paused());
     }
 
     // ── v0.4.0: menu navigation with section separators ─────────────────────

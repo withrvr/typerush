@@ -327,6 +327,13 @@ pub struct App {
     pub started_at: Option<Instant>,
     /// When the session finished (timer up, all words done, or Esc pressed).
     pub ended_at: Option<Instant>,
+    /// When the current pause began (v0.5.0). `Some` while the session is
+    /// paused; `None` while typing normally.
+    pub paused_at: Option<Instant>,
+    /// Total time spent paused during this session, excluding any pause that
+    /// is still in progress. Subtracted from `elapsed()` so WPM and the
+    /// time-mode countdown freeze while paused.
+    pub total_paused: Duration,
 
     // --- counters used for WPM / accuracy ---
     /// Characters typed that matched the target. Drives both WPM and accuracy.
@@ -413,6 +420,8 @@ impl App {
             current_word: 0,
             started_at: None,
             ended_at: None,
+            paused_at: None,
+            total_paused: Duration::ZERO,
             correct_chars: 0,
             total_typed_chars: 0,
             backspaces: 0,
@@ -470,13 +479,43 @@ impl App {
         }
     }
 
-    /// How long the user has been (or was) typing during the current session.
-    /// Returns `Duration::ZERO` until the first keypress.
+    /// How long the user has been (or was) actively typing during the current
+    /// session. Time spent paused is excluded, so WPM and the time-mode
+    /// countdown freeze while paused. Returns `Duration::ZERO` until the
+    /// first keypress.
     pub fn elapsed(&self) -> Duration {
-        match (self.started_at, self.ended_at) {
+        let wall = match (self.started_at, self.ended_at) {
             (Some(start), Some(end)) => end.duration_since(start),
             (Some(start), None) => start.elapsed(),
-            _ => Duration::ZERO,
+            _ => return Duration::ZERO,
+        };
+        // Subtract completed pauses plus the pause currently in progress.
+        let paused = self.total_paused
+            + self
+                .paused_at
+                .map(|p| p.elapsed())
+                .unwrap_or(Duration::ZERO);
+        wall.saturating_sub(paused)
+    }
+
+    /// Whether the session is currently paused (v0.5.0).
+    pub fn is_paused(&self) -> bool {
+        self.paused_at.is_some()
+    }
+
+    /// Pause or resume the current session (v0.5.0, `Ctrl+P` while typing).
+    ///
+    /// A no-op before the first keystroke (there is no running timer to
+    /// pause yet) and after the session has ended.
+    pub fn toggle_pause(&mut self) {
+        if self.started_at.is_none() || self.ended_at.is_some() {
+            return;
+        }
+        match self.paused_at.take() {
+            // Resuming: bank the pause span we just finished.
+            Some(paused_at) => self.total_paused += paused_at.elapsed(),
+            // Pausing: stamp the pause start.
+            None => self.paused_at = Some(Instant::now()),
         }
     }
 
@@ -583,6 +622,8 @@ impl App {
         self.current_word = 0;
         self.started_at = None;
         self.ended_at = None;
+        self.paused_at = None;
+        self.total_paused = Duration::ZERO;
         self.correct_chars = 0;
         self.total_typed_chars = 0;
         self.backspaces = 0;
@@ -606,7 +647,14 @@ impl App {
     }
 
     /// Stop the timer and move to the results screen. Safe to call twice.
+    ///
+    /// If the session is paused when it ends (Esc pressed mid-pause), the
+    /// open pause is folded into `total_paused` first so the final elapsed
+    /// time stays frozen at the moment the pause began.
     pub fn finish_game(&mut self) {
+        if let Some(paused_at) = self.paused_at.take() {
+            self.total_paused += paused_at.elapsed();
+        }
         if self.ended_at.is_none() {
             self.ended_at = Some(Instant::now());
         }
@@ -1080,6 +1128,85 @@ mod tests {
             .expect("custom row missing");
         assert!(custom_row.label.contains("xyz.txt"));
         assert!(!custom_row.label.contains("abc.txt"));
+    }
+
+    // ── v0.5.0: pause / resume ──────────────────────────────────────────────
+
+    /// Pausing before the first keystroke is a no-op — there's no running
+    /// timer to pause yet.
+    #[test]
+    fn pause_before_first_key_is_noop() {
+        let mut app = make_app_with_word("abc");
+        app.toggle_pause();
+        assert!(!app.is_paused());
+        assert_eq!(app.elapsed(), Duration::ZERO);
+    }
+
+    /// Ctrl+P toggles: pause sets `paused_at`, resume banks the pause span
+    /// into `total_paused` and clears it.
+    #[test]
+    fn toggle_pause_sets_and_clears() {
+        let mut app = make_app_with_word("abc");
+        app.handle_char('a'); // arms the timer
+        app.toggle_pause();
+        assert!(app.is_paused());
+        app.toggle_pause();
+        assert!(!app.is_paused());
+    }
+
+    /// While paused, `elapsed()` is frozen: the in-flight pause span is
+    /// subtracted from wall-clock time.
+    #[test]
+    fn elapsed_is_frozen_while_paused() {
+        let mut app = make_app_with_word("abc");
+        // Simulate a session that started 2s ago and has been paused the
+        // whole time — deterministic, no sleeps.
+        app.started_at = Some(Instant::now() - Duration::from_secs(2));
+        app.paused_at = app.started_at;
+        assert!(app.elapsed() < Duration::from_millis(100));
+    }
+
+    /// A paused time-mode session must never be finished by `tick()` — the
+    /// countdown is frozen along with `elapsed()`.
+    #[test]
+    fn tick_does_not_finish_paused_time_session() {
+        let mut app = make_app_with_word("abc");
+        app.mode = Mode::Time(1);
+        // Started 5s ago (well past the 1s limit) but paused from the start.
+        app.started_at = Some(Instant::now() - Duration::from_secs(5));
+        app.paused_at = app.started_at;
+        app.tick();
+        assert_eq!(app.screen, Screen::Typing);
+        assert!(app.ended_at.is_none());
+    }
+
+    /// Ending a session mid-pause folds the open pause first, so the final
+    /// elapsed time stays frozen at the moment the pause began.
+    #[test]
+    fn finish_while_paused_folds_open_pause() {
+        let mut app = make_app_with_word("abc");
+        // Typed for ~2s, then paused for ~1s, then finished.
+        app.started_at = Some(Instant::now() - Duration::from_secs(3));
+        app.paused_at = Some(Instant::now() - Duration::from_secs(1));
+        app.finish_game();
+        assert!(!app.is_paused());
+        let secs = app.elapsed().as_secs_f64();
+        assert!(
+            (1.9..=2.1).contains(&secs),
+            "expected ~2s of active typing, got {secs}"
+        );
+    }
+
+    /// Restarting a session clears any leftover pause state.
+    #[test]
+    fn start_game_clears_pause_state() {
+        let mut app = make_app_with_word("abc");
+        app.handle_char('a');
+        app.toggle_pause();
+        assert!(app.is_paused());
+        app.start_game(Mode::Words(1)).unwrap();
+        assert!(!app.is_paused());
+        assert_eq!(app.total_paused, Duration::ZERO);
     }
 
     /// Starting a session uses the configured word pool. With the extended
