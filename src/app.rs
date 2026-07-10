@@ -36,6 +36,8 @@ pub enum Screen {
     Results,
     /// Browse historical sessions (`~/.typerush/stats.json`).
     Stats,
+    /// In-app settings: theme picker, default-mode picker, reset (v0.5.0).
+    Settings,
     /// Floating keybindings overlay (any screen can toggle it on).
     Help,
 }
@@ -180,6 +182,8 @@ pub enum MenuAction {
     StartCustom,
     /// Jump to the historical stats screen.
     ShowStats,
+    /// Open the in-app settings screen (v0.5.0).
+    ShowSettings,
     /// Quit the application.
     Quit,
     /// Decorative section header / spacer — Enter does nothing and the
@@ -313,6 +317,12 @@ pub fn build_menu(snippets: &[Snippet], last_custom_file: Option<&str>) -> Vec<M
         custom_path: None,
     });
     menu.push(MenuItem {
+        label: "Settings".to_string(),
+        mode: None,
+        action: MenuAction::ShowSettings,
+        custom_path: None,
+    });
+    menu.push(MenuItem {
         label: "Quit".to_string(),
         mode: None,
         action: MenuAction::Quit,
@@ -354,6 +364,48 @@ fn truncate_for_menu(path: &str, max: usize) -> String {
     format!("{}…{}", head_s, tail_s)
 }
 
+/// Number of rows on the Settings screen: theme, default mode, reset.
+pub const SETTINGS_ROWS: usize = 3;
+
+/// Persist a default-mode preset to the config file: `defaults.mode` plus
+/// whichever paired key (`time_seconds`, `word_count`, `code_lang`,
+/// `symbol_count`) pins the preset down. Quote and Zen need only the mode.
+fn persist_default_mode(
+    config_path: &std::path::Path,
+    default_mode: DefaultMode,
+) -> Result<(), String> {
+    use crate::config::edit::set_value;
+    let (mode_name, paired) = match default_mode {
+        DefaultMode::Time(seconds) => {
+            ("time", Some(("defaults.time_seconds", seconds.to_string())))
+        }
+        DefaultMode::Words(count) => ("words", Some(("defaults.word_count", count.to_string()))),
+        DefaultMode::Quote => ("quote", None),
+        DefaultMode::Code(lang) => {
+            let slug = match lang {
+                CodeLangKind::Rust => "rust",
+                CodeLangKind::Python => "python",
+                CodeLangKind::JavaScript => "js",
+                CodeLangKind::Go => "go",
+                CodeLangKind::Java => "java",
+                CodeLangKind::Sql => "sql",
+                CodeLangKind::Shell => "shell",
+            };
+            ("code", Some(("defaults.code_lang", slug.to_string())))
+        }
+        DefaultMode::Zen => ("zen", None),
+        DefaultMode::Symbols(count) => (
+            "symbols",
+            Some(("defaults.symbol_count", count.to_string())),
+        ),
+    };
+    set_value(config_path, "defaults.mode", mode_name)?;
+    if let Some((key, value)) = paired {
+        set_value(config_path, key, &value)?;
+    }
+    Ok(())
+}
+
 /// The entire mutable state of the application.
 ///
 /// Every field is `pub` so renderers and keyboard handlers can both read and
@@ -371,6 +423,16 @@ pub struct App {
     /// Highlight index in the Stats screen's recent-sessions table (v0.5.0).
     /// 0 = the newest displayed session; reset on each Stats entry.
     pub stats_selected: usize,
+    /// Highlight index on the Settings screen (v0.5.0): 0 = theme,
+    /// 1 = default mode, 2 = reset to defaults.
+    pub settings_index: usize,
+    /// Name of the active theme ("dark", "monokai", …) for the Settings
+    /// screen. `"custom"` when the palette doesn't match any built-in (the
+    /// user has per-slot `[colors]` overrides).
+    pub theme_name: String,
+    /// The current default-mode selection, shown and cycled on the Settings
+    /// screen and persisted to `defaults.mode` in the config.
+    pub default_mode: DefaultMode,
 
     // --- game state ---
     /// Active mode while in `Screen::Typing` or `Screen::Results`.
@@ -466,12 +528,23 @@ impl App {
         let menu = build_menu(&snippets, effective_custom_file.as_deref());
         let initial_mode = mode_for(default_mode);
         let menu_index = best_menu_match(&menu, default_mode);
+        // Recover the theme's name from its palette for the Settings screen.
+        // Per-slot [colors] overrides produce a palette that matches no
+        // built-in — shown as "custom" until the user picks a theme.
+        let theme_name = crate::theme::builtin::ALL
+            .iter()
+            .find(|(_, p)| *p == palette)
+            .map(|(name, _)| (*name).to_string())
+            .unwrap_or_else(|| "custom".to_string());
         Self {
             screen: Screen::Menu,
             previous_screen: Screen::Menu,
             menu,
             menu_index,
             stats_selected: 0,
+            settings_index: 0,
+            theme_name,
+            default_mode,
             mode: initial_mode,
             words: vec![],
             current_word: 0,
@@ -534,6 +607,119 @@ impl App {
         if previous_index < self.menu.len() {
             self.menu_index = previous_index;
         }
+    }
+
+    // ── Settings screen (v0.5.0) ─────────────────────────────────────────────
+
+    /// Cycle the value of the highlighted Settings row by `delta` (±1).
+    /// `config_path` is where changes persist — parameterized so tests can
+    /// point at a temp file instead of the user's real config.
+    pub fn settings_cycle(&mut self, delta: i32, config_path: &std::path::Path) {
+        match self.settings_index {
+            0 => self.cycle_theme(delta, config_path),
+            1 => self.cycle_default_mode(delta, config_path),
+            _ => {}
+        }
+    }
+
+    /// Enter on the highlighted Settings row: pickers advance to the next
+    /// value; the reset row restores defaults.
+    pub fn settings_activate(&mut self, config_path: &std::path::Path) {
+        match self.settings_index {
+            0 | 1 => self.settings_cycle(1, config_path),
+            2 => self.reset_settings(config_path),
+            _ => {}
+        }
+    }
+
+    /// Switch to the next/previous built-in theme, apply it to the live UI,
+    /// and persist `theme = "<name>"`. A "custom" palette (per-slot overrides
+    /// in the config) enters the cycle at its first entry; the overrides
+    /// themselves stay in the file and re-apply on top of the newly chosen
+    /// theme at next launch.
+    fn cycle_theme(&mut self, delta: i32, config_path: &std::path::Path) {
+        use crate::theme::builtin;
+        let names: Vec<&str> = builtin::names();
+        let len = names.len() as i32;
+        let next_index = match names.iter().position(|n| *n == self.theme_name) {
+            Some(current) => (current as i32 + delta).rem_euclid(len) as usize,
+            // Not on a built-in (custom palette): start from the first entry.
+            None => 0,
+        };
+        let (name, palette) = builtin::ALL[next_index];
+        self.theme = palette;
+        self.theme_name = name.to_string();
+        if let Err(message) = crate::config::edit::set_value(config_path, "theme", name) {
+            self.error_message = Some(message);
+        }
+    }
+
+    /// The canonical default-mode choices offered by the Settings picker —
+    /// one per standard menu row.
+    pub fn default_mode_presets() -> Vec<DefaultMode> {
+        use CodeLangKind::*;
+        vec![
+            DefaultMode::Time(15),
+            DefaultMode::Time(30),
+            DefaultMode::Time(60),
+            DefaultMode::Time(120),
+            DefaultMode::Words(10),
+            DefaultMode::Words(25),
+            DefaultMode::Words(50),
+            DefaultMode::Words(100),
+            DefaultMode::Quote,
+            DefaultMode::Code(Rust),
+            DefaultMode::Code(Python),
+            DefaultMode::Code(JavaScript),
+            DefaultMode::Code(Go),
+            DefaultMode::Code(Java),
+            DefaultMode::Code(Sql),
+            DefaultMode::Code(Shell),
+            DefaultMode::Zen,
+            DefaultMode::Symbols(25),
+            DefaultMode::Symbols(50),
+        ]
+    }
+
+    /// Display label for a default-mode preset — same strings as the saved
+    /// session labels ("time-30s", "code-rust", …).
+    pub fn default_mode_label(default_mode: DefaultMode) -> String {
+        mode_for(default_mode).label()
+    }
+
+    /// Switch to the next/previous default-mode preset, move the menu
+    /// highlight to the matching row, and persist `defaults.mode` plus the
+    /// paired count/lang key.
+    fn cycle_default_mode(&mut self, delta: i32, config_path: &std::path::Path) {
+        let presets = Self::default_mode_presets();
+        let len = presets.len() as i32;
+        let next_index = match presets.iter().position(|p| *p == self.default_mode) {
+            Some(current) => (current as i32 + delta).rem_euclid(len) as usize,
+            // A non-standard configured default (e.g. time_seconds = 45)
+            // enters the cycle at its first entry.
+            None => 0,
+        };
+        self.default_mode = presets[next_index];
+        self.menu_index = best_menu_match(&self.menu, self.default_mode);
+        if let Err(message) = persist_default_mode(config_path, self.default_mode) {
+            self.error_message = Some(message);
+        }
+    }
+
+    /// Reset-to-defaults row: clear the config file (backed up to
+    /// `config.toml.bak` by `config::edit::reset`) and return the live app to
+    /// the built-in dark theme and time-15s default.
+    fn reset_settings(&mut self, config_path: &std::path::Path) {
+        if let Err(message) = crate::config::edit::reset(config_path) {
+            self.error_message = Some(message);
+            return;
+        }
+        self.theme = crate::theme::builtin::DARK;
+        self.theme_name = "dark".to_string();
+        self.default_mode = DefaultMode::Time(15);
+        self.word_pool = WordPool::default();
+        self.word_decor = WordDecor::default();
+        self.menu_index = best_menu_match(&self.menu, self.default_mode);
     }
 
     /// How long the user has been (or was) actively typing during the current
@@ -1303,6 +1489,149 @@ mod tests {
         app.start_game(Mode::Words(1)).unwrap();
         assert!(!app.is_paused());
         assert_eq!(app.total_paused, Duration::ZERO);
+    }
+
+    // ── v0.5.0: settings screen ─────────────────────────────────────────────
+
+    fn make_settings_app() -> (tempfile::TempDir, std::path::PathBuf, App) {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("config.toml");
+        let app = App::new(
+            None,
+            crate::theme::ThemePalette::default(),
+            DefaultMode::Time(15),
+            Default::default(),
+            Default::default(),
+        );
+        (dir, path, app)
+    }
+
+    /// Cycling the theme applies the palette live, tracks the name, and
+    /// persists `theme = "<name>"` to the config file.
+    #[test]
+    fn settings_theme_cycle_applies_and_persists() {
+        use crate::theme::builtin;
+        let (_dir, path, mut app) = make_settings_app();
+        assert_eq!(app.theme_name, "dark");
+        app.settings_index = 0;
+        app.settings_cycle(1, &path);
+        assert_eq!(app.theme_name, "light");
+        assert_eq!(app.theme, builtin::LIGHT);
+        assert_eq!(
+            crate::config::edit::get_value(&path, "theme")
+                .unwrap()
+                .as_deref(),
+            Some("light")
+        );
+    }
+
+    /// The theme picker wraps around in both directions.
+    #[test]
+    fn settings_theme_cycle_wraps() {
+        use crate::theme::builtin;
+        let (_dir, path, mut app) = make_settings_app();
+        app.settings_index = 0;
+        // dark → (back one) → last theme in the list.
+        app.settings_cycle(-1, &path);
+        let last = builtin::ALL.last().unwrap();
+        assert_eq!(app.theme_name, last.0);
+        // …and forward again returns to dark.
+        app.settings_cycle(1, &path);
+        assert_eq!(app.theme_name, "dark");
+    }
+
+    /// A "custom" palette (per-slot overrides) starts the cycle at the first
+    /// built-in instead of panicking or refusing.
+    #[test]
+    fn settings_theme_cycle_from_custom_palette() {
+        let (_dir, path, mut app) = make_settings_app();
+        app.theme_name = "custom".to_string();
+        app.settings_index = 0;
+        app.settings_cycle(1, &path);
+        assert_eq!(app.theme_name, "dark");
+    }
+
+    /// Cycling the default mode persists `defaults.mode` + the paired key
+    /// and moves the menu highlight to the matching row.
+    #[test]
+    fn settings_default_mode_cycle_persists_and_moves_menu() {
+        let (_dir, path, mut app) = make_settings_app();
+        app.settings_index = 1;
+        // Time(15) → Time(30).
+        app.settings_cycle(1, &path);
+        assert_eq!(app.default_mode, DefaultMode::Time(30));
+        assert_eq!(app.menu[app.menu_index].label, "Time · 30s");
+        assert_eq!(
+            crate::config::edit::get_value(&path, "defaults.mode")
+                .unwrap()
+                .as_deref(),
+            Some("time")
+        );
+        assert_eq!(
+            crate::config::edit::get_value(&path, "defaults.time_seconds")
+                .unwrap()
+                .as_deref(),
+            Some("30")
+        );
+    }
+
+    /// Every preset persists cleanly through the config editor (mode name +
+    /// paired key valid for the loader).
+    #[test]
+    fn settings_every_default_mode_preset_persists() {
+        let (_dir, path, mut app) = make_settings_app();
+        app.settings_index = 1;
+        for _ in 0..App::default_mode_presets().len() {
+            app.settings_cycle(1, &path);
+            assert!(
+                app.error_message.is_none(),
+                "persisting {:?} failed: {:?}",
+                app.default_mode,
+                app.error_message
+            );
+        }
+        // Full lap lands back on the starting preset.
+        assert_eq!(app.default_mode, DefaultMode::Time(15));
+    }
+
+    /// The reset row clears the file (with backup) and restores the live app
+    /// to dark / time-15s.
+    #[test]
+    fn settings_reset_restores_defaults() {
+        use crate::theme::builtin;
+        let (_dir, path, mut app) = make_settings_app();
+        // Dirty the state first.
+        app.settings_index = 0;
+        app.settings_cycle(1, &path); // theme = light, file written
+        app.settings_index = 1;
+        app.settings_cycle(1, &path); // default mode = time-30s
+        assert!(path.exists());
+
+        app.settings_index = 2;
+        app.settings_activate(&path);
+        assert!(!path.exists(), "config file should be removed");
+        assert!(path.with_extension("toml.bak").exists(), "backup missing");
+        assert_eq!(app.theme, builtin::DARK);
+        assert_eq!(app.theme_name, "dark");
+        assert_eq!(app.default_mode, DefaultMode::Time(15));
+    }
+
+    /// Enter on a picker row advances it, same as →.
+    #[test]
+    fn settings_enter_advances_picker() {
+        let (_dir, path, mut app) = make_settings_app();
+        app.settings_index = 0;
+        app.settings_activate(&path);
+        assert_eq!(app.theme_name, "light");
+    }
+
+    /// The menu carries a Settings row under the More section.
+    #[test]
+    fn menu_contains_settings_row() {
+        let menu = build_menu(&[], None);
+        assert!(menu
+            .iter()
+            .any(|m| matches!(m.action, MenuAction::ShowSettings) && m.label == "Settings"));
     }
 
     // ── v0.5.0: daily challenge ─────────────────────────────────────────────

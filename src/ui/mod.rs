@@ -21,6 +21,7 @@
 pub mod help;
 pub mod menu;
 pub mod results;
+pub mod settings;
 pub mod stats;
 pub mod typing;
 
@@ -42,6 +43,7 @@ pub fn render(frame: &mut Frame, app: &App) {
         Screen::Typing => typing::render(frame, app),
         Screen::Results => results::render(frame, app),
         Screen::Stats => stats::render(frame, app),
+        Screen::Settings => settings::render(frame, app),
         Screen::Help => help::render(frame, app),
     }
     // 3. Error overlay sits on top of everything else when present.
@@ -142,6 +144,71 @@ mod tests {
             "menu didn't render Symbols section"
         );
         assert!(dump.contains("Custom"), "menu didn't render Custom section");
+    }
+
+    /// The settings screen renders its three rows without panicking, on both
+    /// a roomy and a small terminal.
+    #[test]
+    fn settings_screen_renders() {
+        let mut app = App::new(
+            None,
+            builtin::DARK,
+            DefaultMode::Time(15),
+            Default::default(),
+            Default::default(),
+        );
+        app.screen = Screen::Settings;
+        for (w, h) in [(100, 40), (40, 10)] {
+            let backend = TestBackend::new(w, h);
+            let mut terminal = Terminal::new(backend).unwrap();
+            terminal.draw(|f| render(f, &app)).unwrap();
+        }
+        let backend = TestBackend::new(100, 40);
+        let mut terminal = Terminal::new(backend).unwrap();
+        terminal.draw(|f| render(f, &app)).unwrap();
+        let dump = terminal
+            .backend()
+            .buffer()
+            .content
+            .iter()
+            .map(|c| c.symbol().to_string())
+            .collect::<String>();
+        assert!(dump.contains("theme"), "theme row missing");
+        assert!(dump.contains("default mode"), "default-mode row missing");
+        assert!(dump.contains("reset to defaults"), "reset row missing");
+        assert!(dump.contains("dark"), "current theme name missing");
+        assert!(dump.contains("time-15s"), "current default mode missing");
+    }
+
+    /// The typing screen shows the pause modal while paused (v0.5.0).
+    #[test]
+    fn paused_typing_screen_renders_pause_modal() {
+        use crate::app::{Mode, Word};
+        let mut app = App::new(
+            None,
+            builtin::DARK,
+            DefaultMode::Time(15),
+            Default::default(),
+            Default::default(),
+        );
+        app.screen = Screen::Typing;
+        app.mode = Mode::Words(1);
+        app.words = vec![Word::new("hello".into())];
+        app.handle_char('h');
+        app.toggle_pause();
+
+        let backend = TestBackend::new(80, 24);
+        let mut terminal = Terminal::new(backend).unwrap();
+        terminal.draw(|f| render(f, &app)).unwrap();
+        let dump = terminal
+            .backend()
+            .buffer()
+            .content
+            .iter()
+            .map(|c| c.symbol().to_string())
+            .collect::<String>();
+        assert!(dump.contains("paused"), "pause modal missing");
+        assert!(dump.contains("ctrl+p resume"), "resume hint missing");
     }
 
     /// Rendering the Typing screen in `Mode::Symbols` paints a gauge and the

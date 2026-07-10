@@ -500,6 +500,7 @@ fn handle_key(app: &mut App, code: KeyCode, mods: KeyModifiers) {
         Screen::Typing => handle_typing_key(app, code, mods),
         Screen::Results => handle_results_key(app, code, mods),
         Screen::Stats => handle_stats_key(app, code, mods),
+        Screen::Settings => handle_settings_key(app, code, mods),
         Screen::Help => {}
     }
 }
@@ -545,6 +546,7 @@ fn handle_menu_key(app: &mut App, code: KeyCode, _mods: KeyModifiers) {
                     }
                 }
                 MenuAction::ShowStats => app.screen = Screen::Stats,
+                MenuAction::ShowSettings => app.screen = Screen::Settings,
                 MenuAction::Quit => app.should_quit = true,
                 MenuAction::Separator => {}
             }
@@ -702,6 +704,27 @@ fn replay_selected_session(app: &mut App) {
     let words = record.words.clone();
     if let Err(e) = app.start_replay(mode, words) {
         app.error_message = Some(e.to_string());
+    }
+}
+
+/// Keymap for the settings screen (v0.5.0): `↑/↓` (or `j/k`) pick a row,
+/// `←/→` (or `h/l`) cycle its value, Enter applies (cycles pickers, fires
+/// the reset row). Changes persist to the real config file immediately.
+fn handle_settings_key(app: &mut App, code: KeyCode, _mods: KeyModifiers) {
+    let config_path = config::load::config_path();
+    match code {
+        KeyCode::Char('m') | KeyCode::Esc => app.screen = Screen::Menu,
+        KeyCode::Char('q') => app.should_quit = true,
+        KeyCode::Up | KeyCode::Char('k') => {
+            app.settings_index = app.settings_index.saturating_sub(1);
+        }
+        KeyCode::Down | KeyCode::Char('j') => {
+            app.settings_index = (app.settings_index + 1).min(crate::app::SETTINGS_ROWS - 1);
+        }
+        KeyCode::Left | KeyCode::Char('h') => app.settings_cycle(-1, &config_path),
+        KeyCode::Right | KeyCode::Char('l') => app.settings_cycle(1, &config_path),
+        KeyCode::Enter => app.settings_activate(&config_path),
+        _ => {}
     }
 }
 
@@ -885,6 +908,45 @@ mod tests {
         handle_typing_key(&mut app, KeyCode::Char('p'), KeyModifiers::NONE);
         assert_eq!(app.words[0].typed, "p");
         assert!(!app.is_paused());
+    }
+
+    // ── v0.5.0: settings keymap (navigation only — cycling hits the real
+    //    config path, so value changes are tested on App with temp paths) ────
+
+    /// Enter on the menu's Settings row opens the settings screen.
+    #[test]
+    fn menu_enter_on_settings_opens_settings_screen() {
+        let mut app = make_menu_app();
+        let idx = app
+            .menu
+            .iter()
+            .position(|m| matches!(m.action, MenuAction::ShowSettings))
+            .expect("Settings row missing");
+        app.menu_index = idx;
+        handle_menu_key(&mut app, KeyCode::Enter, KeyModifiers::NONE);
+        assert_eq!(app.screen, Screen::Settings);
+    }
+
+    /// ↑/↓ clamp to the three settings rows.
+    #[test]
+    fn settings_navigation_clamps_to_rows() {
+        let mut app = make_menu_app();
+        app.screen = Screen::Settings;
+        handle_settings_key(&mut app, KeyCode::Up, KeyModifiers::NONE);
+        assert_eq!(app.settings_index, 0);
+        for _ in 0..10 {
+            handle_settings_key(&mut app, KeyCode::Down, KeyModifiers::NONE);
+        }
+        assert_eq!(app.settings_index, crate::app::SETTINGS_ROWS - 1);
+    }
+
+    /// Esc leaves settings for the menu.
+    #[test]
+    fn settings_esc_returns_to_menu() {
+        let mut app = make_menu_app();
+        app.screen = Screen::Settings;
+        handle_settings_key(&mut app, KeyCode::Esc, KeyModifiers::NONE);
+        assert_eq!(app.screen, Screen::Menu);
     }
 
     // ── v0.5.0: replay keymap ───────────────────────────────────────────────
