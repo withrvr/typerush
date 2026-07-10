@@ -176,7 +176,8 @@ pub fn render(f: &mut Frame, app: &App) {
         .style(Style::default().fg(theme.accent));
     f.render_widget(spark, layout[2]);
 
-    let footer = Paragraph::new("  Enter / r restart  ·  m menu  ·  s stats  ·  q quit")
-        .style(Style::default().fg(theme.pending));
+    let footer =
+        Paragraph::new("  Enter / r restart  ·  p replay  ·  m menu  ·  s stats  ·  q quit")
+            .style(Style::default().fg(theme.pending));
     f.render_widget(footer, layout[4]);
 }

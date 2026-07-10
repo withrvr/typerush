@@ -10,7 +10,7 @@
 
 use ratatui::{
     prelude::*,
-    widgets::{Block, Borders, Cell, Paragraph, Row, Sparkline, Table},
+    widgets::{Block, Borders, Cell, Paragraph, Row, Sparkline, Table, TableState},
 };
 
 use crate::{app::App, storage};
@@ -50,7 +50,8 @@ pub fn render(f: &mut Frame, app: &App) {
     render_sessions_table(f, app, layout[3], sessions);
 
     let footer =
-        Paragraph::new("  m / esc menu  ·  q quit").style(Style::default().fg(theme.pending));
+        Paragraph::new("  ↑/↓ select session  ·  Enter replay  ·  m / esc menu  ·  q quit")
+            .style(Style::default().fg(theme.pending));
     f.render_widget(footer, layout[4]);
 }
 
@@ -256,7 +257,9 @@ fn render_sparkline(f: &mut Frame, app: &App, area: Rect, sessions: &[storage::S
     f.render_widget(spark, area);
 }
 
-/// Render the recent sessions table (last 10 sessions, newest first).
+/// Render the recent sessions table (last 10 sessions, newest first). The
+/// row at `app.stats_selected` is highlighted — pressing Enter replays it
+/// word-for-word (v0.5.0).
 fn render_sessions_table(
     f: &mut Frame,
     app: &App,
@@ -305,6 +308,17 @@ fn render_sessions_table(
             .borders(Borders::ALL)
             .border_style(Style::default().fg(theme.pending))
             .title(" recent sessions "),
-    );
-    f.render_widget(table, area);
+    )
+    // Same highlight recipe as the menu list: black-on-accent reads well on
+    // every built-in theme because each accent is a bright color.
+    .row_highlight_style(
+        Style::default()
+            .fg(Color::Black)
+            .bg(theme.accent)
+            .add_modifier(Modifier::BOLD),
+    )
+    .highlight_symbol("➤ ");
+    let mut state = TableState::default();
+    state.select(Some(app.stats_selected));
+    f.render_stateful_widget(table, area, &mut state);
 }

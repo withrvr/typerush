@@ -82,6 +82,43 @@ impl Mode {
             Mode::Symbols(count) => format!("symbols-{}", count),
         }
     }
+
+    /// Inverse of [`Mode::label`]: parse a saved label back into a runtime
+    /// `Mode` so a recorded session can be replayed with its original timer /
+    /// completion semantics (v0.5.0). Returns `None` for labels this version
+    /// doesn't recognise (e.g. from a future release).
+    pub fn parse_label(label: &str) -> Option<Mode> {
+        use crate::words::CodeLang;
+        match label {
+            "quote" => return Some(Mode::Quote),
+            "zen" => return Some(Mode::Zen),
+            "custom" => return Some(Mode::Custom),
+            _ => {}
+        }
+        if let Some(rest) = label.strip_prefix("time-") {
+            return rest.strip_suffix('s')?.parse().ok().map(Mode::Time);
+        }
+        if let Some(rest) = label.strip_prefix("words-") {
+            return rest.parse().ok().map(Mode::Words);
+        }
+        if let Some(rest) = label.strip_prefix("symbols-") {
+            return rest.parse().ok().map(Mode::Symbols);
+        }
+        if let Some(rest) = label.strip_prefix("code-") {
+            let lang = match rest {
+                "rust" => CodeLang::Rust,
+                "python" => CodeLang::Python,
+                "javascript" => CodeLang::JavaScript,
+                "go" => CodeLang::Go,
+                "java" => CodeLang::Java,
+                "sql" => CodeLang::Sql,
+                "shell" => CodeLang::Shell,
+                _ => return None,
+            };
+            return Some(Mode::Code(lang));
+        }
+        None
+    }
 }
 
 /// A single word in the typing prompt — the target text plus what the user
@@ -315,6 +352,9 @@ pub struct App {
     pub menu: Vec<MenuItem>,
     /// Highlight index inside `menu`.
     pub menu_index: usize,
+    /// Highlight index in the Stats screen's recent-sessions table (v0.5.0).
+    /// 0 = the newest displayed session; reset on each Stats entry.
+    pub stats_selected: usize,
 
     // --- game state ---
     /// Active mode while in `Screen::Typing` or `Screen::Results`.
@@ -415,6 +455,7 @@ impl App {
             previous_screen: Screen::Menu,
             menu,
             menu_index,
+            stats_selected: 0,
             mode: initial_mode,
             words: vec![],
             current_word: 0,
@@ -619,6 +660,32 @@ impl App {
                 .map(Word::new)
                 .collect(),
         };
+        self.reset_session_counters();
+        Ok(())
+    }
+
+    /// Start a session that replays a previously recorded word list
+    /// word-for-word (v0.5.0). `mode` should be the original session's mode
+    /// so the timer / completion semantics and the saved label match the
+    /// first run.
+    ///
+    /// Returns `Err` for an empty word list — records saved before v0.5.0
+    /// don't carry replay data.
+    pub fn start_replay(&mut self, mode: Mode, words: Vec<String>) -> anyhow::Result<()> {
+        if words.is_empty() {
+            return Err(anyhow::anyhow!(
+                "no replay data for this session (recorded before v0.5.0)"
+            ));
+        }
+        self.mode = mode;
+        self.words = words.into_iter().map(Word::new).collect();
+        self.reset_session_counters();
+        Ok(())
+    }
+
+    /// Zero every per-session counter and land on the typing screen with the
+    /// timer un-armed. Shared tail of `start_game` and `start_replay`.
+    fn reset_session_counters(&mut self) {
         self.current_word = 0;
         self.started_at = None;
         self.ended_at = None;
@@ -630,7 +697,6 @@ impl App {
         self.key_hits.clear();
         self.key_misses.clear();
         self.screen = Screen::Typing;
-        Ok(())
     }
 
     /// Restart the most recent mode with a fresh word list.
@@ -1207,6 +1273,94 @@ mod tests {
         app.start_game(Mode::Words(1)).unwrap();
         assert!(!app.is_paused());
         assert_eq!(app.total_paused, Duration::ZERO);
+    }
+
+    // ── v0.5.0: replay ──────────────────────────────────────────────────────
+
+    /// `Mode::parse_label` is the exact inverse of `Mode::label` for every
+    /// mode this version can save.
+    #[test]
+    fn mode_label_round_trips_through_parse_label() {
+        use crate::words::CodeLang;
+        let modes = [
+            Mode::Time(30),
+            Mode::Time(120),
+            Mode::Words(50),
+            Mode::Quote,
+            Mode::Code(CodeLang::Rust),
+            Mode::Code(CodeLang::JavaScript),
+            Mode::Code(CodeLang::Shell),
+            Mode::Zen,
+            Mode::Custom,
+            Mode::Symbols(25),
+        ];
+        for mode in modes {
+            assert_eq!(
+                Mode::parse_label(&mode.label()),
+                Some(mode),
+                "label {:?} did not round-trip",
+                mode.label()
+            );
+        }
+    }
+
+    /// Unknown / malformed labels parse to `None` instead of panicking.
+    #[test]
+    fn parse_label_rejects_unknown_labels() {
+        for bad in [
+            "",
+            "hyperspeed",
+            "time-",
+            "time-abcs",
+            "time-30", // missing the trailing 's'
+            "words-",
+            "words-abc",
+            "code-cobol",
+            "symbols-x",
+        ] {
+            assert_eq!(Mode::parse_label(bad), None, "{bad:?} should not parse");
+        }
+    }
+
+    /// Replay uses the supplied word list verbatim — no re-randomisation.
+    #[test]
+    fn start_replay_uses_exact_word_list() {
+        let mut app = make_app_with_word("placeholder");
+        app.start_replay(
+            Mode::Words(3),
+            vec!["alpha".into(), "beta".into(), "gamma".into()],
+        )
+        .unwrap();
+        let texts: Vec<&str> = app.words.iter().map(|w| w.text.as_str()).collect();
+        assert_eq!(texts, ["alpha", "beta", "gamma"]);
+        assert_eq!(app.mode, Mode::Words(3));
+        assert_eq!(app.screen, Screen::Typing);
+        assert_eq!(app.current_word, 0);
+        assert!(app.started_at.is_none());
+    }
+
+    /// Records saved before v0.5.0 carry no word list — replay must fail
+    /// with a friendly error, not an empty session.
+    #[test]
+    fn start_replay_rejects_empty_word_list() {
+        let mut app = make_app_with_word("abc");
+        app.screen = Screen::Results;
+        let err = app.start_replay(Mode::Words(5), vec![]).unwrap_err();
+        assert!(err.to_string().contains("no replay data"));
+        // App state untouched — still on the Results screen.
+        assert_eq!(app.screen, Screen::Results);
+    }
+
+    /// A replayed session finishes with the original mode's semantics.
+    #[test]
+    fn replayed_words_session_finishes_on_last_word() {
+        let mut app = make_app_with_word("placeholder");
+        app.start_replay(Mode::Words(2), vec!["hi".into(), "yo".into()])
+            .unwrap();
+        for ch in "hi yo ".chars() {
+            app.handle_char(ch);
+        }
+        assert_eq!(app.screen, Screen::Results);
     }
 
     /// Starting a session uses the configured word pool. With the extended

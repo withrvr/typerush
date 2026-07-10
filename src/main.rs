@@ -270,6 +270,8 @@ fn run_app(terminal: &mut Tui, cli: Cli) -> Result<()> {
             && last_screen != app.screen
         {
             app.stats_cache = storage::load_sessions().ok();
+            // Fresh Stats visit always starts with the newest session highlighted.
+            app.stats_selected = 0;
         }
 
         last_screen = app.screen;
@@ -481,6 +483,15 @@ fn handle_results_key(app: &mut App, code: KeyCode, _mods: KeyModifiers) {
                 app.error_message = Some(e.to_string());
             }
         }
+        // Replay the just-finished session with the exact same words
+        // (Enter/r restarts the mode with a *fresh* word list instead).
+        KeyCode::Char('p') => {
+            let mode = app.mode;
+            let words: Vec<String> = app.words.iter().map(|w| w.text.clone()).collect();
+            if let Err(e) = app.start_replay(mode, words) {
+                app.error_message = Some(e.to_string());
+            }
+        }
         KeyCode::Char('m') | KeyCode::Esc => app.screen = Screen::Menu,
         KeyCode::Tab | KeyCode::Char('s') => app.screen = Screen::Stats,
         KeyCode::Char('q') => app.should_quit = true,
@@ -488,12 +499,52 @@ fn handle_results_key(app: &mut App, code: KeyCode, _mods: KeyModifiers) {
     }
 }
 
-/// Keymap for the historical stats screen.
+/// Keymap for the historical stats screen. `↑/↓` (or `j/k`) move the
+/// highlight through the recent-sessions table; `Enter`/`r` replays the
+/// selected session word-for-word (v0.5.0).
 fn handle_stats_key(app: &mut App, code: KeyCode, _mods: KeyModifiers) {
+    // Number of rows actually shown in the recent-sessions table (last 10).
+    let visible_rows = app
+        .stats_cache
+        .as_deref()
+        .map(|s| s.len().min(10))
+        .unwrap_or(0);
     match code {
         KeyCode::Char('m') | KeyCode::Esc | KeyCode::Tab => app.screen = Screen::Menu,
         KeyCode::Char('q') => app.should_quit = true,
+        KeyCode::Up | KeyCode::Char('k') => {
+            app.stats_selected = app.stats_selected.saturating_sub(1);
+        }
+        KeyCode::Down | KeyCode::Char('j') => {
+            if visible_rows > 0 && app.stats_selected + 1 < visible_rows {
+                app.stats_selected += 1;
+            }
+        }
+        KeyCode::Enter | KeyCode::Char('r') => replay_selected_session(app),
         _ => {}
+    }
+}
+
+/// Replay the session currently highlighted in the Stats table. Rows are
+/// displayed newest-first, so selection index 0 maps to the *last* record in
+/// the (oldest-first) history. Pre-v0.5.0 records have no stored words and
+/// surface a friendly error modal instead.
+fn replay_selected_session(app: &mut App) {
+    let Some(sessions) = app.stats_cache.as_deref() else {
+        return;
+    };
+    if sessions.is_empty() {
+        return;
+    }
+    let display_count = sessions.len().min(10);
+    let selected = app.stats_selected.min(display_count - 1);
+    let record = &sessions[sessions.len() - 1 - selected];
+    // Fall back to a plain words-mode session when the label comes from a
+    // future version this build doesn't recognise.
+    let mode = Mode::parse_label(&record.mode).unwrap_or(Mode::Words(record.words.len()));
+    let words = record.words.clone();
+    if let Err(e) = app.start_replay(mode, words) {
+        app.error_message = Some(e.to_string());
     }
 }
 
@@ -533,6 +584,9 @@ fn save_current_session(app: &mut App) {
             .iter()
             .map(|(k, v)| (k.to_string(), *v))
             .collect(),
+        // Full target word list (v0.5.0) so the session can be replayed
+        // word-for-word later — including words never reached in time mode.
+        words: app.words.iter().map(|w| w.text.clone()).collect(),
     };
     // Persist to stats.json (save_session also updates aggregate.json on disk).
     let _ = storage::save_session(&record);
@@ -674,6 +728,116 @@ mod tests {
         handle_typing_key(&mut app, KeyCode::Char('p'), KeyModifiers::NONE);
         assert_eq!(app.words[0].typed, "p");
         assert!(!app.is_paused());
+    }
+
+    // ── v0.5.0: replay keymap ───────────────────────────────────────────────
+
+    fn make_stats_app_with_history(records: Vec<crate::storage::SessionRecord>) -> App {
+        let mut app = App::new(
+            None,
+            ThemePalette::default(),
+            DefaultMode::Time(15),
+            Default::default(),
+            Default::default(),
+        );
+        app.screen = Screen::Stats;
+        app.stats_cache = Some(records);
+        app
+    }
+
+    fn record_with_words(mode: &str, words: &[&str]) -> crate::storage::SessionRecord {
+        crate::storage::SessionRecord {
+            wpm: 50.0,
+            accuracy: 95.0,
+            mode: mode.to_string(),
+            word_count: words.len(),
+            correct_chars: 100,
+            total_chars: 105,
+            duration_secs: 30.0,
+            timestamp: chrono::Local::now(),
+            key_hits: Default::default(),
+            key_misses: Default::default(),
+            words: words.iter().map(|w| w.to_string()).collect(),
+        }
+    }
+
+    /// 'p' on the results screen replays the just-finished session with the
+    /// exact same word list.
+    #[test]
+    fn results_p_replays_same_words() {
+        let mut app = make_typing_app();
+        let original: Vec<String> = app.words.iter().map(|w| w.text.clone()).collect();
+        app.finish_game();
+        handle_results_key(&mut app, KeyCode::Char('p'), KeyModifiers::NONE);
+        assert_eq!(app.screen, Screen::Typing);
+        let replayed: Vec<String> = app.words.iter().map(|w| w.text.clone()).collect();
+        assert_eq!(replayed, original);
+    }
+
+    /// Enter on the stats screen replays the highlighted session (newest
+    /// first) under its original mode.
+    #[test]
+    fn stats_enter_replays_selected_session() {
+        let mut app = make_stats_app_with_history(vec![
+            record_with_words("words-2", &["old", "session"]),
+            record_with_words("time-30s", &["new", "session", "words"]),
+        ]);
+        // Selection 0 = newest record (the time-30s one).
+        handle_stats_key(&mut app, KeyCode::Enter, KeyModifiers::NONE);
+        assert_eq!(app.screen, Screen::Typing);
+        assert_eq!(app.mode, Mode::Time(30));
+        assert_eq!(app.words.len(), 3);
+        assert_eq!(app.words[0].text, "new");
+    }
+
+    /// Moving the selection down then replaying picks the older record.
+    #[test]
+    fn stats_selection_moves_and_replays_older_record() {
+        let mut app = make_stats_app_with_history(vec![
+            record_with_words("words-2", &["old", "session"]),
+            record_with_words("time-30s", &["new", "session", "words"]),
+        ]);
+        handle_stats_key(&mut app, KeyCode::Down, KeyModifiers::NONE);
+        assert_eq!(app.stats_selected, 1);
+        handle_stats_key(&mut app, KeyCode::Enter, KeyModifiers::NONE);
+        assert_eq!(app.mode, Mode::Words(2));
+        assert_eq!(app.words[0].text, "old");
+    }
+
+    /// Selection never walks past the displayed rows (max 10, newest-first),
+    /// and never underflows at the top.
+    #[test]
+    fn stats_selection_stays_in_bounds() {
+        let mut app = make_stats_app_with_history(vec![
+            record_with_words("words-2", &["a", "b"]),
+            record_with_words("words-2", &["c", "d"]),
+        ]);
+        handle_stats_key(&mut app, KeyCode::Up, KeyModifiers::NONE);
+        assert_eq!(app.stats_selected, 0);
+        for _ in 0..5 {
+            handle_stats_key(&mut app, KeyCode::Down, KeyModifiers::NONE);
+        }
+        assert_eq!(app.stats_selected, 1, "must clamp to last visible row");
+    }
+
+    /// Replaying a record saved before v0.5.0 (no stored words) surfaces the
+    /// friendly error modal instead of starting an empty session.
+    #[test]
+    fn stats_replay_of_legacy_record_shows_error() {
+        let mut app = make_stats_app_with_history(vec![record_with_words("time-30s", &[])]);
+        handle_stats_key(&mut app, KeyCode::Enter, KeyModifiers::NONE);
+        assert_eq!(app.screen, Screen::Stats);
+        let msg = app.error_message.expect("expected an error modal");
+        assert!(msg.contains("no replay data"));
+    }
+
+    /// Enter on an empty history is a silent no-op.
+    #[test]
+    fn stats_enter_on_empty_history_is_noop() {
+        let mut app = make_stats_app_with_history(vec![]);
+        handle_stats_key(&mut app, KeyCode::Enter, KeyModifiers::NONE);
+        assert_eq!(app.screen, Screen::Stats);
+        assert!(app.error_message.is_none());
     }
 
     // ── v0.4.0: menu navigation with section separators ─────────────────────

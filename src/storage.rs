@@ -48,6 +48,13 @@ pub struct SessionRecord {
     /// Added in v0.3.0; old records without this field deserialise to an empty map.
     #[serde(default)]
     pub key_misses: HashMap<String, u64>,
+    /// The session's full target word list, in order — everything the user was
+    /// asked to type (including words never reached in a time-mode session),
+    /// so the session can be replayed word-for-word.
+    /// Added in v0.5.0; old records without this field deserialise to an empty
+    /// vec, which the replay UI reports as "no replay data".
+    #[serde(default)]
+    pub words: Vec<String>,
 }
 
 /// Directory we write to: `$HOME/.typerush`. Falls back to the current
@@ -389,6 +396,7 @@ mod tests {
             timestamp,
             key_hits: HashMap::new(),
             key_misses: HashMap::new(),
+            words: vec![],
         }
     }
 
@@ -852,6 +860,7 @@ mod tests {
             timestamp: Local::now(),
             key_hits: hits.clone(),
             key_misses: misses.clone(),
+            words: vec!["def".into(), "main():".into()],
         };
         let json = serde_json::to_string(&original).unwrap();
         let restored: SessionRecord = serde_json::from_str(&json).unwrap();
@@ -865,6 +874,10 @@ mod tests {
         assert!((restored.duration_secs - 45.5).abs() < 1e-9);
         assert_eq!(restored.key_hits, hits);
         assert_eq!(restored.key_misses, misses);
+        assert_eq!(
+            restored.words,
+            vec!["def".to_string(), "main():".to_string()]
+        );
     }
 
     // ── Scenario 9: corrupt JSON file → empty vec (no panic) ────────────────
