@@ -80,6 +80,11 @@ struct Cli {
     #[arg(long)]
     symbols: Option<usize>,
 
+    /// Skip the menu and start today's daily challenge — the same
+    /// deterministic word list for everyone on a given date.
+    #[arg(long)]
+    daily: bool,
+
     /// Use the larger 10,000-word pool instead of the default ~1,000.
     #[arg(long)]
     big: bool,
@@ -321,7 +326,8 @@ fn run_app(terminal: &mut Tui, cli: Cli) -> Result<()> {
 }
 
 /// If the user passed a mode flag (`--time`, `--words`, `--quote`, `--code`,
-/// `--zen`, `--symbols`, `--file`) skip the menu and start that mode immediately.
+/// `--zen`, `--symbols`, `--daily`, `--file`) skip the menu and start that
+/// mode immediately.
 fn apply_cli_autostart(app: &mut App, cli: &Cli) -> Result<()> {
     if let Some(seconds) = cli.time {
         app.start_game(Mode::Time(seconds))?;
@@ -345,6 +351,8 @@ fn apply_cli_autostart(app: &mut App, cli: &Cli) -> Result<()> {
         app.start_game(Mode::Zen)?;
     } else if let Some(count) = cli.symbols {
         app.start_game(Mode::Symbols(count))?;
+    } else if cli.daily {
+        app.start_game(Mode::Daily(chrono::Local::now().date_naive()))?;
     } else if let Some(path) = cli.file.as_deref() {
         // Remember the explicit `--file` path so the menu's Custom row stays
         // useful on the next launch.

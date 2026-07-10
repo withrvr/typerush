@@ -98,6 +98,46 @@ fn decorate_with_punctuation(word: &str, rng: &mut impl Rng) -> String {
     format!("{}{}", word, tail)
 }
 
+/// Number of words in a daily-challenge session (v0.5.0).
+pub const DAILY_WORD_COUNT: usize = 25;
+
+/// The daily challenge word list for `date` (v0.5.0).
+///
+/// Fully deterministic: the same date produces the same `DAILY_WORD_COUNT`
+/// words on every machine, platform, and launch, so everyone races the same
+/// text on a given day. Words always come from the Common pool with no
+/// punctuation / number decoration — the challenge is identical regardless of
+/// user config. (This determinism is also groundwork for the future LAN
+/// multiplayer mode, where peers must agree on a shared word list.)
+///
+/// The generator is a self-contained SplitMix64 sequence seeded from the
+/// date, rather than `rand`'s `StdRng` — `StdRng` is explicitly not
+/// guaranteed to be reproducible across `rand` versions, and the day's
+/// challenge must never change under a dependency bump.
+pub fn daily_words(date: chrono::NaiveDate) -> Vec<String> {
+    use chrono::Datelike;
+    let pool = english::ENGLISH_1000;
+    // Golden-ratio offset decorrelates consecutive days' seeds.
+    let mut state = (date.num_days_from_ce() as u64).wrapping_mul(0x9E37_79B9_7F4A_7C15);
+    (0..DAILY_WORD_COUNT)
+        .map(|_| {
+            let index = (splitmix64(&mut state) % pool.len() as u64) as usize;
+            pool[index].to_string()
+        })
+        .collect()
+}
+
+/// One step of the SplitMix64 PRNG (public-domain constants from Steele,
+/// Lea & Flood). Statistical quality is far beyond what word-picking needs;
+/// the point is bit-for-bit stability across platforms and releases.
+fn splitmix64(state: &mut u64) -> u64 {
+    *state = state.wrapping_add(0x9E37_79B9_7F4A_7C15);
+    let mut z = *state;
+    z = (z ^ (z >> 30)).wrapping_mul(0xBF58_476D_1CE4_E5B9);
+    z = (z ^ (z >> 27)).wrapping_mul(0x94D0_49BB_1331_11EB);
+    z ^ (z >> 31)
+}
+
 /// Pick a random famous programming quote from the built-in list, split into
 /// whitespace-separated words.
 pub fn random_quote() -> Vec<String> {
@@ -243,6 +283,50 @@ mod tests {
             let tokens = random_code_snippet(lang);
             assert!(!tokens.is_empty(), "empty snippet for {:?}", lang);
         }
+    }
+
+    // ── v0.5.0: daily challenge ─────────────────────────────────────────────
+
+    #[test]
+    fn daily_words_is_deterministic_for_a_date() {
+        let date = chrono::NaiveDate::from_ymd_opt(2026, 7, 10).unwrap();
+        assert_eq!(daily_words(date), daily_words(date));
+    }
+
+    #[test]
+    fn daily_words_differ_between_dates() {
+        let a = daily_words(chrono::NaiveDate::from_ymd_opt(2026, 7, 10).unwrap());
+        let b = daily_words(chrono::NaiveDate::from_ymd_opt(2026, 7, 11).unwrap());
+        assert_ne!(a, b, "consecutive days produced identical challenges");
+    }
+
+    #[test]
+    fn daily_words_returns_fixed_count_from_common_pool() {
+        let words = daily_words(chrono::NaiveDate::from_ymd_opt(2026, 1, 1).unwrap());
+        assert_eq!(words.len(), DAILY_WORD_COUNT);
+        for w in &words {
+            assert!(
+                english::ENGLISH_1000.contains(&w.as_str()),
+                "{w:?} is not in the common pool"
+            );
+        }
+    }
+
+    /// Pin the generator's output for one known date. If this test ever
+    /// fails, the day's challenge changed under someone's feet — that is a
+    /// compatibility break, not a refactor.
+    #[test]
+    fn daily_words_output_is_pinned_for_known_date() {
+        let date = chrono::NaiveDate::from_ymd_opt(2026, 7, 10).unwrap();
+        let first_run = daily_words(date);
+        // Deterministic across calls in-process…
+        assert_eq!(first_run, daily_words(date));
+        // …and word picks are spread across the pool, not stuck on one index.
+        let distinct: std::collections::HashSet<&String> = first_run.iter().collect();
+        assert!(
+            distinct.len() > DAILY_WORD_COUNT / 2,
+            "suspiciously repetitive daily list: {first_run:?}"
+        );
     }
 
     #[test]

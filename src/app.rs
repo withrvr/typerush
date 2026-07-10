@@ -61,6 +61,11 @@ pub enum Mode {
     /// Drill programming punctuation: type N short symbol tokens like `=>`,
     /// `(){};` and other characters typists usually under-train.
     Symbols(usize),
+    /// The daily challenge (v0.5.0): a deterministic seed-of-the-day word
+    /// list — everyone gets the same words on the same date. The date is
+    /// stored so the saved label (`daily-YYYY-MM-DD`) pins the PB to that
+    /// day's challenge.
+    Daily(chrono::NaiveDate),
 }
 
 impl Mode {
@@ -80,6 +85,7 @@ impl Mode {
             Mode::Zen => "zen".to_string(),
             Mode::Custom => "custom".to_string(),
             Mode::Symbols(count) => format!("symbols-{}", count),
+            Mode::Daily(date) => format!("daily-{}", date.format("%Y-%m-%d")),
         }
     }
 
@@ -103,6 +109,11 @@ impl Mode {
         }
         if let Some(rest) = label.strip_prefix("symbols-") {
             return rest.parse().ok().map(Mode::Symbols);
+        }
+        if let Some(rest) = label.strip_prefix("daily-") {
+            return chrono::NaiveDate::parse_from_str(rest, "%Y-%m-%d")
+                .ok()
+                .map(Mode::Daily);
         }
         if let Some(rest) = label.strip_prefix("code-") {
             let lang = match rest {
@@ -253,6 +264,11 @@ fn start_row(label: impl Into<String>, mode: Mode) -> MenuItem {
 pub fn build_menu(snippets: &[Snippet], last_custom_file: Option<&str>) -> Vec<MenuItem> {
     use crate::words::CodeLang;
     let mut menu: Vec<MenuItem> = vec![
+        separator("── Daily ──"),
+        start_row(
+            "Daily challenge",
+            Mode::Daily(chrono::Local::now().date_naive()),
+        ),
         separator("── Time ──"),
         start_row("Time · 15s", Mode::Time(15)),
         start_row("Time · 30s", Mode::Time(30)),
@@ -601,11 +617,16 @@ impl App {
         }
     }
 
-    /// In `Mode::Words` / `Mode::Symbols`, `(items_completed, items_total)`.
-    /// `None` for all other modes.
+    /// In `Mode::Words` / `Mode::Symbols` / `Mode::Daily`,
+    /// `(items_completed, items_total)`. `None` for all other modes.
     pub fn progress(&self) -> Option<(usize, usize)> {
         match self.mode {
             Mode::Words(target) | Mode::Symbols(target) => {
+                Some((self.current_word.min(target), target))
+            }
+            // The daily challenge's target is simply its (fixed) word list.
+            Mode::Daily(_) => {
+                let target = self.words.len();
                 Some((self.current_word.min(target), target))
             }
             _ => None,
@@ -656,6 +677,12 @@ impl App {
                 }
             }
             Mode::Symbols(count) => words::random_symbol_tokens(count)
+                .into_iter()
+                .map(Word::new)
+                .collect(),
+            // Deterministic seed-of-the-day list — same words for everyone
+            // on `date`, independent of pool / decoration settings.
+            Mode::Daily(date) => words::daily_words(date)
                 .into_iter()
                 .map(Word::new)
                 .collect(),
@@ -832,9 +859,12 @@ impl App {
             }
             _ => {}
         }
-        // Quote / code / custom-file modes: stop when there's nothing left to type.
-        if matches!(self.mode, Mode::Quote | Mode::Code(_) | Mode::Custom)
-            && self.current_word >= self.words.len()
+        // Quote / code / custom-file / daily modes: stop when there's nothing
+        // left to type.
+        if matches!(
+            self.mode,
+            Mode::Quote | Mode::Code(_) | Mode::Custom | Mode::Daily(_)
+        ) && self.current_word >= self.words.len()
         {
             self.finish_game();
         }
@@ -1273,6 +1303,66 @@ mod tests {
         app.start_game(Mode::Words(1)).unwrap();
         assert!(!app.is_paused());
         assert_eq!(app.total_paused, Duration::ZERO);
+    }
+
+    // ── v0.5.0: daily challenge ─────────────────────────────────────────────
+
+    fn july_10() -> chrono::NaiveDate {
+        chrono::NaiveDate::from_ymd_opt(2026, 7, 10).unwrap()
+    }
+
+    /// The daily label embeds the date so per-mode PB naturally means "best
+    /// on that day's challenge", and it round-trips through parse_label.
+    #[test]
+    fn daily_label_embeds_date_and_round_trips() {
+        let mode = Mode::Daily(july_10());
+        assert_eq!(mode.label(), "daily-2026-07-10");
+        assert_eq!(Mode::parse_label("daily-2026-07-10"), Some(mode));
+        assert_eq!(Mode::parse_label("daily-not-a-date"), None);
+    }
+
+    /// Starting the daily challenge loads the deterministic word list.
+    #[test]
+    fn daily_start_game_loads_seeded_words() {
+        let mut app = make_app_with_word("placeholder");
+        app.start_game(Mode::Daily(july_10())).unwrap();
+        let expected = crate::words::daily_words(july_10());
+        let actual: Vec<String> = app.words.iter().map(|w| w.text.clone()).collect();
+        assert_eq!(actual, expected);
+        assert_eq!(actual.len(), crate::words::DAILY_WORD_COUNT);
+    }
+
+    /// The daily challenge finishes after the last word, like Words mode.
+    #[test]
+    fn daily_finishes_after_last_word() {
+        let mut app = make_app_with_word("placeholder");
+        app.mode = Mode::Daily(july_10());
+        app.words = vec![Word::new("hi".into()), Word::new("yo".into())];
+        for ch in "hi yo ".chars() {
+            app.handle_char(ch);
+        }
+        assert_eq!(app.screen, Screen::Results);
+    }
+
+    /// The daily challenge reports progress so the gauge renders.
+    #[test]
+    fn daily_reports_progress() {
+        let mut app = make_app_with_word("placeholder");
+        app.start_game(Mode::Daily(july_10())).unwrap();
+        app.current_word = 3;
+        assert_eq!(app.progress(), Some((3, crate::words::DAILY_WORD_COUNT)));
+    }
+
+    /// The menu carries a Daily challenge row in its own section.
+    #[test]
+    fn menu_contains_daily_challenge_row() {
+        let menu = build_menu(&[], None);
+        let daily = menu
+            .iter()
+            .find(|m| m.label == "Daily challenge")
+            .expect("Daily challenge row missing");
+        assert!(matches!(daily.mode, Some(Mode::Daily(_))));
+        assert!(matches!(daily.action, MenuAction::Start));
     }
 
     // ── v0.5.0: replay ──────────────────────────────────────────────────────
