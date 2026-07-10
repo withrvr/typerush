@@ -27,7 +27,9 @@ _No unreleased changes yet._
   words you just typed, or select any of your last 10 sessions on the Stats
   screen (`↑/↓`, then `Enter`) to replay it under its original mode — a
   `time-30s` replay gets the same 30-second clock over the same words.
-  Sessions recorded before v0.5.0 show a friendly "no replay data" message.
+  Sessions recorded before v0.5.0 show a friendly "no replay data" message,
+  as do custom-file sessions over 1,000 words (their replay data is skipped
+  so `stats.json` never grows by the size of the source file).
 - **CSV export.** `typerush --export-csv [path]` writes the whole session
   history as CSV — to the given file (confirmation on stderr) or to stdout
   when the path is omitted, so it pipes cleanly. Columns: RFC 3339

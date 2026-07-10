@@ -365,6 +365,13 @@ pub fn key_accuracy_from_aggregate(agg: &AggregateStats, min_presses: u64) -> Ve
     stats
 }
 
+/// Upper bound on the number of words stored in `SessionRecord::words` for
+/// replay (v0.5.0). Every built-in mode fits comfortably (time mode preloads
+/// 300, zen 500 — and zen is never saved); the cap only bites on huge
+/// `--file` sources, where storing the whole book in every session record
+/// would balloon `stats.json`. Such sessions simply aren't replayable.
+pub const MAX_REPLAY_WORDS: usize = 1000;
+
 /// Render the full session history as CSV (v0.5.0, `--export-csv`).
 ///
 /// One row per session, oldest first — the same order as `stats.json`.

@@ -728,6 +728,19 @@ fn handle_settings_key(app: &mut App, code: KeyCode, _mods: KeyModifiers) {
     }
 }
 
+/// The target word list to store on a session record for replay (v0.5.0) —
+/// the full list, including words never reached in time mode. Oversized
+/// custom-file sessions store nothing rather than growing `stats.json` by
+/// the source file's size on every run; a truncated list would silently
+/// replay a different session.
+fn replay_words_for_save(words: &[crate::app::Word]) -> Vec<String> {
+    if words.len() <= storage::MAX_REPLAY_WORDS {
+        words.iter().map(|w| w.text.clone()).collect()
+    } else {
+        vec![]
+    }
+}
+
 /// Persist the just-finished session to `~/.typerush/stats.json`.
 ///
 /// Sessions are skipped when:
@@ -764,9 +777,7 @@ fn save_current_session(app: &mut App) {
             .iter()
             .map(|(k, v)| (k.to_string(), *v))
             .collect(),
-        // Full target word list (v0.5.0) so the session can be replayed
-        // word-for-word later — including words never reached in time mode.
-        words: app.words.iter().map(|w| w.text.clone()).collect(),
+        words: replay_words_for_save(&app.words),
     };
     // Persist to stats.json (save_session also updates aggregate.json on disk).
     let _ = storage::save_session(&record);
@@ -1048,6 +1059,22 @@ mod tests {
         assert_eq!(app.screen, Screen::Stats);
         let msg = app.error_message.expect("expected an error modal");
         assert!(msg.contains("no replay data"));
+    }
+
+    /// Sessions with more words than the replay cap store no replay data —
+    /// stats.json must not grow by the size of a huge --file source on every
+    /// run. Everything at or under the cap is stored in full.
+    #[test]
+    fn replay_words_capped_for_oversized_sessions() {
+        let oversized: Vec<Word> = (0..crate::storage::MAX_REPLAY_WORDS + 1)
+            .map(|i| Word::new(format!("w{i}")))
+            .collect();
+        assert!(replay_words_for_save(&oversized).is_empty());
+
+        let at_cap = &oversized[..crate::storage::MAX_REPLAY_WORDS];
+        let stored = replay_words_for_save(at_cap);
+        assert_eq!(stored.len(), crate::storage::MAX_REPLAY_WORDS);
+        assert_eq!(stored[0], "w0");
     }
 
     /// Enter on an empty history is a silent no-op.

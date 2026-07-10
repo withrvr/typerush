@@ -124,7 +124,9 @@ time-mode countdown.
 Replays run under the original session's mode — a `time-30s` replay gets the
 same 30-second clock over the same words. Sessions recorded before v0.5.0
 don't carry their word list, so replaying one shows a friendly "no replay
-data" message instead.
+data" message instead. The same message appears for custom-file sessions of
+more than 1,000 words — replay data for those is deliberately not stored so
+`stats.json` never grows by the size of your source file.
 
 ### Settings screen (v0.5.0)
 

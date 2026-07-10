@@ -227,7 +227,10 @@ v0.5.0 added one more:
 - `words: Vec<String>` — the session's full target word list (all 300 for a
   time-mode session, so a replay is truly identical), powering word-for-word
   replay. Records without it (pre-v0.5.0) surface a friendly "no replay
-  data" modal when a replay is attempted.
+  data" modal when a replay is attempted. Sessions longer than
+  `storage::MAX_REPLAY_WORDS` (1,000) store an empty list instead — a huge
+  `--file` source must not be copied into `stats.json` on every run, and a
+  truncated list would silently replay a different session.
 
 All optional fields use `#[serde(default)]` so old records without them load
 cleanly. The aggregation helpers (`streak`, `avg_wpm_last_n_days`,
