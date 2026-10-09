@@ -96,6 +96,18 @@ cargo build --release && ./target/release/typerush
 - Unit tests live in the same file as the code they cover, inside `#[cfg(test)] mod tests`.
 - Prefer cheap deterministic tests (the matcher in `game.rs` is a good
   example).
+- Tests must not read or write the real `~/.typerush` — pass a temp path
+  (see [DEVELOPMENT.md](docs/DEVELOPMENT.md#running-tests)).
+- UI changes: also drive the release binary once (keyboard *and* mouse) —
+  see [end-to-end testing in tmux](docs/DEVELOPMENT.md#end-to-end-testing-in-tmux).
+
+### Input & accessibility
+- Every action must be reachable from the keyboard. Anything clickable maps to
+  an existing key (`ClickAction` in `app.rs`), never to mouse-only behaviour.
+- Mouse actions fire on button release over the target the press started on,
+  so sliding off a target cancels them.
+- Don't add a key hint that can't work on that screen (e.g. `?` while typing —
+  it's a character there).
 
 ### Error handling
 - Use `anyhow::Result` for fallible operations that bubble up to `main`.
@@ -103,6 +115,14 @@ cargo build --release && ./target/release/typerush
   sensible default — never panic in user-facing code.
 - File I/O in the stats path is best-effort: losing a stat row is fine; never
   crash the typing app.
+
+### Docs (`.md` files)
+- Diagrams — flows, state machines, trees, layouts — are ` ```mermaid `
+  blocks (GitHub renders them), not ASCII art in plain code blocks.
+- Plain code blocks are only for things you type or paste: shell commands,
+  TOML, Rust, commit-message templates, formulas.
+- `README.md` is also shown on crates.io, which doesn't render mermaid — keep
+  diagrams out of it (link to `docs/` instead).
 
 ---
 

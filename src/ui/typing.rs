@@ -3,12 +3,13 @@
 //! The cursor is **steady** (no blink) to avoid layout shifts. Both cursor
 //! positions render the same way:
 //! - on a character → underline in `theme.accent`
-//! - past the last character → an underlined trailing space in `theme.accent`
+//! - on the space after a word → an underlined space in `theme.accent`
 //!
 //! Keeping the cursor a single visual style (rather than a "block fill" on
 //! characters + "underline" on spaces) avoids the visual jolt of switching
 //! styles as the cursor crosses word boundaries.
 
+use crossterm::event::{KeyCode, KeyModifiers};
 use ratatui::{
     prelude::*,
     widgets::{Block, Borders, Gauge, Paragraph, Wrap},
@@ -134,7 +135,7 @@ fn render_progress(f: &mut Frame, app: &App, area: Rect) {
 /// has its own style.
 ///
 /// The cursor never blinks: it is rendered as an underlined character (or
-/// underlined trailing space when past the end of the current word) using
+/// underlined trailing space when it sits on the space after the word) using
 /// `theme.accent`. Keeping the cursor steady avoids the horizontal "jitter"
 /// that a phantom blinking character would cause.
 fn render_words(f: &mut Frame, app: &App, area: Rect) {
@@ -153,11 +154,11 @@ fn render_words(f: &mut Frame, app: &App, area: Rect) {
         let char_states = get_char_states(&word.text, &word.typed);
         let typed_char_count = word.typed.chars().count();
         let is_active_word = word_index == app.current_word;
-        // True when the user has typed at least as many characters as the word's
-        // states — i.e. the cursor sits past the final character and any extras.
+        // True when every character of the word is typed — i.e. the cursor
+        // sits on the space after it.
         let cursor_past_word_end = is_active_word && typed_char_count >= char_states.len();
 
-        // 1. Render every character (target + extras) with its state-driven style.
+        // 1. Render every character with its state-driven style.
         //    If the cursor is on this char, overlay it with the cursor style.
         let mut word_spans: Vec<Span> = Vec::with_capacity(char_states.len() + 1);
         for (char_index, (ch, state)) in char_states.iter().enumerate() {
@@ -172,22 +173,23 @@ fn render_words(f: &mut Frame, app: &App, area: Rect) {
         }
 
         // 2. Decide whether (and how) to render the trailing space.
-        //    A trailing space goes between every pair of words. It also doubles
-        //    as the cursor "rest position" when the user has finished a word
-        //    and is about to press space.
+        //    A trailing space goes between every pair of words. It is a
+        //    character like any other, so the cursor lands on it once the word
+        //    is fully typed.
         let has_trailing_space = word_index < last_word_index;
-        let space_style = if cursor_past_word_end {
+        let space_style = if word.space_missed {
+            // A colored blank is invisible — underline so the wrong space shows.
+            style_for_char(CharState::Incorrect, is_zen_mode, &app.theme)
+                .add_modifier(Modifier::UNDERLINED)
+        } else if cursor_past_word_end {
             cursor_style
         } else {
             Style::default()
         };
 
+        // The last word has no trailing space: typing its last character ends
+        // the run, so the cursor never rests past it.
         let trailing_chars: usize = if has_trailing_space {
-            word_spans.push(Span::styled(" ", space_style));
-            1
-        } else if cursor_past_word_end {
-            // Last word edge case — still reserve one space so the cursor has
-            // something to underline, but only when the cursor is actually here.
             word_spans.push(Span::styled(" ", space_style));
             1
         } else {
@@ -228,7 +230,7 @@ fn render_words(f: &mut Frame, app: &App, area: Rect) {
 }
 
 /// Picks a foreground color/modifier for one character based on whether it
-/// was typed correctly, incorrectly, not yet typed, or typed as an extra.
+/// was typed correctly, incorrectly, or not yet typed.
 ///
 /// Zen mode intentionally desaturates everything to the theme's muted shades
 /// (with correct chars in `neutral`) so the screen stays calm and the user
@@ -237,7 +239,7 @@ fn style_for_char(state: CharState, is_zen_mode: bool, theme: &ThemePalette) -> 
     if is_zen_mode {
         return match state {
             CharState::Correct => Style::default().fg(theme.neutral),
-            CharState::Incorrect | CharState::Extra => Style::default()
+            CharState::Incorrect => Style::default()
                 .fg(theme.pending)
                 .add_modifier(Modifier::UNDERLINED),
             CharState::Pending => Style::default().fg(theme.pending),
@@ -249,15 +251,23 @@ fn style_for_char(state: CharState, is_zen_mode: bool, theme: &ThemePalette) -> 
             .fg(theme.incorrect)
             .add_modifier(Modifier::BOLD),
         CharState::Pending => Style::default().fg(theme.pending),
-        CharState::Extra => Style::default()
-            .fg(theme.extra)
-            .add_modifier(Modifier::UNDERLINED),
     }
 }
 
-/// Tiny hint strip at the bottom of the screen.
+/// Tiny hint strip at the bottom of the screen. No help hint: `?` is a
+/// character you may need to type here.
 fn render_footer(f: &mut Frame, app: &App, area: Rect) {
-    let footer = Paragraph::new("  ctrl+r restart  ·  esc menu  ·  ctrl+c quit  ·  ? help")
-        .style(Style::default().fg(app.theme.pending));
-    f.render_widget(footer, area);
+    super::render_footer(
+        f,
+        app,
+        area,
+        &[
+            ("ctrl+r / F5 restart", super::key(KeyCode::F(5))),
+            ("esc finish", super::key(KeyCode::Esc)),
+            (
+                "ctrl+c quit",
+                Some((KeyCode::Char('c'), KeyModifiers::CONTROL)),
+            ),
+        ],
+    );
 }

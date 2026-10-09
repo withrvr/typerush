@@ -5,7 +5,7 @@
 //!   2. Put the terminal into raw mode + alternate screen.
 //!   3. Run the main event loop:
 //!        - draw one frame
-//!        - read key events (with a 100ms timeout)
+//!        - read key and mouse events (with a 100ms timeout)
 //!        - call `app.tick()` every 100ms
 //!        - save a session record the moment we land on the Results screen
 //!   4. Restore the terminal on exit (and on panic, via a hook).
@@ -21,6 +21,7 @@ mod words;
 use std::{
     io::{stdout, Stdout},
     panic,
+    path::Path,
     time::{Duration, Instant},
 };
 
@@ -29,13 +30,14 @@ use clap::Parser;
 use crossterm::{
     event::{
         self, DisableMouseCapture, EnableMouseCapture, Event, KeyCode, KeyEventKind, KeyModifiers,
+        MouseButton, MouseEvent, MouseEventKind,
     },
     execute,
     terminal::{disable_raw_mode, enable_raw_mode, EnterAlternateScreen, LeaveAlternateScreen},
 };
 use ratatui::{backend::CrosstermBackend, Terminal};
 
-use crate::app::{App, MenuAction, Mode, Screen};
+use crate::app::{App, ClickAction, MenuAction, Mode, Screen};
 use crate::storage::SessionRecord;
 use crate::theme::builtin;
 
@@ -161,7 +163,8 @@ fn run_app(terminal: &mut Tui, cli: Cli) -> Result<()> {
     let tick_rate = Duration::from_millis(100);
     let mut last_tick = Instant::now();
     let mut last_screen = app.screen;
-    let mut session_saved_for_this_results_screen = false;
+    let mut session_saved = false;
+    let stats_file = storage::stats_path();
 
     loop {
         terminal.draw(|frame| ui::render(frame, &app))?;
@@ -171,17 +174,21 @@ fn run_app(terminal: &mut Tui, cli: Cli) -> Result<()> {
             .checked_sub(last_tick.elapsed())
             .unwrap_or(Duration::ZERO);
         if event::poll(timeout)? {
-            if let Event::Key(key) = event::read()? {
-                // Ignore key-release events on platforms that emit them.
-                if key.kind != KeyEventKind::Press && key.kind != KeyEventKind::Repeat {
-                    continue;
+            match event::read()? {
+                Event::Key(key) => {
+                    // Ignore key-release events on platforms that emit them.
+                    if key.kind != KeyEventKind::Press && key.kind != KeyEventKind::Repeat {
+                        continue;
+                    }
+                    // If a modal error is showing, any key dismisses it.
+                    if app.error_message.is_some() {
+                        app.error_message = None;
+                        continue;
+                    }
+                    handle_key(&mut app, key.code, key.modifiers);
                 }
-                // If a modal error is showing, any key dismisses it.
-                if app.error_message.is_some() {
-                    app.error_message = None;
-                    continue;
-                }
-                handle_key(&mut app, key.code, key.modifiers);
+                Event::Mouse(mouse) => handle_mouse(&mut app, mouse),
+                _ => {}
             }
         }
 
@@ -192,17 +199,7 @@ fn run_app(terminal: &mut Tui, cli: Cli) -> Result<()> {
             last_tick = Instant::now();
         }
 
-        // Save the session exactly once on the transition INTO the Results screen.
-        if app.screen == Screen::Results
-            && last_screen != Screen::Results
-            && !session_saved_for_this_results_screen
-        {
-            save_current_session(&app);
-            session_saved_for_this_results_screen = true;
-        }
-        if app.screen != Screen::Results {
-            session_saved_for_this_results_screen = false;
-        }
+        after_input(&mut app, last_screen, &mut session_saved, &stats_file);
         last_screen = app.screen;
 
         if app.should_quit {
@@ -245,14 +242,17 @@ fn handle_key(app: &mut App, code: KeyCode, mods: KeyModifiers) {
         app.should_quit = true;
         return;
     }
-    // '?' toggles the help overlay everywhere except during typing (where
-    // '?' is a valid character to type).
-    if code == KeyCode::Char('?') && app.screen != Screen::Typing {
+    // '?' (or F1) toggles the help overlay everywhere except during typing
+    // (where '?' is a valid character to type).
+    if matches!(code, KeyCode::Char('?') | KeyCode::F(1)) && app.screen != Screen::Typing {
         toggle_help(app);
         return;
     }
     if app.screen == Screen::Help {
-        if matches!(code, KeyCode::Esc | KeyCode::Char('?') | KeyCode::Char('q')) {
+        if matches!(
+            code,
+            KeyCode::Esc | KeyCode::Char('?') | KeyCode::Char('q') | KeyCode::F(1)
+        ) {
             app.screen = app.previous_screen;
         }
         return;
@@ -278,20 +278,75 @@ fn toggle_help(app: &mut App) {
     }
 }
 
-/// Keymap for the main menu: arrow keys / j-k to navigate, Enter to act.
-fn handle_menu_key(app: &mut App, code: KeyCode, _mods: KeyModifiers) {
-    match code {
-        KeyCode::Up | KeyCode::Char('k') => {
-            if app.menu_index == 0 {
-                app.menu_index = app.menu.len() - 1;
-            } else {
-                app.menu_index -= 1;
+/// Mouse support. Every click maps onto an existing keyboard action (see
+/// `ClickAction`), so mouse and keyboard reach exactly the same things.
+///
+/// Actions fire on button *release*, and only when the release lands on the
+/// same target the press started on — pressing on the wrong item and sliding
+/// off cancels it (WCAG 2.5.2 pointer cancellation). Pressing on a menu option
+/// only highlights it.
+fn handle_mouse(app: &mut App, mouse: MouseEvent) {
+    let released = mouse.kind == MouseEventKind::Up(MouseButton::Left);
+    // Modal error / help overlay: a click anywhere closes it, like any key.
+    if app.error_message.is_some() {
+        if released {
+            app.error_message = None;
+        }
+        return;
+    }
+    if app.screen == Screen::Help {
+        if released {
+            toggle_help(app);
+        }
+        return;
+    }
+
+    let position = ratatui::layout::Position::new(mouse.column, mouse.row);
+    let target = app
+        .click_targets
+        .borrow()
+        .iter()
+        .find(|(area, _)| area.contains(position))
+        .map(|(_, action)| *action);
+
+    match mouse.kind {
+        MouseEventKind::ScrollUp if app.screen == Screen::Menu => app.menu_move_row(false),
+        MouseEventKind::ScrollDown if app.screen == Screen::Menu => app.menu_move_row(true),
+        MouseEventKind::Down(MouseButton::Left) => {
+            app.pressed_target = target;
+            if let Some(ClickAction::Menu(index)) = target {
+                app.menu_index = index;
             }
         }
-        KeyCode::Down | KeyCode::Char('j') => {
-            app.menu_index = (app.menu_index + 1) % app.menu.len();
+        MouseEventKind::Up(MouseButton::Left) => {
+            // Only a press and release on the same target is a click: dragging
+            // from one option to another, or a stray release, does nothing.
+            let pressed = app.pressed_target.take();
+            if target.is_none() || pressed != target {
+                return;
+            }
+            match target {
+                Some(ClickAction::Menu(index)) => {
+                    app.menu_index = index;
+                    handle_key(app, KeyCode::Enter, KeyModifiers::NONE);
+                }
+                Some(ClickAction::Key(code, mods)) => handle_key(app, code, mods),
+                None => {}
+            }
         }
-        KeyCode::Enter => {
+        _ => {}
+    }
+}
+
+/// Keymap for the main menu: ↑/↓ (j/k) pick a category row, ←/→ (h/l) pick
+/// an option within it, Enter (or Space) to act.
+fn handle_menu_key(app: &mut App, code: KeyCode, _mods: KeyModifiers) {
+    match code {
+        KeyCode::Up | KeyCode::Char('k') => app.menu_move_row(false),
+        KeyCode::Down | KeyCode::Char('j') => app.menu_move_row(true),
+        KeyCode::Left | KeyCode::Char('h') => app.menu_move_column(false),
+        KeyCode::Right | KeyCode::Char('l') => app.menu_move_column(true),
+        KeyCode::Enter | KeyCode::Char(' ') => {
             let item = &app.menu[app.menu_index];
             let action = item.action;
             let mode = item.mode;
@@ -307,7 +362,7 @@ fn handle_menu_key(app: &mut App, code: KeyCode, _mods: KeyModifiers) {
                 MenuAction::Quit => app.should_quit = true,
             }
         }
-        KeyCode::Tab => app.screen = Screen::Stats,
+        KeyCode::Tab | KeyCode::Char('s') => app.screen = Screen::Stats,
         KeyCode::Char('q') => app.should_quit = true,
         _ => {}
     }
@@ -319,6 +374,11 @@ pub(crate) fn handle_typing_key(app: &mut App, code: KeyCode, mods: KeyModifiers
     match code {
         KeyCode::Esc => {
             app.finish_game();
+        }
+        KeyCode::F(5) => {
+            if let Err(e) = app.restart() {
+                app.error_message = Some(e.to_string());
+            }
         }
         KeyCode::Char('r') if mods.contains(KeyModifiers::CONTROL) => {
             if let Err(e) = app.restart() {
@@ -376,6 +436,42 @@ fn handle_stats_key(app: &mut App, code: KeyCode, _mods: KeyModifiers) {
     }
 }
 
+/// Bookkeeping after each round of input, driven by which screen we are on.
+/// `stats_file` is the history file (a temp file in tests).
+fn after_input(app: &mut App, last_screen: Screen, session_saved: &mut bool, stats_file: &Path) {
+    // Save each finished game exactly once. The flag is cleared only when a
+    // new game starts, so leaving Results for the Help overlay (or an error
+    // modal) and coming back can't save the same session again.
+    if app.screen == Screen::Results && !*session_saved {
+        save_current_session(app, stats_file);
+        *session_saved = true;
+    }
+    if app.screen == Screen::Typing {
+        *session_saved = false;
+    }
+
+    // History is read from disk once; every save hands back the updated list,
+    // so the cache stays current without re-reading the file. The render path
+    // never touches disk.
+    if matches!(app.screen, Screen::Stats | Screen::Results) && app.stats_cache.is_none() {
+        app.stats_cache = Some(storage::load_sessions_from_path(stats_file).unwrap_or_default());
+    }
+    // Results comparisons and the Stats summary (streak, averages, key
+    // heatmap) are computed once per visit instead of on every frame.
+    if app.screen == Screen::Results && last_screen != Screen::Results {
+        let sessions = app.stats_cache.as_deref().unwrap_or(&[]);
+        app.results_comparison = Some(storage::ResultsComparison::new(
+            sessions,
+            app.session_just_saved,
+            &app.mode.label(),
+        ));
+    }
+    if app.screen == Screen::Stats && last_screen != Screen::Stats {
+        let sessions = app.stats_cache.as_deref().unwrap_or(&[]);
+        app.stats_summary = Some(storage::StatsSummary::new(sessions));
+    }
+}
+
 /// Persist the just-finished session to `~/.typerush/stats.json`.
 ///
 /// Sessions are skipped when:
@@ -385,7 +481,10 @@ fn handle_stats_key(app: &mut App, code: KeyCode, _mods: KeyModifiers) {
 ///
 /// File I/O errors are intentionally swallowed — losing a stat row is never a
 /// good reason to crash on the user.
-fn save_current_session(app: &App) {
+fn save_current_session(app: &mut App, stats_file: &Path) {
+    // Assume not saved until the disk write succeeds; the Results screen
+    // reads this to know whether the last history entry is this session.
+    app.session_just_saved = false;
     if matches!(app.mode, Mode::Zen) {
         return;
     }
@@ -402,8 +501,25 @@ fn save_current_session(app: &App) {
         total_chars: app.total_typed_chars,
         duration_secs: duration,
         timestamp: chrono::Local::now(),
+        key_hits: app
+            .key_hits
+            .iter()
+            .map(|(k, v)| (k.to_string(), *v))
+            .collect(),
+        key_misses: app
+            .key_misses
+            .iter()
+            .map(|(k, v)| (k.to_string(), *v))
+            .collect(),
     };
-    let _ = storage::save_session(&record);
+    match storage::save_session_to_path(stats_file, &record) {
+        Ok(history) => {
+            app.stats_cache = Some(history);
+            app.session_just_saved = true;
+        }
+        // Disk state unknown: drop the cache so the next visit re-reads it.
+        Err(_) => app.stats_cache = None,
+    }
 }
 
 #[cfg(test)]
@@ -483,5 +599,194 @@ mod tests {
         handle_typing_key(&mut app, KeyCode::Char('a'), KeyModifiers::CONTROL);
         handle_typing_key(&mut app, KeyCode::Char('z'), KeyModifiers::CONTROL);
         assert_eq!(app.words[0].typed, "hel");
+    }
+
+    // ── mouse ────────────────────────────────────────────────────────────────
+
+    /// Draw one frame of `app` at 80×24 so its click targets are registered.
+    fn draw(app: &App) {
+        let mut terminal = Terminal::new(ratatui::backend::TestBackend::new(80, 24)).unwrap();
+        terminal.draw(|f| ui::render(f, app)).unwrap();
+    }
+
+    /// Centre cell of the first click target matching `action`.
+    fn target_cell(app: &App, action: ClickAction) -> (u16, u16) {
+        let targets = app.click_targets.borrow();
+        let (area, _) = targets.iter().find(|(_, a)| *a == action).unwrap();
+        (area.x + area.width / 2, area.y)
+    }
+
+    fn mouse(kind: MouseEventKind, (column, row): (u16, u16)) -> MouseEvent {
+        MouseEvent {
+            kind,
+            column,
+            row,
+            modifiers: KeyModifiers::NONE,
+        }
+    }
+
+    fn click(app: &mut App, cell: (u16, u16)) {
+        handle_mouse(app, mouse(MouseEventKind::Down(MouseButton::Left), cell));
+        handle_mouse(app, mouse(MouseEventKind::Up(MouseButton::Left), cell));
+    }
+
+    #[test]
+    fn clicking_a_menu_option_starts_it() {
+        let mut app = App::new(None, ThemePalette::default(), DefaultMode::Time(15));
+        draw(&app);
+        let thirty = app.menu.iter().position(|m| m.label == "30s").unwrap();
+        let cell = target_cell(&app, ClickAction::Menu(thirty));
+        click(&mut app, cell);
+        assert_eq!(app.screen, Screen::Typing);
+        assert_eq!(app.mode, Mode::Time(30));
+    }
+
+    /// WCAG 2.5.2: pressing on an option and releasing elsewhere only
+    /// highlights it — nothing starts.
+    #[test]
+    fn menu_press_then_slide_off_cancels() {
+        let mut app = App::new(None, ThemePalette::default(), DefaultMode::Time(15));
+        draw(&app);
+        let cell = target_cell(&app, ClickAction::Menu(5));
+        handle_mouse(
+            &mut app,
+            mouse(MouseEventKind::Down(MouseButton::Left), cell),
+        );
+        handle_mouse(
+            &mut app,
+            mouse(MouseEventKind::Up(MouseButton::Left), (0, 0)),
+        );
+        assert_eq!(app.screen, Screen::Menu);
+        assert_eq!(app.menu_index, 5);
+    }
+
+    /// Press on one option, release on another: nothing starts. A release
+    /// with no press (some terminals send them) does nothing either.
+    #[test]
+    fn drag_between_targets_or_stray_release_does_nothing() {
+        let mut app = App::new(None, ThemePalette::default(), DefaultMode::Time(15));
+        draw(&app);
+        let from = target_cell(&app, ClickAction::Menu(0));
+        let to = target_cell(&app, ClickAction::Menu(3));
+        handle_mouse(
+            &mut app,
+            mouse(MouseEventKind::Down(MouseButton::Left), from),
+        );
+        handle_mouse(&mut app, mouse(MouseEventKind::Up(MouseButton::Left), to));
+        assert_eq!(app.screen, Screen::Menu);
+
+        let quit = target_cell(
+            &app,
+            ClickAction::Key(KeyCode::Char('q'), KeyModifiers::NONE),
+        );
+        handle_mouse(&mut app, mouse(MouseEventKind::Up(MouseButton::Left), quit));
+        assert!(!app.should_quit);
+    }
+
+    #[test]
+    fn clicking_a_footer_hint_acts_like_its_key() {
+        let mut app = App::new(None, ThemePalette::default(), DefaultMode::Time(15));
+        draw(&app);
+        let stats = ClickAction::Key(KeyCode::Char('s'), KeyModifiers::NONE);
+        let cell = target_cell(&app, stats);
+        click(&mut app, cell);
+        assert_eq!(app.screen, Screen::Stats);
+
+        // Stats footer: "m / esc menu" goes back.
+        draw(&app);
+        let menu = ClickAction::Key(KeyCode::Char('m'), KeyModifiers::NONE);
+        let cell = target_cell(&app, menu);
+        click(&mut app, cell);
+        assert_eq!(app.screen, Screen::Menu);
+    }
+
+    /// Short terminal: the menu scrolls so the selected row stays visible
+    /// and clickable (the old List widget did this; a Paragraph doesn't).
+    #[test]
+    fn menu_scrolls_to_selection_on_short_terminal() {
+        let mut app = App::new(None, ThemePalette::default(), DefaultMode::Time(15));
+        app.menu_move_row(false); // wraps to "quit", the last row
+        let quit = app.menu_index;
+        let mut terminal = Terminal::new(ratatui::backend::TestBackend::new(80, 18)).unwrap();
+        terminal.draw(|f| ui::render(f, &app)).unwrap();
+        let rows: Vec<String> = terminal
+            .backend()
+            .buffer()
+            .content()
+            .chunks(80)
+            .map(|row| row.iter().map(|cell| cell.symbol()).collect())
+            .collect();
+        // Selected last row is on screen, directly under "stats" (no gap).
+        let quit_row = rows.iter().position(|r| r.contains("➤  quit")).unwrap();
+        assert!(rows[quit_row - 1].contains("    stats"));
+        target_cell(&app, ClickAction::Menu(quit)); // panics if not clickable
+    }
+
+    #[test]
+    fn click_closes_help_overlay() {
+        let mut app = App::new(None, ThemePalette::default(), DefaultMode::Time(15));
+        handle_key(&mut app, KeyCode::F(1), KeyModifiers::NONE);
+        assert_eq!(app.screen, Screen::Help);
+        click(&mut app, (0, 0));
+        assert_eq!(app.screen, Screen::Menu);
+    }
+
+    #[test]
+    fn scroll_wheel_moves_menu_rows() {
+        let mut app = App::new(None, ThemePalette::default(), DefaultMode::Time(15));
+        handle_mouse(&mut app, mouse(MouseEventKind::ScrollDown, (0, 0)));
+        assert_eq!(app.menu[app.menu_index].group, "words");
+        handle_mouse(&mut app, mouse(MouseEventKind::ScrollUp, (0, 0)));
+        assert_eq!(app.menu[app.menu_index].group, "time");
+    }
+
+    // ── saving ───────────────────────────────────────────────────────────────
+
+    /// Regression: opening help from Results and closing it used to save the
+    /// same session a second time (the flag reset on any screen change).
+    #[test]
+    fn help_detour_from_results_does_not_save_twice() {
+        let dir = tempfile::tempdir().unwrap();
+        let stats_file = dir.path().join("stats.json");
+        let mut app = make_typing_app();
+        let mut saved = false;
+        let mut last = app.screen;
+        let mut step = |app: &mut App| {
+            after_input(app, last, &mut saved, &stats_file);
+            last = app.screen;
+        };
+        step(&mut app);
+
+        app.started_at = Some(std::time::Instant::now() - Duration::from_secs(5));
+        for ch in "hello world".chars() {
+            app.handle_char(ch);
+        }
+        assert_eq!(app.screen, Screen::Results);
+        step(&mut app);
+        assert!(app.session_just_saved);
+
+        handle_key(&mut app, KeyCode::F(1), KeyModifiers::NONE); // open help
+        step(&mut app);
+        handle_key(&mut app, KeyCode::Esc, KeyModifiers::NONE); // close it
+        step(&mut app);
+        assert_eq!(app.screen, Screen::Results);
+
+        let history = storage::load_sessions_from_path(&stats_file).unwrap();
+        assert_eq!(history.len(), 1);
+        assert_eq!(app.stats_cache.as_ref().map(Vec::len), Some(1));
+
+        // A new game is saved again as normal.
+        handle_key(&mut app, KeyCode::Enter, KeyModifiers::NONE); // restart
+        step(&mut app);
+        app.started_at = Some(std::time::Instant::now() - Duration::from_secs(5));
+        app.words = vec![Word::new("hi".into())];
+        app.mode = Mode::Words(1);
+        app.handle_char('h');
+        app.handle_char('i');
+        step(&mut app);
+        assert_eq!(
+            storage::load_sessions_from_path(&stats_file).unwrap().len(),
+            2
+        );
     }
 }

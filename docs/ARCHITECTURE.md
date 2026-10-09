@@ -9,29 +9,22 @@ This is the map of the source tree. Read it before making non-trivial changes.
 TypeRush is a single-process TUI app with one event loop, one mutable `App`
 state object, and a stateless renderer. The flow per frame:
 
-```
-       ┌──────────────────────────────┐
-       │       main.rs::run_app       │
-       │                              │
-       │   1. terminal.draw(...)      │
-       │   2. event::poll  (100ms)    │
-       │   3. handle_key(...)         │
-       │   4. app.tick()              │
-       │   5. save session on enter   │
-       │      to Results screen       │
-       └──────────────┬───────────────┘
-                      │  reads & mutates
-                      ▼
-              ┌──────────────┐
-              │     App      │  ← the single source of truth
-              │ (src/app.rs) │
-              └──────┬───────┘
-                     │  read-only
-                     ▼
-              ┌──────────────┐
-              │   ui::*      │  ← pure renderer, no state of its own
-              │ (src/ui/...) │
-              └──────────────┘
+```mermaid
+flowchart TD
+    loop["main.rs::run_app — every frame
+    1. terminal.draw(...)
+    2. event::poll (100 ms)
+    3. handle_key / handle_mouse
+    4. app.tick()
+    5. after_input: save a finished game once,
+    load the history cache, compute summaries"]
+    app["App (src/app.rs)
+    the single source of truth"]
+    ui["ui::* (src/ui/...)
+    pure renderer, no state of its own
+    (only registers click targets)"]
+    loop -- "reads & mutates" --> app
+    app -- "read-only" --> ui
 ```
 
 ---
@@ -40,15 +33,27 @@ state object, and a stateless renderer. The flow per frame:
 
 The `Screen` enum in `src/app.rs` is the application's high-level state:
 
-```
-[Menu] ──Enter──► [Typing] ──finish / Esc──► [Results]
-   ▲                                            │
-   │                                            │
-   │ ◄────── Esc / 'm' ─────────────────────────┘
-   │
-   ├──── Tab ───► [Stats] ──── Esc ────► [Menu]
-   │
-   └──── ? ─────► [Help]   (overlay; remembers prev screen)
+```mermaid
+stateDiagram-v2
+    [*] --> Menu
+    [*] --> Typing: mode flag (--time, --words, --quote, --code, --zen, --file)
+    Menu --> Typing: Enter / Space / click an option
+    Typing --> Typing: Ctrl+R / F5 restart
+    Typing --> Results: mode finishes / Esc
+    Results --> Typing: Enter / r restart
+    Results --> Menu: Esc / m
+    Results --> Stats: Tab / s
+    Menu --> Stats: Tab / s
+    Stats --> Menu: Esc / m / Tab
+    Menu --> Help: ? / F1
+    Results --> Help: ? / F1
+    Stats --> Help: ? / F1
+    Help --> [*]: Esc / ? / F1 / q / click
+    note right of Help
+        Overlay: remembers the previous screen
+        and returns to it when closed.
+        Not reachable while typing (? is a character there).
+    end note
 ```
 
 Every state transition happens by setting `app.screen` from a keymap handler in
@@ -58,75 +63,92 @@ Every state transition happens by setting `app.screen` from a keymap handler in
 
 ## Data flow per keystroke
 
+```mermaid
+flowchart TD
+    read["crossterm::event::read()"] --> key["main.rs::handle_key
+    matches on app.screen, calls the per-screen handler"]
+    read --> mouse["main.rs::handle_mouse
+    press + release on the same click target"]
+    mouse -- "acts like its key" --> key
+    key -- "e.g. Screen::Typing" --> char["app.rs::handle_char / handle_backspace"]
+    char --> check["pure character check: the key is compared with the
+    character under the cursor (the space between words included).
+    Match = correct, anything else = wrong; the cursor
+    moves on one slot either way."]
+    check --> mutate["mutates: words[current].typed, correct_chars,
+    total_typed_chars, key_hits / key_misses, current_word
+    (past a word's trailing space), screen = Results (mode done)"]
+    mutate --> back["back to the main loop: after_input, then the next
+    frame is drawn from the new state"]
 ```
-crossterm::event::read()
-    │
-    ▼
-main.rs::handle_key  (matches on app.screen → per-screen handler)
-    │
-    ▼  (e.g. for Screen::Typing)
-app.rs::handle_char / handle_backspace
-    │
-    │   mutates:
-    │     - words[current].typed
-    │     - correct_chars
-    │     - total_typed_chars
-    │     - current_word (on space)
-    │     - screen → Results (when mode completes)
-    ▼
-back to main loop ──► next frame is drawn from the new state
-```
+
+Mouse events take a short detour into the same path. While drawing, the UI
+registers clickable regions in `App::click_targets` (menu options and footer
+hints, rebuilt every frame). `main.rs::handle_mouse` looks up the region
+under the pointer. A left-button press remembers that target
+(`App::pressed_target`); the release fires its `ClickAction` only if it lands
+on the same target: a footer hint calls `handle_key` with its key, a menu option
+selects that option and presses Enter. Nothing is reachable by mouse that
+isn't reachable by keyboard.
 
 ---
 
 ## Module responsibilities
 
-```
-src/
-├── main.rs              Entry point. Owns the terminal, the event loop,
-│                        the panic hook, and the CLI parser (clap).
-│
-├── app.rs               The App state machine. All fields, all transitions,
-│                        WPM / accuracy math, mode-switching, time/word
-│                        completion logic. Holds the active ThemePalette.
-│
-├── game.rs              Pure function: get_char_states(target, typed) — the
-│                        character-by-character matcher that drives all
-│                        colored feedback. Unit-tested here.
-│
-├── storage.rs           SessionRecord struct + read/write of
-│                        ~/.typerush/stats.json. Personal best & average
-│                        accuracy helpers.
-│
-├── theme/
-│   ├── mod.rs           ThemePalette struct (10 themable color slots)
-│   │                    and per-slot override application.
-│   ├── builtin.rs       The four built-in palettes (dark, light, monokai,
-│   │                    dracula). Adding a new theme = one row appended
-│   │                    to `ALL`.
-│   └── color.rs         Color parser for #RRGGBB hex strings and the 16
-│                        ANSI color names.
-│
-├── config/
-│   ├── mod.rs           Config / Defaults / Colors structs read from
-│   │                    ~/.typerush/config.toml via serde.
-│   └── load.rs          load_or_default() — disk read + flattening into a
-│                        ResolvedConfig. Never errors; bad files surface as
-│                        a single human-readable warning.
-│
-├── ui/
-│   ├── mod.rs           render() dispatcher. Paints theme.background on
-│   │                    every cell before any screen renders.
-│   ├── menu.rs          Main menu with the ASCII banner
-│   ├── typing.rs        The typing screen: header, progress gauge, words
-│   ├── results.rs       Post-session screen with PB delta + sparkline
-│   ├── stats.rs         History view: summary, sparkline, recent table
-│   └── help.rs          Floating ? overlay and error modal
-│
-└── words/
-    ├── mod.rs           Word source picker (random, quote, code, file)
-    ├── english.rs       Built-in 200- and 1000-word English pools
-    └── quotes.rs        Programming quotes + Rust/Python/JS snippets
+```mermaid
+flowchart LR
+    src["src/"]
+    src --> main["main.rs
+    Entry point: terminal, event loop, panic hook,
+    CLI parser (clap), key + mouse dispatch,
+    after_input (save once, caches)"]
+    src --> app["app.rs
+    App state machine: all fields and transitions,
+    WPM / accuracy math, mode switching, completion,
+    per-key tracking, menu navigation, click targets"]
+    src --> game["game.rs
+    get_char_states(target, typed): the matcher
+    behind all colored feedback"]
+    src --> storage["storage.rs
+    SessionRecord + ~/.typerush/stats.json (atomic writes).
+    personal_best, personal_best_for_mode, average_accuracy,
+    streak, avg_wpm_last_n_days, key_accuracy,
+    StatsSummary, ResultsComparison"]
+    src --> theme["theme/"]
+    theme --> theme_mod["mod.rs
+    ThemePalette (10 color slots) + per-slot overrides"]
+    theme --> builtin["builtin.rs
+    dark, light, monokai, dracula
+    (new theme = one row in ALL)"]
+    theme --> color["color.rs
+    #RRGGBB and 16 ANSI color names parser"]
+    src --> config["config/"]
+    config --> config_mod["mod.rs
+    Config / Defaults / Colors from config.toml (serde)"]
+    config --> load["load.rs
+    load_or_default(): never errors, bad files
+    become one human-readable warning"]
+    src --> ui["ui/"]
+    ui --> ui_mod["mod.rs
+    render() dispatcher, background paint,
+    clickable footer (render_footer)"]
+    ui --> menu["menu.rs
+    ASCII banner + modes grouped by category"]
+    ui --> typing["typing.rs
+    header, progress gauge, words"]
+    ui --> results["results.rs
+    WPM delta, mode best, sparkline"]
+    ui --> stats["stats.rs
+    summary, key heatmap, sparkline, recent table"]
+    ui --> help["help.rs
+    help overlay and error modal"]
+    src --> words["words/"]
+    words --> words_mod["mod.rs
+    word source picker (random, quote, code, file)"]
+    words --> english["english.rs
+    200- and 1000-word English pools"]
+    words --> quotes["quotes.rs
+    programming quotes + Rust / Python / JS snippets"]
 ```
 
 ---
@@ -145,7 +167,7 @@ every 500ms. The current design renders a **steady** cursor as an
 underlined character in `theme.accent`:
 
 - on a character → the character itself, restyled with the cursor style
-- past the last character → an underlined trailing space, same style
+- on the space after a word → an underlined trailing space, same style
 
 Both cases use the same `fg = theme.accent, modifier = UNDERLINED`. The
 trailing space is always part of the layout, so toggling its style never
@@ -168,9 +190,37 @@ over a dark terminal. The menu list, stats date column, and help overlay
 all follow this pattern.
 
 ### Stats persistence
-JSON, flat array, no schema. The file is small enough (one session ≈ 200B)
-that we rewrite it whole on every save. Zen-mode sessions are deliberately
-excluded.
+JSON, flat array, no schema. The file is small enough (one session ≈ 200B
+before v0.3.0, slightly larger with per-key maps) that we rewrite it whole on
+every save. Zen-mode sessions are deliberately excluded.
+
+v0.3.0 added two optional fields to `SessionRecord`:
+- `key_hits: HashMap<String, u64>` — per expected character, times typed correctly
+- `key_misses: HashMap<String, u64>` — per expected character, times something
+  else was typed instead (the space between words counts as a character)
+
+Both fields use `#[serde(default)]` so old records without them load cleanly
+as empty maps. The aggregation helpers (`streak`, `avg_wpm_last_n_days`,
+`personal_best_for_mode`, `key_accuracy`) all live in `storage.rs` and are pure functions over
+`&[SessionRecord]`.
+
+### Read-path performance (v0.3.0)
+
+The Stats and Results screens never touch disk on a frame (the render loop
+redraws every 100 ms tick and on every input event, mouse motion included).
+
+- **`App::stats_cache: Option<Vec<SessionRecord>>`** holds the full history.
+  It's read from `stats.json` the first time the Stats or Results screen needs
+  it. `storage::save_session_to_path` re-reads the file, appends, writes, and
+  returns the updated list, which replaces the cache — so `stats.json` stays
+  the single source of truth and an outside edit shows up after the next save.
+- **`App::stats_summary: Option<StatsSummary>`** — PB, averages, streak,
+  rolling averages and the key-accuracy list, computed from the cache once
+  each time the Stats screen is entered.
+
+All of this bookkeeping lives in `main.rs::after_input`, which also saves each
+finished game exactly once: the "saved" flag is cleared only when a new game
+starts, so visiting Help from Results can't save the session again.
 
 ### Cross-platform
 crossterm handles Windows Console API, ANSI escape codes, and raw mode in one
@@ -200,8 +250,9 @@ crate. We don't directly use any platform-specific code, so the binary is a
 1. Add a variant to `Mode` in `src/app.rs`.
 2. Pattern-match it inside `App::start_game` to pick a word source.
 3. Update `Mode::label` so it persists nicely in stats.
-4. Add a row to `default_menu()`.
-5. If it has a unique completion condition, handle it in `submit_word()` /
+4. Add an entry to `default_menu()` — items sharing a `group` render under one
+   heading, options side by side.
+5. If it has a unique completion condition, handle it in `advance_word()` /
    `tick()`.
 6. (Optional) Add a CLI flag in `main.rs::Cli`.
 
@@ -211,8 +262,9 @@ crate. We don't directly use any platform-specific code, so the binary is a
 
 1. Declare a `pub const` of type `ThemePalette` in `src/theme/builtin.rs`.
    Fill every slot (`accent`, `secondary`, `correct`, `incorrect`, `pending`,
-   `extra`, `mode_tag`, `error`, `neutral`, `background`). For light-background
-   themes, pick colors at ≥4.5:1 contrast against the bg.
+   `extra`, `mode_tag`, `error`, `neutral`, `background`). `extra` is unused
+   but still required by the struct. For light-background themes, pick colors
+   at ≥4.5:1 contrast against the bg.
 2. Append `("name", YOUR_THEME)` to `ALL` in the same file.
 3. That's it. The CLI loader (`--theme <name>`), the config loader (`theme =
    "..."`), and `--list-themes` all iterate `ALL` — no other wiring needed.

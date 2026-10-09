@@ -46,31 +46,71 @@ You can also pass `--file` alone to use the file inside the menu's "Custom" entr
 
 ### Everywhere
 
-| Key      | Action                          |
-| -------- | ------------------------------- |
-| `?`      | Toggle keybindings overlay      |
-| `Ctrl+C` | Quit immediately                |
+| Key          | Action                                                  |
+| ------------ | ------------------------------------------------------- |
+| `?` / `F1`   | Toggle keybindings overlay (not while typing)           |
+| `Ctrl+C`     | Quit immediately                                        |
+
+### Mouse
+
+Everything the mouse can do, the keyboard can do too (WCAG 2.1.1), and vice
+versa where it makes sense:
+
+- **Click a menu option** to start it (or open stats / quit).
+- **Click a footer hint** (`Enter start`, `s stats`, `esc finish`, …) to do
+  what its key does. Navigation hints like `↑/↓ category` are not clickable.
+- **Scroll wheel** on the menu moves between categories.
+- **Click anywhere** to close the help overlay or an error message.
+
+A click acts when the button is pressed *and* released on the same target:
+press on the wrong option, slide off (or onto another option), and nothing
+happens (WCAG 2.5.2).
+
+Because TypeRush captures the mouse, selecting text in the terminal usually
+needs `Shift` held while dragging.
 
 ### Main menu
 
-| Key                | Action                            |
-| ------------------ | --------------------------------- |
-| `↑ / ↓` or `j / k` | Move highlight                    |
-| `Enter`            | Start the selected mode           |
-| `Tab`              | Jump to the historical stats view |
-| `q`                | Quit                              |
+Modes are grouped by category. `time`, `words` and `code` show a heading with
+their options on the line below; `quote`, `zen`, `stats` and `quit` follow:
+
+```mermaid
+flowchart TD
+    subgraph time
+        direction LR
+        t15[15s] ~~~ t30[30s] ~~~ t60[60s] ~~~ t120[120s]
+    end
+    subgraph words
+        direction LR
+        w10[10] ~~~ w25[25] ~~~ w50[50] ~~~ w100[100]
+    end
+    subgraph code
+        direction LR
+        rust ~~~ python ~~~ javascript
+    end
+    time ~~~ words ~~~ code ~~~ quote ~~~ zen ~~~ stats ~~~ quit
+```
+
+
+| Key                | Action                                         |
+| ------------------ | ---------------------------------------------- |
+| `↑ / ↓` or `j / k` | Previous / next category (keeps the column)    |
+| `← / →` or `h / l` | Previous / next option in the category         |
+| `Enter` / `Space`  | Start the selected mode                        |
+| `Tab` / `s`        | Jump to the historical stats view              |
+| `q`                | Quit                                           |
 
 ### While typing
 
 | Key              | Action                                          |
 | ---------------- | ----------------------------------------------- |
 | any printable    | Type that character                             |
-| `Space`          | Submit the current word, advance to the next    |
+| `Space`          | Type a space — correct only where the text has one |
 | `Backspace`      | Delete the previous character                   |
 | `Ctrl+Backspace` | Delete the entire current word                  |
 | `Ctrl+W`         | Same — delete the entire current word            |
 | `Ctrl+H`         | Same — most terminals send this when you press `Ctrl+Backspace` |
-| `Ctrl+R`         | Restart the same mode with a new word list      |
+| `Ctrl+R` / `F5`  | Restart the same mode with a new word list      |
 | `Esc`            | End the session and go to the results screen    |
 
 ### Results screen
@@ -101,8 +141,13 @@ accuracy = (correct_chars / total_typed_chars) * 100
 ```
 
 Only characters you typed **at the correct position** count as `correct_chars`.
-Typing extra characters past the end of a word counts toward total typed (so it
-hurts accuracy) but never toward correct chars.
+Every character is checked on its own, and the space between words is a
+character like any other. The key you press is compared with the character
+under the cursor: a match is correct, anything else is wrong, and the cursor
+moves on one slot either way. So a letter typed where a space belongs is a wrong
+character (shown as a red underlined space), and a space typed mid-word is a
+wrong character too — it does not jump to the next word. The run ends when the
+last character is typed.
 
 ---
 
@@ -112,6 +157,23 @@ hurts accuracy) but never toward correct chars.
 history; delete it if you want a fresh start.
 
 Zen-mode sessions are intentionally **not** saved.
+
+### What the Stats screen shows (v0.3.0+)
+
+Open the Stats screen from the menu (`Tab`) or results screen (`s`).
+
+| Section | What it shows |
+| ------- | ------------- |
+| **Summary (left)** | All-time best WPM · Average accuracy · Session count · Last WPM · **Daily streak** · **7-day avg WPM** · **30-day avg WPM** |
+| **Key accuracy (right)** | Up to 5 of your worst keys (≥ 3 presses). Colour-coded: red < 80%, amber < 93%, green otherwise. Shows `no key data yet` until enough data is collected. |
+| **WPM trend** | Sparkline of your last 20 sessions |
+| **Recent sessions** | Last 10 sessions with date, mode, WPM, accuracy, and time |
+
+### Per-mode personal bests
+
+On the **Results screen**, the "best" line now shows your personal best
+specifically for the mode you just finished (a `mode best` row under the `mode` row).
+A `★ new best!` badge appears when you beat your previous record for that mode.
 
 ---
 
@@ -155,6 +217,8 @@ correct = "green"       # or ANSI name
 The 10 slots: `accent`, `secondary`, `correct`, `incorrect`, `pending`,
 `extra`, `mode_tag`, `error`, `neutral`, `background`. Each maps to a
 specific UI element — see `config.example.toml` for inline documentation.
+`extra` is currently unused (typing can no longer run past the end of a word)
+and is kept only so existing configs keep loading.
 
 > **Background.** The `dark` theme uses `Color::Reset` for `background` so it
 > picks up whatever your terminal's native background is — same look as v0.1.
@@ -177,8 +241,9 @@ code_lang = "rust"       # rust | python | js
 
 ### Precedence
 
-```
-CLI flag (--theme, --time, …) > config.toml > built-in default
+```mermaid
+flowchart LR
+    cli["CLI flag (--theme, --time, …)"] -- "wins over" --> file["config.toml"] -- "wins over" --> default["built-in default"]
 ```
 
 A malformed config file does not crash TypeRush — it falls back to defaults

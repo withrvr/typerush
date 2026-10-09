@@ -99,6 +99,46 @@ cargo test -- --test-threads=1  # run sequentially (rare, for flaky debug)
 
 Filters are case-sensitive substrings against `module::test_name`.
 
+**Tests must never touch your real `~/.typerush`.** Anything that saves or
+loads history takes a path (`storage::save_session_to_path`,
+`load_sessions_from_path`, `main.rs::after_input`) so tests can point it at a
+`tempfile::tempdir()`. Build test timestamps by calendar day (the
+`days_ago_at` helper in `storage.rs`), not `now - 24h * n`, or day-based
+tests break across DST changes.
+
+---
+
+## End-to-end testing in tmux
+
+Unit tests don't catch TUI regressions. To drive the real binary from a
+script (or an AI agent), run it in a detached tmux session with a throwaway
+`HOME` and read the screen back:
+
+```bash
+mkdir -p /tmp/tr-e2e/.typerush
+cargo build --release
+tmux new-session -d -s tr -x 80 -y 24 \
+  "HOME=/tmp/tr-e2e ./target/release/typerush --words 10"
+tmux send-keys -t tr -l "the quick"     # type literal text
+tmux send-keys -t tr Down Right Enter F1 # named keys
+tmux capture-pane -pt tr                # plain screen text
+tmux capture-pane -ept tr | cat -v      # with colors (check highlights)
+tmux kill-session -t tr
+```
+
+Mouse clicks can be sent as SGR mouse sequences (1-based column and row; `M`
+is press, `m` is release — TypeRush acts on release):
+
+```bash
+tmux send-keys -t tr -l $'\e[<0;46;9M'; tmux send-keys -t tr -l $'\e[<0;46;9m'
+```
+
+Send `Escape` in its own `send-keys` call (with a short sleep after it):
+tmux merges `Escape Down` into an Alt+Down sequence, so the arrow is lost.
+
+Sessions shorter than 1 s aren't saved, so pause (`sleep 1.1`) mid-typing when
+you need a saved session. Check `/tmp/tr-e2e/.typerush/stats.json` afterwards.
+
 ---
 
 ## Quality gates (mirror CI)
