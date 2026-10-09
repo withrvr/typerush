@@ -5,7 +5,7 @@
 //!   2. Put the terminal into raw mode + alternate screen.
 //!   3. Run the main event loop:
 //!        - draw one frame
-//!        - read key events (with a 100ms timeout)
+//!        - read key and mouse events (with a 100ms timeout)
 //!        - call `app.tick()` every 100ms
 //!        - save a session record the moment we land on the Results screen
 //!   4. Restore the terminal on exit (and on panic, via a hook).
@@ -29,13 +29,14 @@ use clap::Parser;
 use crossterm::{
     event::{
         self, DisableMouseCapture, EnableMouseCapture, Event, KeyCode, KeyEventKind, KeyModifiers,
+        MouseButton, MouseEvent, MouseEventKind,
     },
     execute,
     terminal::{disable_raw_mode, enable_raw_mode, EnterAlternateScreen, LeaveAlternateScreen},
 };
 use ratatui::{backend::CrosstermBackend, Terminal};
 
-use crate::app::{App, MenuAction, Mode, Screen};
+use crate::app::{App, ClickAction, MenuAction, Mode, Screen};
 use crate::storage::SessionRecord;
 use crate::theme::builtin;
 
@@ -171,17 +172,21 @@ fn run_app(terminal: &mut Tui, cli: Cli) -> Result<()> {
             .checked_sub(last_tick.elapsed())
             .unwrap_or(Duration::ZERO);
         if event::poll(timeout)? {
-            if let Event::Key(key) = event::read()? {
-                // Ignore key-release events on platforms that emit them.
-                if key.kind != KeyEventKind::Press && key.kind != KeyEventKind::Repeat {
-                    continue;
+            match event::read()? {
+                Event::Key(key) => {
+                    // Ignore key-release events on platforms that emit them.
+                    if key.kind != KeyEventKind::Press && key.kind != KeyEventKind::Repeat {
+                        continue;
+                    }
+                    // If a modal error is showing, any key dismisses it.
+                    if app.error_message.is_some() {
+                        app.error_message = None;
+                        continue;
+                    }
+                    handle_key(&mut app, key.code, key.modifiers);
                 }
-                // If a modal error is showing, any key dismisses it.
-                if app.error_message.is_some() {
-                    app.error_message = None;
-                    continue;
-                }
-                handle_key(&mut app, key.code, key.modifiers);
+                Event::Mouse(mouse) => handle_mouse(&mut app, mouse),
+                _ => {}
             }
         }
 
@@ -256,14 +261,17 @@ fn handle_key(app: &mut App, code: KeyCode, mods: KeyModifiers) {
         app.should_quit = true;
         return;
     }
-    // '?' toggles the help overlay everywhere except during typing (where
-    // '?' is a valid character to type).
-    if code == KeyCode::Char('?') && app.screen != Screen::Typing {
+    // '?' (or F1) toggles the help overlay everywhere except during typing
+    // (where '?' is a valid character to type).
+    if matches!(code, KeyCode::Char('?') | KeyCode::F(1)) && app.screen != Screen::Typing {
         toggle_help(app);
         return;
     }
     if app.screen == Screen::Help {
-        if matches!(code, KeyCode::Esc | KeyCode::Char('?') | KeyCode::Char('q')) {
+        if matches!(
+            code,
+            KeyCode::Esc | KeyCode::Char('?') | KeyCode::Char('q') | KeyCode::F(1)
+        ) {
             app.screen = app.previous_screen;
         }
         return;
@@ -289,15 +297,62 @@ fn toggle_help(app: &mut App) {
     }
 }
 
+/// Mouse support. Every click maps onto an existing keyboard action (see
+/// `ClickAction`), so mouse and keyboard reach exactly the same things.
+///
+/// Actions fire on button *release* over the target, so pressing on the wrong
+/// item and sliding off cancels it (WCAG 2.5.2 pointer cancellation). Pressing
+/// on a menu option only highlights it.
+fn handle_mouse(app: &mut App, mouse: MouseEvent) {
+    let released = mouse.kind == MouseEventKind::Up(MouseButton::Left);
+    // Modal error / help overlay: a click anywhere closes it, like any key.
+    if app.error_message.is_some() {
+        if released {
+            app.error_message = None;
+        }
+        return;
+    }
+    if app.screen == Screen::Help {
+        if released {
+            toggle_help(app);
+        }
+        return;
+    }
+
+    let position = ratatui::layout::Position::new(mouse.column, mouse.row);
+    let target = app
+        .click_targets
+        .borrow()
+        .iter()
+        .find(|(area, _)| area.contains(position))
+        .map(|(_, action)| *action);
+
+    match (mouse.kind, target) {
+        (MouseEventKind::ScrollUp, _) if app.screen == Screen::Menu => app.menu_move_row(false),
+        (MouseEventKind::ScrollDown, _) if app.screen == Screen::Menu => app.menu_move_row(true),
+        (MouseEventKind::Down(MouseButton::Left), Some(ClickAction::Menu(index))) => {
+            app.menu_index = index;
+        }
+        (MouseEventKind::Up(MouseButton::Left), Some(ClickAction::Menu(index))) => {
+            app.menu_index = index;
+            handle_key(app, KeyCode::Enter, KeyModifiers::NONE);
+        }
+        (MouseEventKind::Up(MouseButton::Left), Some(ClickAction::Key(code, mods))) => {
+            handle_key(app, code, mods);
+        }
+        _ => {}
+    }
+}
+
 /// Keymap for the main menu: ↑/↓ (j/k) pick a category row, ←/→ (h/l) pick
-/// an option within it, Enter to act.
+/// an option within it, Enter (or Space) to act.
 fn handle_menu_key(app: &mut App, code: KeyCode, _mods: KeyModifiers) {
     match code {
         KeyCode::Up | KeyCode::Char('k') => app.menu_move_row(false),
         KeyCode::Down | KeyCode::Char('j') => app.menu_move_row(true),
         KeyCode::Left | KeyCode::Char('h') => app.menu_move_column(false),
         KeyCode::Right | KeyCode::Char('l') => app.menu_move_column(true),
-        KeyCode::Enter => {
+        KeyCode::Enter | KeyCode::Char(' ') => {
             let item = &app.menu[app.menu_index];
             let action = item.action;
             let mode = item.mode;
@@ -313,7 +368,7 @@ fn handle_menu_key(app: &mut App, code: KeyCode, _mods: KeyModifiers) {
                 MenuAction::Quit => app.should_quit = true,
             }
         }
-        KeyCode::Tab => app.screen = Screen::Stats,
+        KeyCode::Tab | KeyCode::Char('s') => app.screen = Screen::Stats,
         KeyCode::Char('q') => app.should_quit = true,
         _ => {}
     }
@@ -325,6 +380,11 @@ pub(crate) fn handle_typing_key(app: &mut App, code: KeyCode, mods: KeyModifiers
     match code {
         KeyCode::Esc => {
             app.finish_game();
+        }
+        KeyCode::F(5) => {
+            if let Err(e) = app.restart() {
+                app.error_message = Some(e.to_string());
+            }
         }
         KeyCode::Char('r') if mods.contains(KeyModifiers::CONTROL) => {
             if let Err(e) = app.restart() {
@@ -504,5 +564,99 @@ mod tests {
         handle_typing_key(&mut app, KeyCode::Char('a'), KeyModifiers::CONTROL);
         handle_typing_key(&mut app, KeyCode::Char('z'), KeyModifiers::CONTROL);
         assert_eq!(app.words[0].typed, "hel");
+    }
+
+    // ── mouse ────────────────────────────────────────────────────────────────
+
+    /// Draw one frame of `app` at 80×24 so its click targets are registered.
+    fn draw(app: &App) {
+        let mut terminal = Terminal::new(ratatui::backend::TestBackend::new(80, 24)).unwrap();
+        terminal.draw(|f| ui::render(f, app)).unwrap();
+    }
+
+    /// Centre cell of the first click target matching `action`.
+    fn target_cell(app: &App, action: ClickAction) -> (u16, u16) {
+        let targets = app.click_targets.borrow();
+        let (area, _) = targets.iter().find(|(_, a)| *a == action).unwrap();
+        (area.x + area.width / 2, area.y)
+    }
+
+    fn mouse(kind: MouseEventKind, (column, row): (u16, u16)) -> MouseEvent {
+        MouseEvent {
+            kind,
+            column,
+            row,
+            modifiers: KeyModifiers::NONE,
+        }
+    }
+
+    fn click(app: &mut App, cell: (u16, u16)) {
+        handle_mouse(app, mouse(MouseEventKind::Down(MouseButton::Left), cell));
+        handle_mouse(app, mouse(MouseEventKind::Up(MouseButton::Left), cell));
+    }
+
+    #[test]
+    fn clicking_a_menu_option_starts_it() {
+        let mut app = App::new(None, ThemePalette::default(), DefaultMode::Time(15));
+        draw(&app);
+        let thirty = app.menu.iter().position(|m| m.label == "30s").unwrap();
+        let cell = target_cell(&app, ClickAction::Menu(thirty));
+        click(&mut app, cell);
+        assert_eq!(app.screen, Screen::Typing);
+        assert_eq!(app.mode, Mode::Time(30));
+    }
+
+    /// WCAG 2.5.2: pressing on an option and releasing elsewhere only
+    /// highlights it — nothing starts.
+    #[test]
+    fn menu_press_then_slide_off_cancels() {
+        let mut app = App::new(None, ThemePalette::default(), DefaultMode::Time(15));
+        draw(&app);
+        let cell = target_cell(&app, ClickAction::Menu(5));
+        handle_mouse(
+            &mut app,
+            mouse(MouseEventKind::Down(MouseButton::Left), cell),
+        );
+        handle_mouse(
+            &mut app,
+            mouse(MouseEventKind::Up(MouseButton::Left), (0, 0)),
+        );
+        assert_eq!(app.screen, Screen::Menu);
+        assert_eq!(app.menu_index, 5);
+    }
+
+    #[test]
+    fn clicking_a_footer_hint_acts_like_its_key() {
+        let mut app = App::new(None, ThemePalette::default(), DefaultMode::Time(15));
+        draw(&app);
+        let stats = ClickAction::Key(KeyCode::Char('s'), KeyModifiers::NONE);
+        let cell = target_cell(&app, stats);
+        click(&mut app, cell);
+        assert_eq!(app.screen, Screen::Stats);
+
+        // Stats footer: "m / esc menu" goes back.
+        draw(&app);
+        let menu = ClickAction::Key(KeyCode::Char('m'), KeyModifiers::NONE);
+        let cell = target_cell(&app, menu);
+        click(&mut app, cell);
+        assert_eq!(app.screen, Screen::Menu);
+    }
+
+    #[test]
+    fn click_closes_help_overlay() {
+        let mut app = App::new(None, ThemePalette::default(), DefaultMode::Time(15));
+        handle_key(&mut app, KeyCode::F(1), KeyModifiers::NONE);
+        assert_eq!(app.screen, Screen::Help);
+        click(&mut app, (0, 0));
+        assert_eq!(app.screen, Screen::Menu);
+    }
+
+    #[test]
+    fn scroll_wheel_moves_menu_rows() {
+        let mut app = App::new(None, ThemePalette::default(), DefaultMode::Time(15));
+        handle_mouse(&mut app, mouse(MouseEventKind::ScrollDown, (0, 0)));
+        assert_eq!(app.menu[app.menu_index].group, "words");
+        handle_mouse(&mut app, mouse(MouseEventKind::ScrollUp, (0, 0)));
+        assert_eq!(app.menu[app.menu_index].group, "time");
     }
 }

@@ -81,6 +81,14 @@ app.rs::handle_char / handle_backspace
 back to main loop ──► next frame is drawn from the new state
 ```
 
+Mouse events take a short detour into the same path. While drawing, the UI
+registers clickable regions in `App::click_targets` (menu options and footer
+hints, rebuilt every frame). `main.rs::handle_mouse` looks up the region
+under the pointer and turns a left-button *release* into the equivalent
+`ClickAction`: a footer hint calls `handle_key` with its key, a menu option
+selects that option and presses Enter. Nothing is reachable by mouse that
+isn't reachable by keyboard.
+
 ---
 
 ## Module responsibilities

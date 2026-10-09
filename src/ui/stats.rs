@@ -12,6 +12,9 @@ use ratatui::{
     widgets::{Block, Borders, Cell, Paragraph, Row, Sparkline, Table},
 };
 
+use crossterm::event::KeyCode;
+
+use super::key;
 use crate::{app::App, storage};
 
 /// Render the stats history screen.
@@ -48,9 +51,16 @@ pub fn render(f: &mut Frame, app: &App) {
     render_sparkline(f, app, layout[2], sessions);
     render_sessions_table(f, app, layout[3], sessions);
 
-    let footer =
-        Paragraph::new("  m / esc menu  ·  q quit").style(Style::default().fg(theme.pending));
-    f.render_widget(footer, layout[4]);
+    super::render_footer(
+        f,
+        app,
+        layout[4],
+        &[
+            ("m / esc menu", key(KeyCode::Char('m'))),
+            ("q quit", key(KeyCode::Char('q'))),
+            ("? help", key(KeyCode::Char('?'))),
+        ],
+    );
 }
 
 /// Renders the top row: summary card on the left, key-accuracy heatmap on the right.

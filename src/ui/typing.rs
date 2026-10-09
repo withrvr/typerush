@@ -9,6 +9,7 @@
 //! characters + "underline" on spaces) avoids the visual jolt of switching
 //! styles as the cursor crosses word boundaries.
 
+use crossterm::event::{KeyCode, KeyModifiers};
 use ratatui::{
     prelude::*,
     widgets::{Block, Borders, Gauge, Paragraph, Wrap},
@@ -253,9 +254,20 @@ fn style_for_char(state: CharState, is_zen_mode: bool, theme: &ThemePalette) -> 
     }
 }
 
-/// Tiny hint strip at the bottom of the screen.
+/// Tiny hint strip at the bottom of the screen. No help hint: `?` is a
+/// character you may need to type here.
 fn render_footer(f: &mut Frame, app: &App, area: Rect) {
-    let footer = Paragraph::new("  ctrl+r restart  ·  esc menu  ·  ctrl+c quit  ·  ? help")
-        .style(Style::default().fg(app.theme.pending));
-    f.render_widget(footer, area);
+    super::render_footer(
+        f,
+        app,
+        area,
+        &[
+            ("ctrl+r / F5 restart", super::key(KeyCode::F(5))),
+            ("esc finish", super::key(KeyCode::Esc)),
+            (
+                "ctrl+c quit",
+                Some((KeyCode::Char('c'), KeyModifiers::CONTROL)),
+            ),
+        ],
+    );
 }

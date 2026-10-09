@@ -90,14 +90,16 @@ typerush --list-themes       # see all built-in themes
 
 ## ⌨️ A few keys to know
 
-| Key        | Action                          |
-| ---------- | ------------------------------- |
-| `Enter`    | start / restart a session       |
-| `Esc`      | back to menu / end session      |
-| `Ctrl+R`   | restart the current mode        |
-| `Tab`      | jump to your stats history      |
-| `?`        | open the keybindings overlay    |
-| `Ctrl+C`   | quit                            |
+| Key             | Action                          |
+| --------------- | ------------------------------- |
+| `Enter`         | start / restart a session       |
+| `Esc`           | back to menu / end session      |
+| `Ctrl+R` / `F5` | restart the current mode        |
+| `Tab` / `s`     | jump to your stats history      |
+| `?` / `F1`      | open the keybindings overlay    |
+| `Ctrl+C`        | quit                            |
+
+The mouse works too: click a menu option or any footer hint.
 
 Full keymap: see [`docs/USAGE.md`](docs/USAGE.md).
 

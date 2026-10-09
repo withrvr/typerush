@@ -10,6 +10,9 @@ use ratatui::{
     widgets::{Block, Borders, Paragraph, Sparkline},
 };
 
+use crossterm::event::KeyCode;
+
+use super::key;
 use crate::{app::App, storage};
 
 /// Render the post-session results screen.
@@ -185,7 +188,16 @@ pub fn render(f: &mut Frame, app: &App) {
         .style(Style::default().fg(theme.accent));
     f.render_widget(spark, layout[2]);
 
-    let footer = Paragraph::new("  Enter / r restart  ·  m menu  ·  s stats  ·  q quit")
-        .style(Style::default().fg(theme.pending));
-    f.render_widget(footer, layout[4]);
+    super::render_footer(
+        f,
+        app,
+        layout[4],
+        &[
+            ("Enter / r restart", key(KeyCode::Enter)),
+            ("m / esc menu", key(KeyCode::Char('m'))),
+            ("s / tab stats", key(KeyCode::Char('s'))),
+            ("q quit", key(KeyCode::Char('q'))),
+            ("? help", key(KeyCode::Char('?'))),
+        ],
+    );
 }

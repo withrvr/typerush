@@ -13,8 +13,12 @@
 //!   └────────────── Esc / 'm' ───────────────────┘
 //! ```
 
+use std::cell::RefCell;
 use std::collections::HashMap;
 use std::time::{Duration, Instant};
+
+use crossterm::event::{KeyCode, KeyModifiers};
+use ratatui::layout::Rect;
 
 use crate::config::load::{CodeLangKind, DefaultMode};
 use crate::storage::SessionRecord;
@@ -93,6 +97,17 @@ impl Word {
             space_missed: false,
         }
     }
+}
+
+/// What a mouse click on a drawn region does. Every click maps onto an
+/// existing keyboard action, so the mouse never reaches anything the
+/// keyboard can't.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum ClickAction {
+    /// Behave exactly like this key press (footer hints).
+    Key(KeyCode, KeyModifiers),
+    /// Select this menu option and activate it, like ←/→ then Enter.
+    Menu(usize),
 }
 
 /// One selectable option in the main menu. Consecutive items that share a
@@ -270,6 +285,12 @@ pub struct App {
     /// sessions (and on disk failure) — the Results screen uses this to know
     /// whether the last history entry is the current session or a previous one.
     pub session_just_saved: bool,
+
+    // --- mouse ---
+    /// Clickable regions drawn in the last frame. Rebuilt by `ui::render` on
+    /// every frame (hence the `RefCell`: rendering only gets `&App`) and
+    /// read by the mouse handler in `main.rs`.
+    pub click_targets: RefCell<Vec<(Rect, ClickAction)>>,
 }
 
 impl App {
@@ -308,6 +329,7 @@ impl App {
             key_misses: HashMap::new(),
             stats_cache: None,
             session_just_saved: false,
+            click_targets: RefCell::new(Vec::new()),
         }
     }
 

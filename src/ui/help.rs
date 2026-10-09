@@ -1,67 +1,61 @@
 //! Two floating overlays drawn on top of any screen:
-//!  - the keybindings help (toggled with `?`)
-//!  - a transient error modal (dismissed by any keypress)
+//!  - the keybindings help (toggled with `?` / F1, closed by a click too)
+//!  - a transient error modal (dismissed by any keypress or click)
 
 use ratatui::{
+    layout::Flex,
     prelude::*,
     widgets::{Block, Borders, Clear, Paragraph, Wrap},
 };
 
 use crate::{app::App, theme::ThemePalette};
 
-/// Render the keybindings overlay.
+/// Render the keybindings overlay. Sized to its content (clamped to the
+/// terminal) so it fits a standard 80×24 window without clipping.
 pub fn render(f: &mut Frame, app: &App) {
-    let area = centered_rect(60, 70, f.area());
-    f.render_widget(Clear, area);
     let theme = &app.theme;
-
-    let lines = vec![
+    let heading = |text| {
         Line::from(Span::styled(
-            "  TypeRush — keybindings",
+            text,
             Style::default()
                 .fg(theme.accent)
                 .add_modifier(Modifier::BOLD),
-        )),
+        ))
+    };
+    let dim = |text| Line::from(Span::styled(text, Style::default().fg(theme.pending)));
+
+    let lines = vec![
+        heading("  TypeRush — keybindings"),
         Line::raw(""),
-        Line::from("  ↑/↓ or j/k     menu: pick a category"),
-        Line::from("  ←/→ or h/l     menu: pick an option"),
-        Line::from("  Enter          start / restart"),
-        Line::from("  Esc            back to menu / end session"),
-        Line::from("  Ctrl+R         restart current mode"),
-        Line::from("  Ctrl+Backspace delete previous word"),
-        Line::from("  Ctrl+C         quit immediately"),
-        Line::from("  Tab            stats screen (from menu/results)"),
-        Line::from("  ?              toggle this help"),
+        Line::from("  ↑/↓  j/k         menu: pick a category"),
+        Line::from("  ←/→  h/l         menu: pick an option"),
+        Line::from("  Enter  Space     start the selected mode"),
+        Line::from("  Enter  r         restart (results screen)"),
+        Line::from("  Ctrl+R  F5       restart while typing"),
+        Line::from("  Esc              finish session / back"),
+        Line::from("  Ctrl+Bksp Ctrl+W delete word"),
+        Line::from("  Tab  s           stats history"),
+        Line::from("  ?  F1            toggle this help"),
+        Line::from("  Ctrl+C           quit"),
+        Line::from("  Mouse            click options and footer"),
+        Line::from("                   hints; wheel moves the menu"),
         Line::raw(""),
-        Line::from(Span::styled(
-            "  Modes",
-            Style::default()
-                .fg(theme.secondary)
-                .add_modifier(Modifier::BOLD),
-        )),
-        Line::from("  Time           type as many words as you can"),
-        Line::from("  Words          type a fixed number of words"),
-        Line::from("  Quote          a famous programming quote"),
-        Line::from("  Code           real Rust / Python / JS snippets"),
-        Line::from("  Zen            no timer, no stats — just flow"),
+        dim("  Zen sessions are not saved"),
+        dim("  Stats   ~/.typerush/stats.json"),
+        dim("  Config  ~/.typerush/config.toml"),
         Line::raw(""),
-        Line::from(Span::styled(
-            "  Stats saved to ~/.typerush/stats.json",
-            Style::default().fg(theme.pending),
-        )),
-        Line::from(Span::styled(
-            "  Config: ~/.typerush/config.toml",
-            Style::default().fg(theme.pending),
-        )),
+        dim("  Esc / ? / F1 / click anywhere to close"),
     ];
 
+    let height = lines.len() as u16 + 2;
+    let area = centered(f.area(), 50, height);
+    f.render_widget(Clear, area);
     let p = Paragraph::new(lines)
         // Plain Line::from(string) entries inherit this fg — otherwise they
         // render with terminal default which is invisible on the light theme.
-        // Explicitly-styled spans (titles, subtitles, dim hints) keep their
-        // own colors because Span style overrides Paragraph style.
+        // Explicitly-styled spans (titles, dim hints) keep their own colors
+        // because Span style overrides Paragraph style.
         .style(Style::default().fg(theme.neutral))
-        .wrap(Wrap { trim: false })
         .block(
             Block::default()
                 .borders(Borders::ALL)
@@ -71,11 +65,22 @@ pub fn render(f: &mut Frame, app: &App) {
     f.render_widget(p, area);
 }
 
+/// A `width`×`height` rect centered in `r`, shrunk to fit if `r` is smaller.
+fn centered(r: Rect, width: u16, height: u16) -> Rect {
+    let [area] = Layout::horizontal([Constraint::Length(width)])
+        .flex(Flex::Center)
+        .areas(r);
+    let [area] = Layout::vertical([Constraint::Length(height)])
+        .flex(Flex::Center)
+        .areas(area);
+    area
+}
+
 /// Render the transient error modal. Dismissed by any keypress from the main loop.
 pub fn render_error(f: &mut Frame, theme: &ThemePalette, message: &str) {
     let area = centered_rect(50, 20, f.area());
     f.render_widget(Clear, area);
-    let p = Paragraph::new(format!("  {}\n\n  press any key", message))
+    let p = Paragraph::new(format!("  {}\n\n  press any key or click", message))
         .wrap(Wrap { trim: false })
         .block(
             Block::default()

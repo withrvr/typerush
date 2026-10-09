@@ -46,10 +46,27 @@ You can also pass `--file` alone to use the file inside the menu's "Custom" entr
 
 ### Everywhere
 
-| Key      | Action                          |
-| -------- | ------------------------------- |
-| `?`      | Toggle keybindings overlay      |
-| `Ctrl+C` | Quit immediately                |
+| Key          | Action                                                  |
+| ------------ | ------------------------------------------------------- |
+| `?` / `F1`   | Toggle keybindings overlay (not while typing)           |
+| `Ctrl+C`     | Quit immediately                                        |
+
+### Mouse
+
+Everything the mouse can do, the keyboard can do too (WCAG 2.1.1), and vice
+versa where it makes sense:
+
+- **Click a menu option** to start it (or open stats / quit).
+- **Click a footer hint** (`Enter start`, `s stats`, `esc finish`, …) to do
+  what its key does. Navigation hints like `↑/↓ category` are not clickable.
+- **Scroll wheel** on the menu moves between categories.
+- **Click anywhere** to close the help overlay or an error message.
+
+Clicks act when the button is *released* over the target: press on the wrong
+option, slide off, and nothing happens (WCAG 2.5.2).
+
+Because TypeRush captures the mouse, selecting text in the terminal usually
+needs `Shift` held while dragging.
 
 ### Main menu
 
@@ -60,8 +77,8 @@ Modes are grouped one category per row — `time`, `words`, `code`, then
 | ------------------ | ---------------------------------------------- |
 | `↑ / ↓` or `j / k` | Previous / next category (keeps the column)    |
 | `← / →` or `h / l` | Previous / next option in the category         |
-| `Enter`            | Start the selected mode                        |
-| `Tab`              | Jump to the historical stats view              |
+| `Enter` / `Space`  | Start the selected mode                        |
+| `Tab` / `s`        | Jump to the historical stats view              |
 | `q`                | Quit                                           |
 
 ### While typing
@@ -74,7 +91,7 @@ Modes are grouped one category per row — `time`, `words`, `code`, then
 | `Ctrl+Backspace` | Delete the entire current word                  |
 | `Ctrl+W`         | Same — delete the entire current word            |
 | `Ctrl+H`         | Same — most terminals send this when you press `Ctrl+Backspace` |
-| `Ctrl+R`         | Restart the same mode with a new word list      |
+| `Ctrl+R` / `F5`  | Restart the same mode with a new word list      |
 | `Esc`            | End the session and go to the results screen    |
 
 ### Results screen

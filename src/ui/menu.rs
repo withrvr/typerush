@@ -4,10 +4,13 @@
 
 use ratatui::{
     prelude::*,
-    widgets::{Block, Borders, Paragraph, Wrap},
+    widgets::{Block, Borders, Paragraph},
 };
 
-use crate::app::{menu_row, App};
+use crossterm::event::KeyCode;
+
+use super::{key, render_footer};
+use crate::app::{menu_row, App, ClickAction};
 
 /// Render the menu screen. `app.menu_index` highlights the active option.
 pub fn render(f: &mut Frame, app: &App) {
@@ -53,11 +56,15 @@ pub fn render(f: &mut Frame, app: &App) {
 
     let inner = centered_rect(60, 100, layout[2]);
     let theme = &app.theme;
-    // Black on accent gives high contrast on every built-in theme since each
-    // one's `accent` is a bright color. A user who overrides accent to
-    // something dark would lose readability here — they can override the slot.
+    // Selected option: the theme background on accent. On the light theme that
+    // is off-white on deep blue (~5.3:1, WCAG AA); black would be ~3.8:1. The
+    // dark theme's background is `Reset` (terminal default), so use black there.
+    let chip_fg = match theme.background {
+        Color::Reset => Color::Black,
+        background => background,
+    };
     let selected_style = Style::default()
-        .fg(Color::Black)
+        .fg(chip_fg)
         .bg(theme.accent)
         .add_modifier(Modifier::BOLD);
     // Explicit fg everywhere: Reset would render the terminal default, which
@@ -65,6 +72,14 @@ pub fn render(f: &mut Frame, app: &App) {
     let option_style = Style::default().fg(theme.neutral);
 
     let selected_row = menu_row(&app.menu, app.menu_index);
+    // Text area inside the border — clicks outside it can't hit an option.
+    let menu_area = Rect::new(
+        inner.x + 1,
+        inner.y + 1,
+        inner.width.saturating_sub(2),
+        inner.height.saturating_sub(2),
+    );
+    let mut targets = app.click_targets.borrow_mut();
     let mut lines = Vec::new();
     let mut start = 0;
     while start < app.menu.len() {
@@ -80,18 +95,26 @@ pub fn render(f: &mut Frame, app: &App) {
             if is_selected_row { " ➤ " } else { "   " },
             Style::default().fg(theme.accent),
         )];
-        let chip = |index: usize, text: &str| {
+        // Inside the border: one column of border + the text so far.
+        let line_y = inner.y + 1 + lines.len() as u16;
+        let mut chip = |spans: &mut Vec<Span<'static>>, index: usize, text: &str| {
             let style = if index == app.menu_index {
                 selected_style
             } else {
                 option_style
             };
             // Pad to 4 so the time and words options line up in columns.
-            Span::styled(format!(" {:<4} ", text), style)
+            let span = Span::styled(format!(" {:<4} ", text), style);
+            let x = inner.x + 1 + spans.iter().map(Span::width).sum::<usize>() as u16;
+            let area = Rect::new(x, line_y, span.width() as u16, 1).intersection(menu_area);
+            if !area.is_empty() {
+                targets.push((area, ClickAction::Menu(index)));
+            }
+            spans.push(span);
         };
         if row.len() == 1 {
             // Single-option row: the category name is the option itself.
-            spans.push(chip(start, group));
+            chip(&mut spans, start, group);
         } else {
             let heading_style = if is_selected_row {
                 Style::default()
@@ -102,7 +125,7 @@ pub fn render(f: &mut Frame, app: &App) {
             };
             spans.push(Span::styled(format!(" {:<8}", group), heading_style));
             for index in row.clone() {
-                spans.push(chip(index, app.menu[index].label));
+                chip(&mut spans, index, app.menu[index].label);
                 spans.push(Span::raw(" "));
             }
         }
@@ -122,12 +145,21 @@ pub fn render(f: &mut Frame, app: &App) {
             )),
     );
     f.render_widget(menu, inner);
+    drop(targets);
 
-    let footer =
-        Paragraph::new("  ↑/↓ category  ·  ←/→ option  ·  Enter start  ·  q quit  ·  ? help")
-            .style(Style::default().fg(app.theme.pending))
-            .wrap(Wrap { trim: true });
-    f.render_widget(footer, layout[3]);
+    render_footer(
+        f,
+        app,
+        layout[3],
+        &[
+            ("↑/↓ category", None),
+            ("←/→ option", None),
+            ("Enter start", key(KeyCode::Enter)),
+            ("s stats", key(KeyCode::Char('s'))),
+            ("q quit", key(KeyCode::Char('q'))),
+            ("? help", key(KeyCode::Char('?'))),
+        ],
+    );
 }
 
 fn centered_rect(percent_x: u16, percent_y: u16, r: Rect) -> Rect {

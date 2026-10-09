@@ -42,6 +42,18 @@ _No unreleased changes yet._
   use `#[serde(default)]` so existing `~/.typerush/stats.json` records without
   them load cleanly — no migration needed.
 
+### Added (input)
+
+- **Mouse support.** Click a menu option to start it, click any footer hint
+  (`Enter start`, `s stats`, `esc finish`, `? help`, …) to do what its key
+  does, scroll the wheel to move through the menu, and click anywhere to close
+  the help overlay or an error message. Every mouse action maps to an existing
+  key (WCAG 2.1.1), and clicks fire on release so sliding off a target cancels
+  them (WCAG 2.5.2).
+- **Alternate keys.** `F1` opens help (next to `?`), `F5` restarts while
+  typing (next to `Ctrl+R`), `Space` starts the selected menu mode (next to
+  `Enter`), and `s` opens stats from the menu (next to `Tab`).
+
 ### Changed
 
 - **Main menu grouped by category.** Each category sits on its own row —
@@ -55,6 +67,10 @@ _No unreleased changes yet._
   (5 rows instead of 7) and the footer takes one row, so the recent-sessions
   table still shows 5 sessions in a 24-row terminal. The mode column is wide
   enough for `code-javascript`.
+- **Footers.** The typing footer now reads `esc finish` (Esc ends the session
+  and shows results; it never went straight to the menu) and drops `? help`,
+  since `?` is typed as a character there. The help overlay is sized to its
+  content and fits an 80×24 terminal.
 - **Results screen body expanded** from `Constraint::Length(9)` to
   `Constraint::Length(10)` to accommodate the mode-specific best row.
 
