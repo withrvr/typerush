@@ -13,6 +13,7 @@ use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::{
     fs,
+    io::Write,
     path::{Path, PathBuf},
 };
 
@@ -64,37 +65,40 @@ pub fn stats_path() -> PathBuf {
     data_dir().join("stats.json")
 }
 
-/// Write `contents` to `path` atomically: write a sibling `*.tmp` file first,
-/// then rename it over the target. `rename` is atomic on the same filesystem
-/// on Linux, macOS, and Windows, so a crash or power loss mid-write can never
-/// leave a half-written (corrupt) stats file behind — the old file survives
-/// intact until the new one is fully on disk.
+/// Write `contents` to `path` atomically: write a sibling `*.tmp` file, flush
+/// it to disk, then rename it over the target. `rename` is atomic on the same
+/// filesystem on Linux, macOS, and Windows, and the `sync_all` before it makes
+/// sure the new data is on disk first — without it, a power loss right after
+/// the rename can leave a zero-length file on filesystems with delayed
+/// allocation (XFS, btrfs, some ext4 setups).
 fn write_atomic(path: &Path, contents: &str) -> std::io::Result<()> {
     let mut tmp = path.as_os_str().to_owned();
     tmp.push(".tmp");
     let tmp = PathBuf::from(tmp);
-    fs::write(&tmp, contents)?;
-    fs::rename(&tmp, path)
+    let mut file = fs::File::create(&tmp)?;
+    file.write_all(contents.as_bytes())?;
+    file.sync_all()?;
+    drop(file);
+    fs::rename(&tmp, path)?;
+    // Make the rename itself durable. Best-effort, Unix only: Windows can't
+    // open a directory as a file.
+    #[cfg(unix)]
+    if let Some(dir) = path.parent().filter(|dir| !dir.as_os_str().is_empty()) {
+        let _ = fs::File::open(dir).and_then(|dir| dir.sync_all());
+    }
+    Ok(())
 }
 
-/// Append `record` to the stats file, creating the data directory if needed.
+/// Append `record` to the stats file at `path` (normally [`stats_path`]),
+/// creating its directory if needed. Returns the full updated history so
+/// callers can cache it without re-reading the file.
 ///
 /// The whole stats file is rewritten on each save — fine in practice because
 /// the file is tiny and the user only saves once at the end of a session.
-pub fn save_session(record: &SessionRecord) -> Result<()> {
-    fs::create_dir_all(data_dir())?;
-    save_session_to_path(&stats_path(), record)
-}
-
-/// Load every saved session in the order they were recorded (oldest first).
-/// Returns an empty vec when the file doesn't exist yet.
-pub fn load_sessions() -> Result<Vec<SessionRecord>> {
-    load_sessions_from_path(&stats_path())
-}
-
-/// Path-based variant of [`save_session`]. Exposed for tests (and any future
-/// caller that wants to control where stats are stored).
-pub fn save_session_to_path(path: &Path, record: &SessionRecord) -> Result<()> {
+pub fn save_session_to_path(path: &Path, record: &SessionRecord) -> Result<Vec<SessionRecord>> {
+    if let Some(dir) = path.parent().filter(|dir| !dir.as_os_str().is_empty()) {
+        fs::create_dir_all(dir)?;
+    }
     let mut history: Vec<SessionRecord> = if path.exists() {
         let raw = fs::read_to_string(path)?;
         match serde_json::from_str(&raw) {
@@ -102,9 +106,14 @@ pub fn save_session_to_path(path: &Path, record: &SessionRecord) -> Result<()> {
             Err(_) if raw.trim().is_empty() => vec![],
             // Corrupt file: start over, but copy it aside first so the
             // rewrite below can never silently destroy the user's history.
+            // Timestamped, so a later corruption can't overwrite this backup.
             Err(_) => {
                 let mut backup = path.as_os_str().to_owned();
-                backup.push(".corrupt");
+                backup.push(
+                    Local::now()
+                        .format(".corrupt-%Y%m%d-%H%M%S%.3f")
+                        .to_string(),
+                );
                 fs::copy(path, PathBuf::from(backup))?;
                 vec![]
             }
@@ -114,12 +123,12 @@ pub fn save_session_to_path(path: &Path, record: &SessionRecord) -> Result<()> {
     };
     history.push(record.clone());
     write_atomic(path, &serde_json::to_string_pretty(&history)?)?;
-    Ok(())
+    Ok(history)
 }
 
-/// Path-based variant of [`load_sessions`]. A missing file is treated as an
-/// empty history; a corrupt file falls back to an empty list (the same
-/// loss-tolerant behavior used in production).
+/// Load every saved session at `path` (normally [`stats_path`]) in the order
+/// they were recorded (oldest first). A missing file is treated as an empty
+/// history; a corrupt file falls back to an empty list.
 pub fn load_sessions_from_path(path: &Path) -> Result<Vec<SessionRecord>> {
     if !path.exists() {
         return Ok(vec![]);
@@ -130,14 +139,7 @@ pub fn load_sessions_from_path(path: &Path) -> Result<Vec<SessionRecord>> {
 
 /// All-time best WPM across every saved session.
 pub fn personal_best(sessions: &[SessionRecord]) -> Option<f64> {
-    sessions
-        .iter()
-        .map(|s| s.wpm)
-        .fold(None, |best, wpm| match best {
-            None => Some(wpm),
-            Some(current_best) if wpm > current_best => Some(wpm),
-            Some(current_best) => Some(current_best),
-        })
+    sessions.iter().map(|s| s.wpm).reduce(f64::max)
 }
 
 /// Mean accuracy across every saved session, 0–100. `None` if no sessions.
@@ -156,11 +158,7 @@ pub fn personal_best_for_mode(sessions: &[SessionRecord], mode_label: &str) -> O
         .iter()
         .filter(|s| s.mode == mode_label)
         .map(|s| s.wpm)
-        .fold(None, |best, wpm| match best {
-            None => Some(wpm),
-            Some(b) if wpm > b => Some(wpm),
-            Some(b) => Some(b),
-        })
+        .reduce(f64::max)
 }
 
 /// Current daily streak: the number of consecutive calendar days (in local
@@ -214,13 +212,14 @@ pub fn streak(sessions: &[SessionRecord]) -> u32 {
     count
 }
 
-/// Mean WPM across all sessions whose timestamp falls within the last `days`
-/// calendar days (counted from now). Returns `None` when no sessions qualify.
+/// Mean WPM across all sessions from the last `days` calendar days in local
+/// time, today included (so `7` = today and the 6 days before it) — the same
+/// day boundaries `streak` uses. Returns `None` when no sessions qualify.
 pub fn avg_wpm_last_n_days(sessions: &[SessionRecord], days: u32) -> Option<f64> {
-    let cutoff = Local::now() - chrono::Duration::days(days as i64);
+    let first_day = Local::now().date_naive() - chrono::Days::new(days.saturating_sub(1) as u64);
     let relevant: Vec<f64> = sessions
         .iter()
-        .filter(|s| s.timestamp > cutoff)
+        .filter(|s| s.timestamp.date_naive() >= first_day)
         .map(|s| s.wpm)
         .collect();
     if relevant.is_empty() {
@@ -233,8 +232,6 @@ pub fn avg_wpm_last_n_days(sessions: &[SessionRecord], days: u32) -> Option<f64>
 /// Aggregated per-key accuracy across all sessions, sorted by accuracy
 /// ascending (worst keys first). Only keys with at least `min_presses`
 /// total keystrokes (hits + misses) are included.
-// ponytail: rescans every session's key map per call (~40 keys × sessions);
-// cache the result alongside `App::stats_cache` if huge histories get slow.
 pub fn key_accuracy(sessions: &[SessionRecord], min_presses: u64) -> Vec<KeyAccuracyStat> {
     let mut hits: HashMap<char, u64> = HashMap::new();
     let mut misses: HashMap<char, u64> = HashMap::new();
@@ -298,13 +295,56 @@ pub struct KeyAccuracyStat {
     pub accuracy: f64,
 }
 
+/// Everything the Stats screen's summary card and key-accuracy panel show,
+/// computed in one pass over the history. Built once each time the Stats
+/// screen is opened instead of on every frame.
+#[derive(Debug, Clone, Default)]
+pub struct StatsSummary {
+    pub personal_best: Option<f64>,
+    pub average_accuracy: Option<f64>,
+    pub sessions: usize,
+    pub last_wpm: Option<f64>,
+    pub streak: u32,
+    pub avg_wpm_7_days: Option<f64>,
+    pub avg_wpm_30_days: Option<f64>,
+    /// Keys with at least 3 occurrences, worst first.
+    pub worst_keys: Vec<KeyAccuracyStat>,
+}
+
+impl StatsSummary {
+    pub fn new(sessions: &[SessionRecord]) -> Self {
+        Self {
+            personal_best: personal_best(sessions),
+            average_accuracy: average_accuracy(sessions),
+            sessions: sessions.len(),
+            last_wpm: sessions.last().map(|s| s.wpm),
+            streak: streak(sessions),
+            avg_wpm_7_days: avg_wpm_last_n_days(sessions, 7),
+            avg_wpm_30_days: avg_wpm_last_n_days(sessions, 30),
+            worst_keys: key_accuracy(sessions, 3),
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
 
+    /// Local noon `days_ago` calendar days before today. Stepping by calendar
+    /// day (not by 24 h) keeps day-based tests correct across DST changes,
+    /// and noon always exists in local time.
+    fn days_ago_at(days_ago: i64, hour: u32, minute: u32) -> DateTime<Local> {
+        let date = Local::now().date_naive() - chrono::Days::new(days_ago as u64);
+        date.and_hms_opt(hour, minute, 0)
+            .unwrap()
+            .and_local_timezone(Local)
+            .earliest()
+            .unwrap()
+    }
+
     /// Build a minimal `SessionRecord` for testing purposes.
     fn make_record(wpm: f64, mode: &str, days_ago: i64) -> SessionRecord {
-        let timestamp = Local::now() - chrono::Duration::days(days_ago);
+        let timestamp = days_ago_at(days_ago, 12, 0);
         SessionRecord {
             wpm,
             accuracy: 95.0,
@@ -461,6 +501,17 @@ mod tests {
         ];
         let avg = avg_wpm_last_n_days(&sessions, 7).unwrap();
         assert!((avg - 50.0).abs() < 0.001);
+    }
+
+    /// The window is calendar days, like the streak: the first minute of the
+    /// 7th day back counts, the last minute of the 8th doesn't.
+    #[test]
+    fn avg_wpm_window_uses_calendar_days() {
+        let mut inside = make_record(40.0, "time-30s", 0);
+        inside.timestamp = days_ago_at(6, 0, 1);
+        let mut outside = make_record(90.0, "time-30s", 0);
+        outside.timestamp = days_ago_at(7, 23, 59);
+        assert_eq!(avg_wpm_last_n_days(&[inside, outside], 7), Some(40.0));
     }
 
     #[test]
@@ -1079,9 +1130,24 @@ mod tests {
         let path = dir.path().join("stats.json");
         std::fs::write(&path, "[{\"wpm\": 1").unwrap();
         save_session_to_path(&path, &make_record(50.0, "time-30s", 0)).unwrap();
-        let backup = std::fs::read_to_string(dir.path().join("stats.json.corrupt")).unwrap();
-        assert_eq!(backup, "[{\"wpm\": 1");
+        let backups = || -> Vec<std::path::PathBuf> {
+            std::fs::read_dir(dir.path())
+                .unwrap()
+                .map(|e| e.unwrap().path())
+                .filter(|p| p.to_string_lossy().contains(".corrupt-"))
+                .collect()
+        };
+        let first = backups();
+        assert_eq!(first.len(), 1);
+        assert_eq!(std::fs::read_to_string(&first[0]).unwrap(), "[{\"wpm\": 1");
         assert_eq!(load_sessions_from_path(&path).unwrap().len(), 1);
+
+        // A second corruption gets its own backup; the first one survives.
+        std::thread::sleep(std::time::Duration::from_millis(5));
+        std::fs::write(&path, "garbage").unwrap();
+        save_session_to_path(&path, &make_record(60.0, "time-30s", 0)).unwrap();
+        assert_eq!(backups().len(), 2);
+        assert_eq!(std::fs::read_to_string(&first[0]).unwrap(), "[{\"wpm\": 1");
     }
 
     // ── Atomic writes — crash mid-write must never corrupt history ─────────

@@ -44,11 +44,18 @@ pub fn render(f: &mut Frame, app: &App) {
         dim("  Stats   ~/.typerush/stats.json"),
         dim("  Config  ~/.typerush/config.toml"),
         Line::raw(""),
-        dim("  Esc / ? / F1 / click anywhere to close"),
+        dim("  Esc / ? / F1 / click to close"),
     ];
 
-    let height = lines.len() as u16 + 2;
-    let area = centered(f.area(), 50, height);
+    const WIDTH: u16 = 50;
+    // Narrower than the box, lines wrap and need more rows: take the full
+    // height instead of guessing how many.
+    let height = if f.area().width < WIDTH {
+        f.area().height
+    } else {
+        lines.len() as u16 + 2
+    };
+    let area = centered(f.area(), WIDTH, height);
     f.render_widget(Clear, area);
     let p = Paragraph::new(lines)
         // Plain Line::from(string) entries inherit this fg — otherwise they
@@ -56,6 +63,9 @@ pub fn render(f: &mut Frame, app: &App) {
         // Explicitly-styled spans (titles, dim hints) keep their own colors
         // because Span style overrides Paragraph style.
         .style(Style::default().fg(theme.neutral))
+        // Narrower than 50 columns, the box shrinks: wrap rather than cut
+        // lines off (including the "how to close" line).
+        .wrap(Wrap { trim: false })
         .block(
             Block::default()
                 .borders(Borders::ALL)

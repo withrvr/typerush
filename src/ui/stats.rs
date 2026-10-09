@@ -46,8 +46,18 @@ pub fn render(f: &mut Frame, app: &App) {
     f.render_widget(title, layout[0]);
 
     let sessions: &[storage::SessionRecord] = app.stats_cache.as_deref().unwrap_or(&[]);
+    // Normally built once on screen entry (main loop); computed here only if
+    // something renders Stats without going through it (e.g. tests).
+    let fallback;
+    let summary = match &app.stats_summary {
+        Some(summary) => summary,
+        None => {
+            fallback = storage::StatsSummary::new(sessions);
+            &fallback
+        }
+    };
 
-    render_summary_and_heatmap(f, app, layout[1], sessions);
+    render_summary_and_heatmap(f, app, layout[1], summary);
     render_sparkline(f, app, layout[2], sessions);
     render_sessions_table(f, app, layout[3], sessions);
 
@@ -68,7 +78,7 @@ fn render_summary_and_heatmap(
     f: &mut Frame,
     app: &App,
     area: Rect,
-    sessions: &[storage::SessionRecord],
+    summary: &storage::StatsSummary,
 ) {
     let theme = &app.theme;
 
@@ -77,20 +87,20 @@ fn render_summary_and_heatmap(
 
     // ── Summary card ─────────────────────────────────────────────────────────
 
-    let pb = storage::personal_best(sessions).unwrap_or(0.0);
-    let avg_acc = storage::average_accuracy(sessions).unwrap_or(0.0);
-    let total = sessions.len();
-    let last_wpm = sessions.last().map(|s| s.wpm).unwrap_or(0.0);
+    let pb = summary.personal_best.unwrap_or(0.0);
+    let avg_acc = summary.average_accuracy.unwrap_or(0.0);
+    let total = summary.sessions;
+    let last_wpm = summary.last_wpm.unwrap_or(0.0);
 
-    let streak = storage::streak(sessions);
+    let streak = summary.streak;
     let streak_text = match streak {
         0 => "—".to_string(),
         1 => "1 day".to_string(),
         n => format!("{} days", n),
     };
 
-    let avg7 = storage::avg_wpm_last_n_days(sessions, 7);
-    let avg30 = storage::avg_wpm_last_n_days(sessions, 30);
+    let avg7 = summary.avg_wpm_7_days;
+    let avg30 = summary.avg_wpm_30_days;
 
     let fmt_avg = |v: Option<f64>| match v {
         None => "  —".to_string(),
@@ -155,23 +165,27 @@ fn render_summary_and_heatmap(
             ),
         ]),
     ];
-    let summary = Paragraph::new(summary_lines).block(
+    let summary_card = Paragraph::new(summary_lines).block(
         Block::default()
             .borders(Borders::ALL)
             .border_style(Style::default().fg(theme.pending))
             .title(" summary "),
     );
-    f.render_widget(summary, cols[0]);
+    f.render_widget(summary_card, cols[0]);
 
     // ── Key accuracy heatmap ─────────────────────────────────────────────────
 
-    render_key_heatmap(f, app, cols[1], sessions);
+    render_key_heatmap(f, app, cols[1], &summary.worst_keys);
 }
 
 /// Render the key-accuracy panel (worst keys, sorted by accuracy ascending).
-fn render_key_heatmap(f: &mut Frame, app: &App, area: Rect, sessions: &[storage::SessionRecord]) {
+fn render_key_heatmap(
+    f: &mut Frame,
+    app: &App,
+    area: Rect,
+    worst_keys: &[storage::KeyAccuracyStat],
+) {
     let theme = &app.theme;
-    let worst_keys = storage::key_accuracy(sessions, 3);
 
     if worst_keys.is_empty() {
         let msg = Paragraph::new(vec![

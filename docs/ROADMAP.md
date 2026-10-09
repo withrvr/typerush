@@ -66,7 +66,7 @@ KEY:  ✅ done    🚧 in progress    🔲 planned    💡 idea
 - ✅ Daily streak counter
 - ✅ Average WPM over the last 7 / 30 days
 - ✅ Crash-safe (atomic) stats writes
-- ✅ Stats screens read `stats.json` once per visit (in-memory session cache)
+- ✅ Stats screens never read `stats.json` per frame (in-memory session cache)
 
 ---
 

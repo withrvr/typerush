@@ -21,7 +21,7 @@ use crossterm::event::{KeyCode, KeyModifiers};
 use ratatui::layout::Rect;
 
 use crate::config::load::{CodeLangKind, DefaultMode};
-use crate::storage::SessionRecord;
+use crate::storage::{SessionRecord, StatsSummary};
 use crate::theme::ThemePalette;
 
 /// One of the high-level screens the user can be looking at. The current
@@ -277,9 +277,13 @@ pub struct App {
     pub key_misses: HashMap<char, u64>,
 
     // --- stats caching (v0.3.0) ---
-    /// Full session history, loaded once when the Stats screen is entered and
-    /// invalidated on each session save. `None` until the first Stats visit.
+    /// Full session history, read from disk the first time the Stats or
+    /// Results screen needs it and replaced by the updated list on every
+    /// save. `None` until first needed (or after a failed save).
     pub stats_cache: Option<Vec<SessionRecord>>,
+    /// Summary figures for the Stats screen, computed from `stats_cache`
+    /// each time that screen is entered. `None` until the first Stats visit.
+    pub stats_summary: Option<StatsSummary>,
     /// Whether the session currently shown on the Results screen was actually
     /// written to stats.json. False for Zen, sub-1-second, and zero-keystroke
     /// sessions (and on disk failure) — the Results screen uses this to know
@@ -328,6 +332,7 @@ impl App {
             key_hits: HashMap::new(),
             key_misses: HashMap::new(),
             stats_cache: None,
+            stats_summary: None,
             session_just_saved: false,
             click_targets: RefCell::new(Vec::new()),
         }

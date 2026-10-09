@@ -112,7 +112,7 @@ shows your personal best, average accuracy, a trend sparkline, and your last
 10 runs — plus, as of v0.3:
 
 - 🔥 **Daily streak** — consecutive days you've practiced
-- 📅 **7- and 30-day rolling WPM averages**
+- 📅 **7- and 30-day WPM averages**
 - ⌨️ **Per-key accuracy heatmap** — find the keys that slow you down
 - 🏅 **Per-mode personal bests** — a separate record for `time-30s`, `words-50`, etc.
 

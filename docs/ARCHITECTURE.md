@@ -198,14 +198,20 @@ as empty maps. The aggregation helpers (`streak`, `avg_wpm_last_n_days`,
 ### Read-path performance (v0.3.0)
 
 The Stats and Results screens never touch disk on a frame (the render loop
-runs at 10 fps). **`App::stats_cache: Option<Vec<SessionRecord>>`** holds the
-full history, read from `stats.json` once when the user *enters* the Stats or
-Results screen and reused for every frame of that visit. It's set to `None`
-(invalidated) whenever a session is saved, so the next visit reloads fresh data.
+redraws every 100 ms tick and on every input event, mouse motion included).
 
-Every summary figure — PB, streak, rolling averages, the key-accuracy heatmap —
-is computed from that cached slice, so `stats.json` is the single source of
-truth: deleting or editing it is always reflected on the next visit.
+- **`App::stats_cache: Option<Vec<SessionRecord>>`** holds the full history.
+  It's read from `stats.json` the first time the Stats or Results screen needs
+  it. `storage::save_session_to_path` re-reads the file, appends, writes, and
+  returns the updated list, which replaces the cache — so `stats.json` stays
+  the single source of truth and an outside edit shows up after the next save.
+- **`App::stats_summary: Option<StatsSummary>`** — PB, averages, streak,
+  rolling averages and the key-accuracy list, computed from the cache once
+  each time the Stats screen is entered.
+
+All of this bookkeeping lives in `main.rs::after_input`, which also saves each
+finished game exactly once: the "saved" flag is cleared only when a new game
+starts, so visiting Help from Results can't save the session again.
 
 ### Cross-platform
 crossterm handles Windows Console API, ANSI escape codes, and raw mode in one

@@ -35,9 +35,10 @@ _No unreleased changes yet._
   Streak counts backward from today (or yesterday — the streak is still active
   if you haven't typed yet today). Displayed as "1 day", "N days", or "—" when
   the streak is broken.
-- **Average WPM over the last 7 and 30 days.** Two rolling-window WPM
-  averages appear in the Stats screen summary. Both show "—" when no sessions
-  fall within the window.
+- **Average WPM over the last 7 and 30 days.** Two WPM averages appear in
+  the Stats screen summary, over the last 7 and 30 calendar days in local time
+  (today included — the same day boundaries as the streak). Both show "—" when
+  no sessions fall within the window.
 - **Backward-compatible stats file.** New `key_hits` / `key_misses` fields
   use `#[serde(default)]` so existing `~/.typerush/stats.json` records without
   them load cleanly — no migration needed.
@@ -77,9 +78,10 @@ _No unreleased changes yet._
 ### Performance
 
 - **Stats and Results screens no longer read `stats.json` on every frame.**
-  The session history is loaded once when you enter either screen and cached
-  in memory for the duration of the visit, then invalidated when a new session
-  is saved.
+  The history is read once and kept in memory; each save hands back the
+  updated list, so finishing a session no longer re-reads the file. The Stats
+  summary (streak, averages, key heatmap) is computed once each time the
+  screen opens rather than on every redraw.
 
 ### Fixed
 
@@ -87,11 +89,16 @@ _No unreleased changes yet._
   (e.g. two keys both at 80%) are now broken ties alphabetically, so they no
   longer swap positions and flicker between renders.
 - **Crash-safe stats writes.** `stats.json` is now written atomically (temp
-  file + rename), so a crash or power loss mid-save can never leave a
-  half-written file. Works on Linux, macOS, and Windows.
+  file flushed to disk, then renamed over the old one), so a crash or power
+  loss mid-save can't leave a half-written or empty file. Works on Linux,
+  macOS, and Windows.
 - **A corrupt `stats.json` is no longer silently wiped.** If the file can't be
-  parsed when a session is saved, it is copied to `stats.json.corrupt` before
-  a fresh history is started.
+  parsed when a session is saved, it is copied to a timestamped
+  `stats.json.corrupt-YYYYMMDD-HHMMSS.mmm` before a fresh history is started,
+  so a later corruption can't overwrite an earlier backup.
+- **A session could be saved twice.** Opening help from the Results screen and
+  closing it saved the same session again (and hid the `★ new best!` badge).
+  Each finished game is now saved exactly once.
 - **Accurate Results screen for unsaved sessions.** Sessions that are not
   recorded (Zen mode, shorter than 1 second, or zero keystrokes) no longer
   shift the "vs last" delta by one session, and can no longer flash a

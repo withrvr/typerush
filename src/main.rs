@@ -21,6 +21,7 @@ mod words;
 use std::{
     io::{stdout, Stdout},
     panic,
+    path::Path,
     time::{Duration, Instant},
 };
 
@@ -162,7 +163,8 @@ fn run_app(terminal: &mut Tui, cli: Cli) -> Result<()> {
     let tick_rate = Duration::from_millis(100);
     let mut last_tick = Instant::now();
     let mut last_screen = app.screen;
-    let mut session_saved_for_this_results_screen = false;
+    let mut session_saved = false;
+    let stats_file = storage::stats_path();
 
     loop {
         terminal.draw(|frame| ui::render(frame, &app))?;
@@ -197,28 +199,7 @@ fn run_app(terminal: &mut Tui, cli: Cli) -> Result<()> {
             last_tick = Instant::now();
         }
 
-        // Save the session exactly once on the transition INTO the Results screen.
-        if app.screen == Screen::Results
-            && last_screen != Screen::Results
-            && !session_saved_for_this_results_screen
-        {
-            save_current_session(&mut app);
-            session_saved_for_this_results_screen = true;
-        }
-        if app.screen != Screen::Results {
-            session_saved_for_this_results_screen = false;
-        }
-
-        // Populate the session cache once when entering the Stats or Results
-        // screen so the render path never reads stats.json on every frame.
-        // (On Results entry this runs *after* the save above, so the cache
-        // includes the session that was just recorded.)
-        if (app.screen == Screen::Stats || app.screen == Screen::Results)
-            && last_screen != app.screen
-        {
-            app.stats_cache = storage::load_sessions().ok();
-        }
-
+        after_input(&mut app, last_screen, &mut session_saved, &stats_file);
         last_screen = app.screen;
 
         if app.should_quit {
@@ -442,6 +423,34 @@ fn handle_stats_key(app: &mut App, code: KeyCode, _mods: KeyModifiers) {
     }
 }
 
+/// Bookkeeping after each round of input, driven by which screen we are on.
+/// `stats_file` is the history file (a temp file in tests).
+fn after_input(app: &mut App, last_screen: Screen, session_saved: &mut bool, stats_file: &Path) {
+    // Save each finished game exactly once. The flag is cleared only when a
+    // new game starts, so leaving Results for the Help overlay (or an error
+    // modal) and coming back can't save the same session again.
+    if app.screen == Screen::Results && !*session_saved {
+        save_current_session(app, stats_file);
+        *session_saved = true;
+    }
+    if app.screen == Screen::Typing {
+        *session_saved = false;
+    }
+
+    // History is read from disk once; every save hands back the updated list,
+    // so the cache stays current without re-reading the file. The render path
+    // never touches disk.
+    if matches!(app.screen, Screen::Stats | Screen::Results) && app.stats_cache.is_none() {
+        app.stats_cache = Some(storage::load_sessions_from_path(stats_file).unwrap_or_default());
+    }
+    // The Stats summary (streak, averages, key heatmap) is computed once per
+    // visit instead of on every frame.
+    if app.screen == Screen::Stats && last_screen != Screen::Stats {
+        let sessions = app.stats_cache.as_deref().unwrap_or(&[]);
+        app.stats_summary = Some(storage::StatsSummary::new(sessions));
+    }
+}
+
 /// Persist the just-finished session to `~/.typerush/stats.json`.
 ///
 /// Sessions are skipped when:
@@ -451,7 +460,7 @@ fn handle_stats_key(app: &mut App, code: KeyCode, _mods: KeyModifiers) {
 ///
 /// File I/O errors are intentionally swallowed — losing a stat row is never a
 /// good reason to crash on the user.
-fn save_current_session(app: &mut App) {
+fn save_current_session(app: &mut App, stats_file: &Path) {
     // Assume not saved until the disk write succeeds; the Results screen
     // reads this to know whether the last history entry is this session.
     app.session_just_saved = false;
@@ -482,9 +491,14 @@ fn save_current_session(app: &mut App) {
             .map(|(k, v)| (k.to_string(), *v))
             .collect(),
     };
-    app.session_just_saved = storage::save_session(&record).is_ok();
-    // Invalidate the session cache so the next Stats screen visit reloads fresh data.
-    app.stats_cache = None;
+    match storage::save_session_to_path(stats_file, &record) {
+        Ok(history) => {
+            app.stats_cache = Some(history);
+            app.session_just_saved = true;
+        }
+        // Disk state unknown: drop the cache so the next visit re-reads it.
+        Err(_) => app.stats_cache = None,
+    }
 }
 
 #[cfg(test)]
@@ -658,5 +672,55 @@ mod tests {
         assert_eq!(app.menu[app.menu_index].group, "words");
         handle_mouse(&mut app, mouse(MouseEventKind::ScrollUp, (0, 0)));
         assert_eq!(app.menu[app.menu_index].group, "time");
+    }
+
+    // ── saving ───────────────────────────────────────────────────────────────
+
+    /// Regression: opening help from Results and closing it used to save the
+    /// same session a second time (the flag reset on any screen change).
+    #[test]
+    fn help_detour_from_results_does_not_save_twice() {
+        let dir = tempfile::tempdir().unwrap();
+        let stats_file = dir.path().join("stats.json");
+        let mut app = make_typing_app();
+        let mut saved = false;
+        let mut last = app.screen;
+        let mut step = |app: &mut App| {
+            after_input(app, last, &mut saved, &stats_file);
+            last = app.screen;
+        };
+        step(&mut app);
+
+        app.started_at = Some(std::time::Instant::now() - Duration::from_secs(5));
+        for ch in "hello world".chars() {
+            app.handle_char(ch);
+        }
+        assert_eq!(app.screen, Screen::Results);
+        step(&mut app);
+        assert!(app.session_just_saved);
+
+        handle_key(&mut app, KeyCode::F(1), KeyModifiers::NONE); // open help
+        step(&mut app);
+        handle_key(&mut app, KeyCode::Esc, KeyModifiers::NONE); // close it
+        step(&mut app);
+        assert_eq!(app.screen, Screen::Results);
+
+        let history = storage::load_sessions_from_path(&stats_file).unwrap();
+        assert_eq!(history.len(), 1);
+        assert_eq!(app.stats_cache.as_ref().map(Vec::len), Some(1));
+
+        // A new game is saved again as normal.
+        handle_key(&mut app, KeyCode::Enter, KeyModifiers::NONE); // restart
+        step(&mut app);
+        app.started_at = Some(std::time::Instant::now() - Duration::from_secs(5));
+        app.words = vec![Word::new("hi".into())];
+        app.mode = Mode::Words(1);
+        app.handle_char('h');
+        app.handle_char('i');
+        step(&mut app);
+        assert_eq!(
+            storage::load_sessions_from_path(&stats_file).unwrap().len(),
+            2
+        );
     }
 }
