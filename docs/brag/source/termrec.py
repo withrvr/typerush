@@ -4,7 +4,7 @@ Usage: termrec.py <out.json> <scene> -- <typerush args...>
 
 Scenes:
   probe   start, wait 1.5s, print the screen as text and exit
-  menu    show the menu, move down/up through the modes
+  menu    show the menu, move down/up through the rows (j/k)
   typing  read the words off the screen and type them (per-char delay from
           REC_DELAY="lo,hi" seconds) with one corrected typo, then stay on the
           results screen

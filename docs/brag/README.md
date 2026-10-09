@@ -11,6 +11,8 @@
 
 Every terminal frame is the real `typerush` binary, built from this repo. It ran in a pseudo-terminal, and a headless emulator ([pyte](https://github.com/selectel/pyte)) recorded it cell by cell. A script plays the typist: it reads the words off the screen and types them at about 100 WPM, with one corrected typo. All the WPM, accuracy, results and stats figures are what the app itself printed.
 
+The footage was recorded from **v0.2.0**. v0.3.0 later grouped the menu by category and added the per-key heatmap, streak and rolling averages to the Stats screen, so the menu and stats scenes show the older screens. The scripts in `source/` still drive v0.3.0 (`j`/`k` and `Tab` work the same), so re-running them refreshes the footage.
+
 Five shorter practice runs were recorded first, so the trend chart shows a real climb instead of a single bar. ANSI colours are drawn with the Catppuccin Mocha palette, the same theme as `assets/vhs_auto_made_gif/demo.tape`. The `monokai`, `dracula` and `light` scenes use those themes' own hex colours.
 
 ## Rebuild it
