@@ -36,6 +36,10 @@ straight from the menu.
   quotes and brackets to about a quarter of random words; `--numbers` mixes
   in 1–4 digit numbers. Also `punctuation = true` / `numbers = true` under
   `[words]`. They apply to time and words modes; zen stays plain.
+- **Separate personal bests for harder settings.** A time or words run with
+  `--big`, `--punctuation` or `--numbers` is saved under its own label —
+  `time-30s+10k`, `words-50+p+n`, … — so it never competes with plain runs.
+  Plain runs keep their usual labels.
 - **Snippet library.** Every `.txt` file in `~/.typerush/snippets/` (any
   capitalisation of `.txt`) is an option in the menu's new `custom` row,
   sorted by name. `--list-snippets` prints them as `name<TAB>path`.
@@ -57,6 +61,8 @@ straight from the menu.
 - Custom-file errors name the file (`can't read /home/you/notes.txt: No such file or
   directory`, `notes.txt is empty`) instead of a bare OS error.
 - The help overlay shows where snippets go.
+- The Stats screen's Mode column is two cells wider, to fit labels such as
+  `words-100+10k+p+n`.
 
 ### Fixed
 
@@ -69,7 +75,8 @@ straight from the menu.
   before; the new flags and config keys are additive. `--file` now accepts
   any path your OS allows.
 - `stats.json` is unchanged and old records load as before. Saved personal
-  bests keep their mode labels (`code-javascript` included).
+  bests keep their mode labels (`code-javascript` included); only runs with
+  the new word settings get a suffix.
 - `state.json` is new and optional; it is written atomically, like
   `stats.json`, and a missing or corrupt one is simply ignored.
 

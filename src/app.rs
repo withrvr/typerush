@@ -267,9 +267,7 @@ pub fn build_menu(snippets: &[Snippet], last_custom_file: Option<&Path>) -> Vec<
         // only match when literally equal.
         let last_canonical = std::fs::canonicalize(last).ok();
         let is_snippet = snippets.iter().any(|s| {
-            s.path == last
-                || (last_canonical.is_some()
-                    && std::fs::canonicalize(&s.path).ok() == last_canonical)
+            s.path == last || (last_canonical.is_some() && s.canonical_path == last_canonical)
         });
         if !is_snippet {
             let name = last.file_name().map_or_else(
@@ -463,6 +461,27 @@ impl App {
         }
     }
 
+    /// The label this session is saved, compared and shown under: the mode
+    /// label, plus a suffix for each setting that makes time / words harder —
+    /// `+10k` (extended pool), `+p` (punctuation), `+n` (numbers). A harder
+    /// run therefore never competes with plain runs for a personal best.
+    /// Plain runs, and every other mode, keep exactly their v0.3 labels.
+    pub fn session_label(&self) -> String {
+        let mut label = self.mode.label();
+        if matches!(self.mode, Mode::Time(_) | Mode::Words(_)) {
+            if self.word_pool == WordPool::Extended {
+                label.push_str("+10k");
+            }
+            if self.word_decor.punctuation {
+                label.push_str("+p");
+            }
+            if self.word_decor.numbers {
+                label.push_str("+n");
+            }
+        }
+        label
+    }
+
     /// Choose the English pool and decoration for Time / Words / Zen.
     pub fn set_word_source(&mut self, pool: WordPool, decor: WordDecor) {
         self.word_pool = pool;
@@ -558,11 +577,18 @@ impl App {
         if self.app_state.last_custom_file.as_deref() == Some(text) {
             return;
         }
-        self.app_state.last_custom_file = Some(text.to_string());
-        self.custom_file = Some(absolute);
-        if let Some(file) = &self.state_file {
-            let _ = state::save_to_path(file, &self.app_state);
+        let mut updated = self.app_state.clone();
+        updated.last_custom_file = Some(text.to_string());
+        // Only count the file as remembered once it is on disk, so a failed
+        // write (disk full, read-only home) is retried the next time it starts.
+        let saved = match &self.state_file {
+            Some(file) => state::save_to_path(file, &updated).is_ok(),
+            None => true,
+        };
+        if saved {
+            self.app_state = updated;
         }
+        self.custom_file = Some(absolute);
         self.rebuild_menu();
     }
 
@@ -679,7 +705,7 @@ impl App {
             Mode::Code(lang) => words::random_code_snippet(lang),
             // Zen stays calm: the chosen pool, but never decoration.
             Mode::Zen => words::random_words_from(500, pool, WordDecor::default()),
-            Mode::Symbols(count) => words::random_symbol_tokens(count),
+            Mode::Symbols(count) => words::symbols::random_symbol_tokens(count),
             Mode::Custom => {
                 let Some(path) = &self.custom_file else {
                     return Err(anyhow::anyhow!(
@@ -1103,6 +1129,7 @@ mod tests {
         Snippet {
             name: name.into(),
             path: PathBuf::from(path),
+            canonical_path: None,
         }
     }
 
@@ -1322,6 +1349,82 @@ mod tests {
         assert!(stored.ends_with("relative-notes.txt"));
         let already = std::env::current_dir().unwrap().join("x.txt");
         assert_eq!(absolute(already.clone()), already);
+    }
+
+    /// A state.json write that fails isn't treated as saved: the next start
+    /// of the same file tries again (and succeeds once the disk is fine).
+    #[test]
+    fn failed_state_save_is_retried() {
+        let dir = tempfile::tempdir().unwrap();
+        let file = dir.path().join("notes.txt");
+        std::fs::write(&file, "type me").unwrap();
+        // A regular file where the state directory should be: the write fails.
+        let blocker = dir.path().join("blocker");
+        std::fs::write(&blocker, "").unwrap();
+        let mut app = menu_app();
+        app.load_custom_sources(
+            Vec::new(),
+            AppState::default(),
+            Some(blocker.join("state.json")),
+        );
+        app.start_custom(Some(file.clone())).unwrap();
+        assert!(app.app_state.last_custom_file.is_none());
+        // The file is still offered for this run.
+        assert_eq!(custom_options(&app.menu)[0].1, Some(file.as_path()));
+
+        let state_file = dir.path().join("state.json");
+        app.state_file = Some(state_file.clone());
+        app.start_custom(Some(file.clone())).unwrap();
+        assert_eq!(
+            state::load_from_path(&state_file)
+                .last_custom_file
+                .as_deref(),
+            file.to_str()
+        );
+    }
+
+    /// A single snippet named `custom.txt` still gets the `custom` heading
+    /// and opens the file — it isn't mistaken for the placeholder.
+    #[test]
+    fn snippet_named_custom_is_a_real_option() {
+        let menu = build_menu(&[snippet("custom", "/s/custom.txt")], None);
+        assert_eq!(
+            custom_options(&menu),
+            [("custom", Some(Path::new("/s/custom.txt")))]
+        );
+    }
+
+    /// Decorated time / words runs are saved under their own label, so they
+    /// never compete with plain runs for a personal best. Plain labels and
+    /// all other modes are unchanged.
+    #[test]
+    fn session_label_marks_harder_word_settings() {
+        let mut app = menu_app();
+        app.mode = Mode::Time(30);
+        assert_eq!(app.session_label(), "time-30s");
+        app.set_word_source(
+            WordPool::Extended,
+            WordDecor {
+                punctuation: true,
+                numbers: true,
+            },
+        );
+        assert_eq!(app.session_label(), "time-30s+10k+p+n");
+        app.mode = Mode::Words(100);
+        assert_eq!(app.session_label(), "words-100+10k+p+n");
+        app.set_word_source(
+            WordPool::Common,
+            WordDecor {
+                punctuation: false,
+                numbers: true,
+            },
+        );
+        assert_eq!(app.session_label(), "words-100+n");
+        // Settings that don't apply to a mode don't change its label.
+        for mode in [Mode::Quote, Mode::Symbols(25), Mode::Custom] {
+            app.mode = mode;
+            assert_eq!(app.session_label(), mode.label());
+        }
     }
 
     /// Rebuilding the menu keeps a highlight on quit on quit — stats and

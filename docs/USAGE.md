@@ -223,6 +223,8 @@ Open the Stats screen from the menu (`Tab`) or results screen (`s`).
 On the **Results screen**, the "best" line now shows your personal best
 specifically for the mode you just finished (a `mode best` row under the `mode` row).
 A `★ new best!` badge appears when you beat your previous record for that mode.
+Time and words runs with `--big`, `--punctuation` or `--numbers` count as
+their own modes (`time-30s+p`, …) — see [Words](#words).
 
 ---
 
@@ -301,6 +303,10 @@ numbers = true           # 1–4 digit numbers mixed in (~1 word in 8)
 ```
 
 `--big`, `--punctuation` and `--numbers` turn these on for one run.
+
+Runs with any of these settings keep their own personal bests: the mode label
+gets `+10k`, `+p` and/or `+n` (`time-30s+p`, `words-50+10k+p+n`), so a
+harder run is only ever compared with runs played the same way.
 
 ### Precedence
 

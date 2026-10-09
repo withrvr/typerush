@@ -315,7 +315,7 @@ fn render_sessions_table(
         recent_rows,
         [
             Constraint::Length(18),
-            Constraint::Length(16), // fits "code-javascript"
+            Constraint::Length(18), // fits "words-100+10k+p+n"
             Constraint::Length(8),
             Constraint::Length(8),
             Constraint::Length(8),

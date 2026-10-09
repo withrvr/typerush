@@ -14,7 +14,7 @@
 //! time_seconds = 15             # default duration for time mode
 //! word_count = 25               # default count for words mode
 //! code_lang = "rust"            # rust | python | js | go | java | sql | shell
-//! symbol_count = 25             # default token count for symbols mode (v0.4.0)
+//! symbol_count = 25             # symbols option to pre-select: 25 | 50 (v0.4.0)
 //!
 //! [words]                       # v0.4.0 — English pool + decoration toggles
 //! pool = "common"               # "common" (default, ~430 frequent words) | "extended" (10k)
@@ -63,7 +63,8 @@ pub struct Defaults {
     /// Language for `Mode::Code`: `rust` | `python` | `js` | `go` | `java`
     /// | `sql` | `shell`.
     pub code_lang: Option<String>,
-    /// Token count for `Mode::Symbols` (v0.4.0).
+    /// Which symbols option to pre-select (25 / 50), like `word_count` does
+    /// for words (v0.4.0).
     pub symbol_count: Option<usize>,
 }
 

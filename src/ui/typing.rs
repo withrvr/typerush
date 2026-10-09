@@ -76,7 +76,7 @@ fn render_header(f: &mut Frame, app: &App, area: Rect) {
             Span::styled(timer_text, Style::default().fg(theme.accent)),
             Span::raw("   "),
             Span::styled(
-                format!("[{}]", app.mode.label()),
+                format!("[{}]", app.session_label()),
                 Style::default().fg(theme.mode_tag),
             ),
         ])

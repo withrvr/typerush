@@ -87,10 +87,10 @@ pub fn render(f: &mut Frame, app: &App) {
     let mut selected_line = 0;
     let mut previous_row: Option<std::ops::Range<usize>> = None;
     // A row gets a heading line when it has several options, or when its one
-    // option isn't just the category name (a single custom file or snippet).
-    let has_heading = |row: &std::ops::Range<usize>| {
-        row.len() > 1 || app.menu[row.start].label != app.menu[row.start].group
-    };
+    // option is a file (a single custom file or snippet — even one named
+    // `custom.txt` must not look like the bare "nothing yet" placeholder).
+    let has_heading =
+        |row: &std::ops::Range<usize>| row.len() > 1 || app.menu[row.start].custom_path.is_some();
     let mut start = 0;
     while start < app.menu.len() {
         let row = menu_row(&app.menu, start);

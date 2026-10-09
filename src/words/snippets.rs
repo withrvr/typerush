@@ -1,13 +1,11 @@
 //! User snippet library at `~/.typerush/snippets/`.
 //!
-//! Any `.txt` file in that directory becomes a selectable item in the main
-//! menu under the "Snippets" group. The file's stem (filename without
-//! extension) is shown as the row label; its contents are loaded as the word
-//! source when selected.
+//! Every `.txt` file in that directory (any capitalisation of the extension)
+//! becomes an option in the main menu's `custom` row, labelled with the file
+//! name minus the extension; picking it types the file.
 //!
-//! Discovery is **lazy and best-effort**: a missing directory or unreadable
-//! file is silently treated as "no snippets". The menu falls back to the
-//! built-in modes either way.
+//! Discovery is best-effort: a missing directory or an unreadable entry just
+//! means fewer snippets, never an error.
 
 use std::path::{Path, PathBuf};
 
@@ -16,10 +14,15 @@ use crate::storage;
 /// One discovered user snippet.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Snippet {
-    /// Display label — the filename without extension.
+    /// Menu label: the file name without `.txt`, or the full file name when
+    /// two snippets would otherwise share a label.
     pub name: String,
-    /// Absolute path to the underlying `.txt` file.
+    /// Path to the `.txt` file.
     pub path: PathBuf,
+    /// `path` canonicalized once at discovery (`None` if that failed), so the
+    /// menu can match it against the remembered file without touching disk
+    /// on every rebuild.
+    pub canonical_path: Option<PathBuf>,
 }
 
 /// Directory we scan for user snippets: `~/.typerush/snippets/`.
@@ -27,49 +30,67 @@ pub fn snippets_dir() -> PathBuf {
     storage::data_dir().join("snippets")
 }
 
-/// Return every `.txt` snippet in `~/.typerush/snippets/`, sorted by name.
-///
-/// Best-effort: a missing directory returns an empty vec; unreadable entries
-/// are silently skipped. The result is stable across runs (alphabetical) so
-/// menu indices don't shuffle between launches.
+/// Every `.txt` snippet in `~/.typerush/snippets/`, in name order.
 pub fn discover_snippets() -> Vec<Snippet> {
     discover_in(&snippets_dir())
 }
 
-/// Path-based variant of [`discover_snippets`]. Used by tests so they can
-/// point at a temp directory without touching the user's real home.
+/// Every `.txt` snippet in `dir`, sorted by name ignoring case, so the menu
+/// order is the same on every launch and on every platform.
 pub fn discover_in(dir: &Path) -> Vec<Snippet> {
     let Ok(entries) = std::fs::read_dir(dir) else {
         return vec![];
     };
     let mut found: Vec<Snippet> = entries
-        .filter_map(|e| e.ok())
-        .filter_map(|e| {
-            let path = e.path();
-            // Case-insensitive `.txt` match so `NOTES.TXT` on
-            // case-preserving filesystems (Windows, macOS default) is picked
-            // up too — otherwise users on those platforms would drop a file
-            // in the snippets dir and see nothing appear.
+        .filter_map(Result::ok)
+        .filter_map(|entry| {
+            let path = entry.path();
+            // `NOTES.TXT` counts too: Windows and macOS keep whatever case
+            // the file was created with.
             let is_txt = path
                 .extension()
-                .and_then(|s| s.to_str())
-                .map(|s| s.eq_ignore_ascii_case("txt"))
-                .unwrap_or(false);
-            if path.is_file() && is_txt {
-                let name = path
-                    .file_stem()
-                    .and_then(|s| s.to_str())
-                    .map(|s| s.to_string())?;
-                if name.is_empty() {
-                    return None;
-                }
-                Some(Snippet { name, path })
-            } else {
-                None
+                .and_then(|ext| ext.to_str())
+                .is_some_and(|ext| ext.eq_ignore_ascii_case("txt"));
+            if !is_txt || !path.is_file() {
+                return None;
             }
+            let name = path.file_stem()?.to_str()?.to_string();
+            if name.is_empty() {
+                return None;
+            }
+            let canonical_path = std::fs::canonicalize(&path).ok();
+            Some(Snippet {
+                name,
+                path,
+                canonical_path,
+            })
         })
         .collect();
-    found.sort_by(|a, b| a.name.cmp(&b.name));
+
+    // "apple, mango, Zebra" rather than byte order's "Zebra, apple, mango";
+    // ties are broken by exact name, then path, so the order never varies.
+    found.sort_by(|a, b| {
+        a.name
+            .to_lowercase()
+            .cmp(&b.name.to_lowercase())
+            .then_with(|| a.name.cmp(&b.name))
+            .then_with(|| a.path.cmp(&b.path))
+    });
+
+    // `notes.txt` and `notes.TXT` can both exist on a case-sensitive
+    // filesystem: label those with their full file names so the two options
+    // can be told apart.
+    let clashes: Vec<bool> = found
+        .iter()
+        .map(|s| found.iter().filter(|other| other.name == s.name).count() > 1)
+        .collect();
+    for (snippet, clash) in found.iter_mut().zip(clashes) {
+        if clash {
+            if let Some(file_name) = snippet.path.file_name() {
+                snippet.name = file_name.to_string_lossy().into_owned();
+            }
+        }
+    }
     found
 }
 
@@ -123,6 +144,46 @@ mod tests {
         let snippets = discover_in(dir.path());
         assert_eq!(snippets.len(), 1);
         assert_eq!(snippets[0].name, "real");
+    }
+
+    #[test]
+    fn order_ignores_case() {
+        let dir = tempfile::tempdir().unwrap();
+        for name in ["Zebra.txt", "apple.txt", "mango.txt"] {
+            fs::write(dir.path().join(name), "x").unwrap();
+        }
+        let names: Vec<String> = discover_in(dir.path())
+            .into_iter()
+            .map(|s| s.name)
+            .collect();
+        assert_eq!(names, ["apple", "mango", "Zebra"]);
+    }
+
+    /// Two files that differ only in the case of `.txt` can coexist on a
+    /// case-sensitive filesystem (Linux); their labels must differ.
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn same_name_different_extension_case_gets_full_names() {
+        let dir = tempfile::tempdir().unwrap();
+        fs::write(dir.path().join("notes.txt"), "a").unwrap();
+        fs::write(dir.path().join("notes.TXT"), "b").unwrap();
+        fs::write(dir.path().join("other.txt"), "c").unwrap();
+        let names: Vec<String> = discover_in(dir.path())
+            .into_iter()
+            .map(|s| s.name)
+            .collect();
+        assert_eq!(names, ["notes.TXT", "notes.txt", "other"]);
+    }
+
+    #[test]
+    fn canonical_path_is_recorded() {
+        let dir = tempfile::tempdir().unwrap();
+        fs::write(dir.path().join("a.txt"), "x").unwrap();
+        let snippet = &discover_in(dir.path())[0];
+        assert_eq!(
+            snippet.canonical_path,
+            Some(fs::canonicalize(&snippet.path).unwrap())
+        );
     }
 
     /// Case-preserving filesystems (Windows, macOS default) present `.TXT`

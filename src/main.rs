@@ -544,7 +544,7 @@ fn after_input(app: &mut App, last_screen: Screen, session_saved: &mut bool, sta
         app.results_comparison = Some(storage::ResultsComparison::new(
             sessions,
             app.session_just_saved,
-            &app.mode.label(),
+            &app.session_label(),
         ));
     }
     if app.screen == Screen::Stats && last_screen != Screen::Stats {
@@ -576,7 +576,7 @@ fn save_current_session(app: &mut App, stats_file: &Path) {
     let record = SessionRecord {
         wpm: app.wpm(),
         accuracy: app.accuracy(),
-        mode: app.mode.label(),
+        mode: app.session_label(),
         word_count: app.current_word,
         correct_chars: app.correct_chars,
         total_chars: app.total_typed_chars,

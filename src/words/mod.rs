@@ -125,11 +125,6 @@ pub fn random_code_snippet(lang: CodeLang) -> Vec<String> {
     snippet.split_whitespace().map(|s| s.to_string()).collect()
 }
 
-/// Pick `count` programming-symbol tokens for the symbols-mode session.
-pub fn random_symbol_tokens(count: usize) -> Vec<String> {
-    symbols::random_symbol_tokens(count)
-}
-
 /// Source language for `Mode::Code`. Determines which snippet pool we sample.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum CodeLang {
