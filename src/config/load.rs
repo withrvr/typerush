@@ -81,25 +81,19 @@ pub fn config_path() -> PathBuf {
     storage::data_dir().join("config.toml")
 }
 
-/// Read and resolve the config from disk. Always succeeds:
-///
-///   - missing file        → defaults, no warnings
-///   - unparseable file    → defaults, one warning
-///   - unknown theme name  → fall back to dark, one warning
-///   - bad color override  → keep the theme's slot, one warning per bad slot
-///
-/// CLI overrides that should take precedence over whatever the config file
-/// says. Anything set to `None` falls through to the config value (or its
-/// hardcoded default).
+/// CLI settings that take precedence over the config file. `None` falls
+/// through to the config value (or its built-in default). The switches only
+/// ever turn something on, like `--theme` picks a theme: there is no flag to
+/// turn off a decoration the config enabled.
 #[derive(Debug, Default, Clone)]
 pub struct CliOverrides<'a> {
     /// `--theme <name>`.
     pub theme: Option<&'a str>,
     /// `--big` → `Some(WordPool::Extended)`.
     pub word_pool: Option<WordPool>,
-    /// `--punctuation` → `Some(true)`; `--no-punctuation` → `Some(false)`.
+    /// `--punctuation` → `Some(true)`.
     pub punctuation: Option<bool>,
-    /// `--numbers` → `Some(true)`; `--no-numbers` → `Some(false)`.
+    /// `--numbers` → `Some(true)`.
     pub numbers: Option<bool>,
 }
 
@@ -266,12 +260,24 @@ fn resolve_default_mode(
         "time" => DefaultMode::Time(defaults.time_seconds.unwrap_or(15)),
         "words" => DefaultMode::Words(defaults.word_count.unwrap_or(25)),
         "quote" => DefaultMode::Quote,
-        "code" => DefaultMode::Code(parse_code_lang(
-            defaults.code_lang.as_deref().unwrap_or("rust"),
-            warnings,
-        )),
+        "code" => {
+            let name = defaults.code_lang.as_deref().unwrap_or("rust");
+            DefaultMode::Code(code_lang_kind(name).unwrap_or_else(|| {
+                warnings.push(format!(
+                    "unknown code_lang '{}', falling back to 'rust'",
+                    name.to_lowercase()
+                ));
+                CodeLangKind::Rust
+            }))
+        }
         "zen" => DefaultMode::Zen,
-        "symbols" => DefaultMode::Symbols(defaults.symbol_count.unwrap_or(25)),
+        "symbols" => DefaultMode::Symbols(match defaults.symbol_count {
+            Some(0) => {
+                warnings.push("symbol_count must be at least 1, using 25".to_string());
+                25
+            }
+            count => count.unwrap_or(25),
+        }),
         other => {
             warnings.push(format!(
                 "unknown default mode '{}', falling back to 'time'",
@@ -282,11 +288,11 @@ fn resolve_default_mode(
     }
 }
 
-/// Parse a code-lang config value into the canonical [`CodeLangKind`].
-/// Public so the CLI parser in `main.rs` can use the same accepted-alias
-/// table and warning style.
-pub fn parse_code_lang(name: &str, warnings: &mut Vec<String>) -> CodeLangKind {
-    match name.to_lowercase().as_str() {
+/// The code-language names accepted by both `code_lang` in the config and
+/// `--code` on the command line (case-insensitive). `None` for anything else;
+/// each caller decides what an unknown name means (a warning vs an error).
+pub fn code_lang_kind(name: &str) -> Option<CodeLangKind> {
+    Some(match name.to_lowercase().as_str() {
         "rust" | "rs" => CodeLangKind::Rust,
         "python" | "py" => CodeLangKind::Python,
         "js" | "javascript" => CodeLangKind::JavaScript,
@@ -294,14 +300,8 @@ pub fn parse_code_lang(name: &str, warnings: &mut Vec<String>) -> CodeLangKind {
         "java" => CodeLangKind::Java,
         "sql" => CodeLangKind::Sql,
         "shell" | "sh" | "bash" => CodeLangKind::Shell,
-        other => {
-            warnings.push(format!(
-                "unknown code_lang '{}', falling back to 'rust'",
-                other
-            ));
-            CodeLangKind::Rust
-        }
-    }
+        _ => return None,
+    })
 }
 
 #[cfg(test)]
@@ -489,6 +489,33 @@ mod tests {
         let (resolved, warnings) = resolve(raw, None);
         assert!(warnings.is_empty());
         assert_eq!(resolved.default_mode, DefaultMode::Symbols(40));
+    }
+
+    /// Zero tokens would be a session with nothing to type (the CLI rejects
+    /// `--symbols 0` for the same reason): warn and use the default.
+    #[test]
+    fn symbols_count_zero_warns_and_uses_default() {
+        use crate::config::Defaults;
+        let raw = Config {
+            defaults: Some(Defaults {
+                mode: Some("symbols".into()),
+                symbol_count: Some(0),
+                ..Default::default()
+            }),
+            ..Default::default()
+        };
+        let (resolved, warnings) = resolve(raw, None);
+        assert_eq!(resolved.default_mode, DefaultMode::Symbols(25));
+        assert_eq!(warnings.len(), 1);
+        assert!(warnings[0].contains("symbol_count"));
+    }
+
+    #[test]
+    fn code_lang_kind_is_case_insensitive_and_rejects_unknown() {
+        assert_eq!(code_lang_kind("GoLang"), Some(CodeLangKind::Go));
+        assert_eq!(code_lang_kind("BASH"), Some(CodeLangKind::Shell));
+        assert_eq!(code_lang_kind("cobol"), None);
+        assert_eq!(code_lang_kind(""), None);
     }
 
     #[test]

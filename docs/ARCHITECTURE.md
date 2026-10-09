@@ -131,7 +131,8 @@ flowchart LR
     config --> load["load.rs
     load_or_default_with(CliOverrides): never errors,
     bad files become one human-readable warning;
-    parse_code_lang shared with --code"]
+    code_lang_kind: one name table for
+    code_lang and --code"]
     src --> ui["ui/"]
     ui --> ui_mod["mod.rs
     render() dispatcher, background paint,
@@ -243,12 +244,13 @@ hands both to `App::load_custom_sources` together with the path to save to.
 Tests leave that path `None`, so they can never write to a real home
 directory.
 
-Starting a custom file is two steps on purpose: `set_custom_file` stages the
-path in memory, and `persist_custom_file` saves it only after `start_game`
-succeeded — a path that fails to load never replaces a working remembered
-one. The saved path is made absolute so it works from any directory.
-`start_game` builds the word list before changing any state, so a failed load
-leaves the app exactly as it was.
+Every custom start goes through `App::start_custom(path)`: it sets
+`custom_file`, calls `start_game`, and only then saves the file to
+`state.json` and the menu. If the file fails to load, `custom_file` is put
+back, so neither a restart nor the remembered file ever points at the file
+that failed. `start_game` builds the word list before changing any state, so
+the screen, mode and words are untouched too. The saved path is made absolute
+so it works from any directory.
 
 ### Cross-platform
 crossterm handles Windows Console API, ANSI escape codes, and raw mode in one
@@ -290,9 +292,8 @@ crate. We don't directly use any platform-specific code, so the binary is a
 1. Add a variant to `CodeLang` (`src/words/mod.rs`) and a snippet pool in
    `src/words/quotes.rs`; match it in `random_code_snippet`.
 2. Add the `CodeLangKind` mirror (`src/config/load.rs`), its names in
-   `parse_code_lang` (this one table serves both `code_lang` and `--code`),
-   and the arm in `mode_for` (`src/app.rs`) and `code_lang_from_cli`
-   (`src/main.rs`).
+   `code_lang_kind` (this one table serves both `code_lang` and `--code`),
+   and the arm in `impl From<CodeLangKind> for CodeLang` (`src/app.rs`).
 3. Add a `start("code", …)` entry to `build_menu()`.
 
 ---

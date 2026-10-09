@@ -39,7 +39,7 @@ use crossterm::{
 use ratatui::{backend::CrosstermBackend, Terminal};
 
 use crate::app::{App, ClickAction, MenuAction, Mode, Screen};
-use crate::config::load::{parse_code_lang, CliOverrides, CodeLangKind};
+use crate::config::load::{code_lang_kind, CliOverrides};
 use crate::storage::SessionRecord;
 use crate::theme::builtin;
 use crate::words::{CodeLang, WordPool};
@@ -291,32 +291,18 @@ fn apply_cli_autostart(app: &mut App, cli: &Cli) -> Result<()> {
     } else if let Some(count) = cli.symbols {
         app.start_game(Mode::Symbols(count))?;
     } else if cli.file.is_some() {
-        // `App::new` already staged the file; remember it only once it loaded.
-        app.start_game(Mode::Custom)?;
-        app.persist_custom_file();
+        // `App::new` already holds the file; this starts and remembers it.
+        app.start_custom(None)?;
     }
     Ok(())
 }
 
 /// `--code <name>`: the same names and aliases as `code_lang` in the config
-/// (one table, in `config::load::parse_code_lang`), but an unknown name is an
+/// (one table, `config::load::code_lang_kind`), but an unknown name is an
 /// error here rather than a fall-back-with-warning.
 fn code_lang_from_cli(name: &str) -> Result<CodeLang> {
-    let mut warnings = Vec::new();
-    let kind = parse_code_lang(name, &mut warnings);
-    if !warnings.is_empty() {
-        return Err(anyhow::anyhow!(
-            "unknown code lang: {name} (try rust, python, js, go, java, sql, shell)"
-        ));
-    }
-    Ok(match kind {
-        CodeLangKind::Rust => CodeLang::Rust,
-        CodeLangKind::Python => CodeLang::Python,
-        CodeLangKind::JavaScript => CodeLang::JavaScript,
-        CodeLangKind::Go => CodeLang::Go,
-        CodeLangKind::Java => CodeLang::Java,
-        CodeLangKind::Sql => CodeLang::Sql,
-        CodeLangKind::Shell => CodeLang::Shell,
+    code_lang_kind(name).map(CodeLang::from).ok_or_else(|| {
+        anyhow::anyhow!("unknown code lang: {name} (try rust, python, js, go, java, sql, shell)")
     })
 }
 
@@ -446,15 +432,11 @@ fn handle_menu_key(app: &mut App, code: KeyCode, _mods: KeyModifiers) {
                     }
                 }
                 MenuAction::StartCustom => {
-                    // The placeholder option has no path: `start_game` then
-                    // explains how to add a custom file.
-                    if let Some(path) = custom_path {
-                        app.set_custom_file(path);
-                    }
-                    match app.start_game(Mode::Custom) {
-                        Ok(()) => app.persist_custom_file(),
+                    // The placeholder option has no path: `start_custom`
+                    // then explains how to add a custom file.
+                    if let Err(e) = app.start_custom(custom_path) {
                         // `{:#}` includes the cause ("can't read …: No such file").
-                        Err(e) => app.error_message = Some(format!("{e:#}")),
+                        app.error_message = Some(format!("{e:#}"));
                     }
                 }
                 MenuAction::ShowStats => app.screen = Screen::Stats,

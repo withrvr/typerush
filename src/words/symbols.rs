@@ -19,8 +19,8 @@ const COMMON_TOKENS: &[&str] = &[
     "++", "--", "+=", "-=", "*=", "/=", "?.", "?:", "??", "()=>", "(a,b)", "{x:y}", "[i++]",
     "x++;", "y--;", "++i", "--i", "!x", "&x", "*x", "x;", "x|y", "x&y", "x^y", "~x", "x;y", ";;",
     "()=>{}", "if{}", "for(;;)", "do{}", "[]", "{}", "<>", "<T>", "</>", "/>", "<!--", "-->", "*/",
-    "/*", "//", "**", "/=", "%=", "//=", "==>", "<==", "/**/", "x.y", "a.b", "a::b", "x[0]",
-    "y[1]", "p->q", "*ptr", "&ref", "x?y:z",
+    "/*", "//", "**", "%=", "//=", "==>", "<==", "/**/", "x.y", "a.b", "a::b", "x[0]", "y[1]",
+    "p->q", "*ptr", "&ref", "x?y:z",
 ];
 
 /// Pool of single characters used to build random tokens.
@@ -61,6 +61,16 @@ pub fn random_symbol_tokens(count: usize) -> Vec<String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Each curated token is listed once, so none is drilled more than the
+    /// rest by accident.
+    #[test]
+    fn curated_tokens_are_unique() {
+        let mut seen = std::collections::HashSet::new();
+        for token in COMMON_TOKENS {
+            assert!(seen.insert(token), "duplicate token {token:?}");
+        }
+    }
 
     #[test]
     fn returns_requested_count() {

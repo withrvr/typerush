@@ -150,6 +150,21 @@ pub enum MenuAction {
     Quit,
 }
 
+impl From<CodeLangKind> for crate::words::CodeLang {
+    fn from(kind: CodeLangKind) -> Self {
+        use crate::words::CodeLang;
+        match kind {
+            CodeLangKind::Rust => CodeLang::Rust,
+            CodeLangKind::Python => CodeLang::Python,
+            CodeLangKind::JavaScript => CodeLang::JavaScript,
+            CodeLangKind::Go => CodeLang::Go,
+            CodeLangKind::Java => CodeLang::Java,
+            CodeLangKind::Sql => CodeLang::Sql,
+            CodeLangKind::Shell => CodeLang::Shell,
+        }
+    }
+}
+
 /// Translate a `DefaultMode` (the config-side enum) into a runtime `Mode`.
 fn mode_for(default_mode: DefaultMode) -> Mode {
     use crate::words::CodeLang;
@@ -157,13 +172,7 @@ fn mode_for(default_mode: DefaultMode) -> Mode {
         DefaultMode::Time(seconds) => Mode::Time(seconds),
         DefaultMode::Words(count) => Mode::Words(count),
         DefaultMode::Quote => Mode::Quote,
-        DefaultMode::Code(CodeLangKind::Rust) => Mode::Code(CodeLang::Rust),
-        DefaultMode::Code(CodeLangKind::Python) => Mode::Code(CodeLang::Python),
-        DefaultMode::Code(CodeLangKind::JavaScript) => Mode::Code(CodeLang::JavaScript),
-        DefaultMode::Code(CodeLangKind::Go) => Mode::Code(CodeLang::Go),
-        DefaultMode::Code(CodeLangKind::Java) => Mode::Code(CodeLang::Java),
-        DefaultMode::Code(CodeLangKind::Sql) => Mode::Code(CodeLang::Sql),
-        DefaultMode::Code(CodeLangKind::Shell) => Mode::Code(CodeLang::Shell),
+        DefaultMode::Code(kind) => Mode::Code(CodeLang::from(kind)),
         DefaultMode::Zen => Mode::Zen,
         DefaultMode::Symbols(count) => Mode::Symbols(count),
     }
@@ -253,7 +262,16 @@ pub fn build_menu(snippets: &[Snippet], last_custom_file: Option<&Path>) -> Vec<
 
     let custom_start = menu.len();
     if let Some(last) = last_custom_file {
-        if !snippets.iter().any(|s| same_file(&s.path, last)) {
+        // Compare canonical forms too, so `./notes.txt` or a symlink still
+        // matches its snippet. Paths that can't be canonicalized (missing)
+        // only match when literally equal.
+        let last_canonical = std::fs::canonicalize(last).ok();
+        let is_snippet = snippets.iter().any(|s| {
+            s.path == last
+                || (last_canonical.is_some()
+                    && std::fs::canonicalize(&s.path).ok() == last_canonical)
+        });
+        if !is_snippet {
             let name = last.file_name().map_or_else(
                 || last.display().to_string(),
                 |n| n.to_string_lossy().into_owned(),
@@ -273,18 +291,14 @@ pub fn build_menu(snippets: &[Snippet], last_custom_file: Option<&Path>) -> Vec<
     menu
 }
 
-/// Do two paths name the same file? Equal paths trivially do; otherwise
-/// compare canonical forms, which resolves `./notes.txt` vs an absolute path
-/// and symlinks. Paths that can't be canonicalized (e.g. missing) only match
-/// when they are literally equal.
-fn same_file(a: &Path, b: &Path) -> bool {
-    if a == b {
-        return true;
+/// `path` made absolute against the current directory, so a remembered file
+/// still works when TypeRush is next started somewhere else. Not
+/// canonicalized: symlinks and the user's spelling of the path are kept.
+fn absolute(path: PathBuf) -> PathBuf {
+    if path.is_absolute() {
+        return path;
     }
-    match (std::fs::canonicalize(a), std::fs::canonicalize(b)) {
-        (Ok(a), Ok(b)) => a == b,
-        _ => false,
-    }
+    std::env::current_dir().map_or(path.clone(), |dir| dir.join(&path))
 }
 
 /// Index range of the menu row (group) containing `index`.
@@ -480,17 +494,21 @@ impl App {
     /// Rebuild the menu (custom row contents changed) keeping the highlight
     /// on the same option, or the first custom option if that one is gone.
     fn rebuild_menu(&mut self) {
+        // `action` is part of the key: stats and quit have the same mode and
+        // path (`None`), so without it a highlight on quit would land on stats.
         let selected = self
             .menu
             .get(self.menu_index)
-            .map(|item| (item.mode, item.custom_path.clone()));
+            .map(|item| (item.mode, item.action, item.custom_path.clone()));
         let offered = self.offered_custom_file();
         self.menu = build_menu(&self.snippets, offered.as_deref());
         self.menu_index = selected
-            .and_then(|(mode, path)| {
+            .and_then(|(mode, action, path)| {
                 self.menu
                     .iter()
-                    .position(|item| item.mode == mode && item.custom_path == path)
+                    .position(|item| {
+                        item.mode == mode && item.action == action && item.custom_path == path
+                    })
                     .or_else(|| {
                         if mode == Some(Mode::Custom) {
                             self.menu
@@ -505,28 +523,35 @@ impl App {
             .min(self.menu.len() - 1);
     }
 
-    /// Make `path` the source of the next `Mode::Custom` session. Memory only:
-    /// call [`App::persist_custom_file`] once the session has started, so a
-    /// path that fails to load never replaces a working remembered one.
-    pub fn set_custom_file(&mut self, path: PathBuf) {
-        self.custom_file = Some(path);
+    /// Start a custom-file session from `path` (or from the current
+    /// `custom_file`, e.g. `--file`, when `None`), then remember the file in
+    /// `state.json` and the menu.
+    ///
+    /// If the file fails to load nothing changes — not the screen, the mode,
+    /// the file a restart would use, nor the remembered file.
+    pub fn start_custom(&mut self, path: Option<PathBuf>) -> anyhow::Result<()> {
+        let previous = self.custom_file.clone();
+        if let Some(path) = path {
+            self.custom_file = Some(path);
+        }
+        if let Err(e) = self.start_game(Mode::Custom) {
+            self.custom_file = previous;
+            return Err(e);
+        }
+        self.persist_custom_file();
+        Ok(())
     }
 
     /// Remember the current custom file in `state.json` and show it in the
-    /// menu. Call after a successful `start_game(Mode::Custom)`.
+    /// menu. Only called once the file has loaded.
     ///
-    /// The path is stored absolute so it still works when TypeRush is next
-    /// launched from another directory. Non-UTF-8 paths aren't stored. Disk
-    /// errors are ignored — losing this memory is never worth an error.
-    pub fn persist_custom_file(&mut self) {
+    /// Non-UTF-8 paths aren't stored. Disk errors are ignored — losing this
+    /// memory is never worth an error.
+    fn persist_custom_file(&mut self) {
         let Some(path) = self.custom_file.clone() else {
             return;
         };
-        let absolute = if path.is_absolute() {
-            path
-        } else {
-            std::env::current_dir().map_or(path.clone(), |dir| dir.join(&path))
-        };
+        let absolute = absolute(path);
         let Some(text) = absolute.to_str() else {
             return;
         };
@@ -1216,25 +1241,36 @@ mod tests {
     }
 
     /// A custom file that fails to load leaves the app exactly as it was:
-    /// same screen, same mode, same words.
+    /// same screen, mode and words — and a restart still uses the file that
+    /// last worked, not the one that just failed.
     #[test]
     fn failed_custom_start_changes_nothing() {
+        let dir = tempfile::tempdir().unwrap();
+        let good = dir.path().join("good.txt");
+        std::fs::write(&good, "one two").unwrap();
         let mut app = menu_app();
-        let mode_before = app.mode;
-        app.set_custom_file(PathBuf::from("/definitely/not/here.txt"));
-        let err = app.start_game(Mode::Custom).unwrap_err();
-        assert!(format!("{err:#}").contains("/definitely/not/here.txt"));
+        app.start_custom(Some(good.clone())).unwrap();
+        app.screen = Screen::Menu;
+        let (mode, words) = (app.mode, app.words.len());
+        let remembered = app.app_state.clone();
+
+        let err = app
+            .start_custom(Some(PathBuf::from("/definitely/not/here.txt")))
+            .unwrap_err();
+        assert!(format!("{err:#}").contains("here.txt"), "{err:#}");
         assert_eq!(app.screen, Screen::Menu);
-        assert_eq!(app.mode, mode_before);
-        assert!(app.words.is_empty());
+        assert_eq!((app.mode, app.words.len()), (mode, words));
+        assert_eq!(app.custom_file.as_deref(), Some(good.as_path()));
+        assert_eq!(app.app_state, remembered);
     }
 
     #[test]
     fn custom_without_file_explains_how_to_add_one() {
         let mut app = menu_app();
-        let err = app.start_game(Mode::Custom).unwrap_err().to_string();
+        let err = app.start_custom(None).unwrap_err().to_string();
         assert!(err.contains("--file"), "{err}");
         assert!(err.contains("snippets"), "{err}");
+        assert_eq!(app.screen, Screen::Menu);
     }
 
     #[test]
@@ -1243,49 +1279,63 @@ mod tests {
         let path = dir.path().join("blank.txt");
         std::fs::write(&path, "  \n\t ").unwrap();
         let mut app = menu_app();
-        app.set_custom_file(path);
-        let err = app.start_game(Mode::Custom).unwrap_err().to_string();
+        let err = app.start_custom(Some(path)).unwrap_err().to_string();
         assert!(err.contains("blank.txt") && err.contains("empty"), "{err}");
     }
 
-    /// Staging a file never writes anything; persisting writes the absolute
-    /// path, offers it in the menu, and is a no-op the second time.
+    /// A successful start saves the file to state.json, offers it in the
+    /// menu, and doesn't rewrite the file when the same one starts again.
     #[test]
-    fn set_custom_file_stages_and_persist_saves() {
+    fn successful_custom_start_is_remembered_once() {
         let dir = tempfile::tempdir().unwrap();
         let state_file = dir.path().join("state.json");
+        let file = dir.path().join("notes.txt");
+        std::fs::write(&file, "type me").unwrap();
         let mut app = menu_app();
         app.load_custom_sources(Vec::new(), AppState::default(), Some(state_file.clone()));
 
-        let file = dir.path().join("notes.txt");
-        app.set_custom_file(file.clone());
-        assert!(!state_file.exists(), "staging must not touch disk");
-        assert!(app.app_state.last_custom_file.is_none());
-
-        app.persist_custom_file();
-        let saved = state::load_from_path(&state_file);
-        assert_eq!(saved.last_custom_file.as_deref(), file.to_str());
+        app.start_custom(Some(file.clone())).unwrap();
+        assert_eq!(app.screen, Screen::Typing);
+        assert_eq!(
+            state::load_from_path(&state_file)
+                .last_custom_file
+                .as_deref(),
+            file.to_str()
+        );
         assert_eq!(
             custom_options(&app.menu),
             [("notes.txt", Some(file.as_path()))]
         );
 
-        // Unchanged path: no rewrite.
+        // Same file again (e.g. picked from the menu): no rewrite.
         std::fs::remove_file(&state_file).unwrap();
-        app.persist_custom_file();
+        app.start_custom(Some(file)).unwrap();
         assert!(!state_file.exists());
     }
 
     /// A relative `--file` path is remembered as absolute, so it still works
     /// when TypeRush is next started from another directory.
     #[test]
-    fn persist_stores_relative_path_as_absolute() {
-        let mut app = menu_app();
-        app.set_custom_file(PathBuf::from("relative-notes.txt"));
-        app.persist_custom_file();
-        let stored = PathBuf::from(app.app_state.last_custom_file.clone().unwrap());
+    fn relative_paths_are_made_absolute() {
+        let stored = absolute(PathBuf::from("relative-notes.txt"));
         assert!(stored.is_absolute());
         assert!(stored.ends_with("relative-notes.txt"));
+        let already = std::env::current_dir().unwrap().join("x.txt");
+        assert_eq!(absolute(already.clone()), already);
+    }
+
+    /// Rebuilding the menu keeps a highlight on quit on quit — stats and
+    /// quit share mode and path (`None`), so the action must be compared too.
+    #[test]
+    fn rebuild_keeps_quit_highlighted() {
+        let mut app = menu_app();
+        app.menu_index = app.menu.iter().position(|m| m.label == "quit").unwrap();
+        app.load_custom_sources(
+            vec![snippet("alpha", "/s/alpha.txt")],
+            AppState::default(),
+            None,
+        );
+        assert_eq!(app.menu[app.menu_index].label, "quit");
     }
 
     /// Startup: the remembered file shows up, and the highlighted default

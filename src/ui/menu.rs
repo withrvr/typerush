@@ -208,18 +208,30 @@ pub fn render(f: &mut Frame, app: &App) {
     );
 }
 
-/// Longest option text shown in full; longer snippet / file names are cut
-/// with an ellipsis so one name can't take over the row.
-const MAX_CHIP_CHARS: usize = 24;
+/// Widest option text shown in full, in terminal cells; longer snippet or
+/// file names are cut with an ellipsis so one name can't take over the row.
+/// Measured in display width, not characters: a CJK character is two cells.
+const MAX_CHIP_WIDTH: usize = 24;
 
-/// Option text as drawn: `label`, shortened to `MAX_CHIP_CHARS` characters.
-fn chip_text(label: &str) -> String {
-    if label.chars().count() <= MAX_CHIP_CHARS {
-        return label.to_string();
+/// Option text as drawn: `label`, shortened to `MAX_CHIP_WIDTH` cells.
+fn chip_text(label: &str) -> std::borrow::Cow<'_, str> {
+    use unicode_width::{UnicodeWidthChar, UnicodeWidthStr};
+    if label.width() <= MAX_CHIP_WIDTH {
+        return label.into();
     }
-    let mut text: String = label.chars().take(MAX_CHIP_CHARS - 1).collect();
+    let mut text = String::new();
+    let mut width = 0;
+    for c in label.chars() {
+        let char_width = c.width().unwrap_or(0);
+        // Leave one cell for the ellipsis.
+        if width + char_width > MAX_CHIP_WIDTH - 1 {
+            break;
+        }
+        width += char_width;
+        text.push(c);
+    }
     text.push('…');
-    text
+    text.into()
 }
 
 fn centered_rect(percent_x: u16, percent_y: u16, r: Rect) -> Rect {
@@ -235,4 +247,34 @@ fn centered_rect(percent_x: u16, percent_y: u16, r: Rect) -> Rect {
         Constraint::Percentage((100 - percent_x) / 2),
     ])
     .split(popup_layout[1])[1]
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use unicode_width::UnicodeWidthStr;
+
+    #[test]
+    fn short_labels_are_untouched() {
+        assert_eq!(chip_text("rust"), "rust");
+        let exactly = "a".repeat(MAX_CHIP_WIDTH);
+        assert_eq!(chip_text(&exactly), exactly);
+    }
+
+    #[test]
+    fn long_labels_are_cut_to_the_width_limit() {
+        let text = chip_text("rust-borrow-checker-error-messages");
+        assert!(text.ends_with('…'));
+        assert_eq!(text.width(), MAX_CHIP_WIDTH);
+    }
+
+    /// Wide characters count two cells each: 20 CJK characters are 40 cells,
+    /// over the limit even though they are fewer than 24 characters.
+    #[test]
+    fn wide_characters_are_measured_in_cells() {
+        let label = "漢".repeat(20);
+        let text = chip_text(&label);
+        assert!(text.ends_with('…'));
+        assert!(text.width() <= MAX_CHIP_WIDTH);
+    }
 }

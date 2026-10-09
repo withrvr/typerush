@@ -69,8 +69,7 @@ pub fn random_words_from(count: usize, pool: WordPool, decor: WordDecor) -> Vec<
 
 /// Generate a short numeric literal (1–4 digits). Used by the numbers toggle.
 fn random_number(rng: &mut impl Rng) -> String {
-    // 1–4 digits, weighted toward 2–3 digits so the screen doesn't fill with
-    // 0-9 single characters.
+    // 1–4 digits, each length equally likely.
     let len = rng.gen_range(1..=4);
     let mut s = String::with_capacity(len);
     for i in 0..len {
