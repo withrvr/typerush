@@ -29,6 +29,8 @@ with a quote — TypeRush meets you where you already work: the command line.
 ## ✨ Why TypeRush
 
 - 🚀 **Instant feedback** — see your WPM and accuracy climb keystroke by keystroke
+- 🎯 **Honest scoring** — every character counts, the space between words included
+- 🖱 **Keyboard or mouse** — arrow-key menu, or click any option and footer hint
 - 🎨 **Themes built-in** — `dark`, `light`, `monokai`, `dracula`, or roll your own colors
 - ⏱ **Six built-in modes** — Time, Words, Quote, Code, Zen, and Custom-file
 - 💾 **Tracks your progress** — every session saved locally, with charts and a personal best
@@ -90,14 +92,16 @@ typerush --list-themes       # see all built-in themes
 
 ## ⌨️ A few keys to know
 
-| Key        | Action                          |
-| ---------- | ------------------------------- |
-| `Enter`    | start / restart a session       |
-| `Esc`      | back to menu / end session      |
-| `Ctrl+R`   | restart the current mode        |
-| `Tab`      | jump to your stats history      |
-| `?`        | open the keybindings overlay    |
-| `Ctrl+C`   | quit                            |
+| Key             | Action                          |
+| --------------- | ------------------------------- |
+| `Enter`         | start / restart a session       |
+| `Esc`           | back to menu / end session      |
+| `Ctrl+R` / `F5` | restart the current mode        |
+| `Tab` / `s`     | jump to your stats history      |
+| `?` / `F1`      | open the keybindings overlay    |
+| `Ctrl+C`        | quit                            |
+
+The mouse works too: click a menu option or any footer hint.
 
 Full keymap: see [`docs/USAGE.md`](docs/USAGE.md).
 
@@ -107,7 +111,12 @@ Full keymap: see [`docs/USAGE.md`](docs/USAGE.md).
 
 Every (non-zen) session is saved to `~/.typerush/stats.json`. The Stats screen
 shows your personal best, average accuracy, a trend sparkline, and your last
-10 runs.
+10 runs — plus, as of v0.3:
+
+- 🔥 **Daily streak** — consecutive days you've practiced
+- 📅 **7- and 30-day WPM averages**
+- ⌨️ **Per-key accuracy heatmap** — find the keys that slow you down
+- 🏅 **Per-mode personal bests** — a separate record for `time-30s`, `words-50`, etc.
 
 ---
 

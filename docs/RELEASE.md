@@ -42,13 +42,28 @@ catch TUI regressions:
 ./target/release/typerush
 ```
 
-Exercise the things that changed in this release. For v0.2.0 that means at
-minimum:
+Exercise the things that changed in this release. Use a throwaway `HOME` so
+your real `~/.typerush/stats.json` isn't touched (see
+[DEVELOPMENT.md](DEVELOPMENT.md#end-to-end-testing-in-tmux)). For v0.2.0 that
+meant at minimum:
 
 - Run a short typing test end-to-end.
 - Switch themes (the v0.2 background paint work).
 - Trigger `Ctrl+Backspace` mid-word (the v0.2 input fix).
 - Run with `--help` and with a non-default config to exercise config loading.
+
+For v0.3.0, also:
+
+- Stats screen with no history, then after a few sessions: streak, 7/30-day
+  averages, key-accuracy panel (a deliberately mistyped key shows up there).
+- `★ new best!` on the first and on a faster session of a mode; a session
+  under 1 s is not saved and shows `—` as the mode best.
+- On Results, open and close help (`?` / `F1`) — `stats.json` must still gain
+  exactly one record.
+- A garbage `stats.json` is backed up to `stats.json.corrupt-<time>`.
+- Menu: ↑/↓ between categories, ←/→ between options, `Space` starts; click an
+  option and a footer hint; scroll wheel; click closes help.
+- Help overlay at 80×24 and in a ~40-column terminal.
 
 ---
 

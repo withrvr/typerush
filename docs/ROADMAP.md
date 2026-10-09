@@ -56,6 +56,37 @@ KEY:  ✅ done    🚧 in progress    🔲 planned    💡 idea
 - ✅ Built-in themes: `dark`, `light`, `monokai`, `dracula`
 - ✅ Per-slot color overrides on top of any built-in theme
 - ✅ `--theme <name>` CLI override + `--list-themes` discovery flag
+- ✅ `Ctrl+Backspace` deletes the current word (terminals that send `^H`, plus `Ctrl+W`)
+
+---
+
+## ✅ Shipped (v0.2.1 — Pure character checking)
+
+- ✅ Typing is one stream of characters; the space between words is a character like any other
+- ✅ A wrong key where a space belongs is one wrong character (shown as a red, underlined space) instead of piling up letters on the word ([#8](https://github.com/withrvr/typerush/issues/8))
+- ✅ A space typed mid-word is a wrong character — it no longer jumps to the next word
+- ✅ The run ends on the last character (no trailing space needed)
+- ✅ Backspace walks back over spaces one character at a time
+
+---
+
+## ✅ Shipped (v0.3 — Smarter stats)
+
+- ✅ Per-key accuracy heatmap (find your problem keys)
+- ✅ Per-mode personal bests (separate PB for time-30s vs words-50)
+- ✅ Daily streak counter
+- ✅ Average WPM over the last 7 / 30 days
+- ✅ Crash-safe (atomic, fsynced) stats writes; a corrupt `stats.json` is backed up, never wiped
+- ✅ Stats screens never read `stats.json` per frame (in-memory session cache)
+
+**Added to v0.3 beyond the original plan:**
+
+- ✅ Main menu grouped by category (heading, options on the line below) with
+  2-D arrow navigation — pulled forward from v0.4's "visual section gaps"
+- ✅ Mouse support (click menu options and footer hints, wheel scrolls the
+  menu) with every action also on the keyboard (WCAG 2.1.1) and
+  release-to-activate clicks (WCAG 2.5.2)
+- ✅ Alternate keys: `F1` help, `F5` restart, `Space` start, `s` stats
 
 ---
 
@@ -68,12 +99,6 @@ KEY:  ✅ done    🚧 in progress    🔲 planned    💡 idea
 
 ## 🔲 Planned
 
-### v0.3 — Smarter stats
-- 🔲 Per-key accuracy heatmap (find your problem keys)
-- 🔲 Per-mode personal bests (separate PB for time-30s vs words-50)
-- 🔲 Daily streak counter
-- 🔲 Average WPM over the last 7 / 30 days
-
 ### v0.4 — More content & menu UX
 - 🔲 Bigger English word pool (10k)
 - 🔲 Programming-symbols mode (focus on `(){};=>` etc.)
@@ -81,7 +106,6 @@ KEY:  ✅ done    🚧 in progress    🔲 planned    💡 idea
 - 🔲 Punctuation / numbers toggle
 - 🔲 Custom snippet library: drop `.txt` files in `~/.typerush/snippets/`
 - 🔲 "Custom" menu row + last-picked-file memory in `~/.typerush/state.json`
-- 🔲 Visual section gaps in the main menu (Time / Words / Quote / Code / Zen groups)
 
 ### v0.5 — Quality of life
 - 🔲 Pause / resume mid-session
