@@ -1,14 +1,15 @@
-//! Main menu screen — ASCII banner up top, a centered list of modes in the
-//! middle, and a one-line hint footer at the bottom.
+//! Main menu screen — ASCII banner up top, the modes grouped one category
+//! per row in the middle (↑/↓ picks a row, ←/→ an option), and a one-line hint
+//! footer at the bottom.
 
 use ratatui::{
     prelude::*,
-    widgets::{Block, Borders, List, ListItem, ListState, Paragraph, Wrap},
+    widgets::{Block, Borders, Paragraph, Wrap},
 };
 
-use crate::app::App;
+use crate::app::{menu_row, App};
 
-/// Render the menu screen. `app.menu_index` highlights the active row.
+/// Render the menu screen. `app.menu_index` highlights the active option.
 pub fn render(f: &mut Frame, app: &App) {
     let area = f.area();
     // Layout: a small breathing-room strip, then the banner, then the
@@ -51,44 +52,81 @@ pub fn render(f: &mut Frame, app: &App) {
     f.render_widget(banner, layout[1]);
 
     let inner = centered_rect(60, 100, layout[2]);
-    let items: Vec<ListItem> = app
-        .menu
-        .iter()
-        .map(|m| ListItem::new(Line::from(m.label)))
-        .collect();
-    let list = List::new(items)
-        // Unselected items inherit this fg. Without it, ratatui leaves cells
-        // with fg=Reset and the terminal renders its default fg — which is
-        // usually white on a dark terminal, invisible on the light theme's
-        // white background.
-        .style(Style::default().fg(app.theme.neutral))
-        .block(
-            Block::default().borders(Borders::ALL).title(Span::styled(
+    let theme = &app.theme;
+    // Black on accent gives high contrast on every built-in theme since each
+    // one's `accent` is a bright color. A user who overrides accent to
+    // something dark would lose readability here — they can override the slot.
+    let selected_style = Style::default()
+        .fg(Color::Black)
+        .bg(theme.accent)
+        .add_modifier(Modifier::BOLD);
+    // Explicit fg everywhere: Reset would render the terminal default, which
+    // is invisible on the light theme's white background.
+    let option_style = Style::default().fg(theme.neutral);
+
+    let selected_row = menu_row(&app.menu, app.menu_index);
+    let mut lines = Vec::new();
+    let mut start = 0;
+    while start < app.menu.len() {
+        let row = menu_row(&app.menu, start);
+        let is_selected_row = row == selected_row;
+        let group = app.menu[start].group;
+        // Breathing room between categories; quote/zen and stats/quit pair up.
+        if start > 0 && !matches!(group, "zen" | "quit") {
+            lines.push(Line::raw(""));
+        }
+
+        let mut spans = vec![Span::styled(
+            if is_selected_row { " ➤ " } else { "   " },
+            Style::default().fg(theme.accent),
+        )];
+        let chip = |index: usize, text: &str| {
+            let style = if index == app.menu_index {
+                selected_style
+            } else {
+                option_style
+            };
+            // Pad to 4 so the time and words options line up in columns.
+            Span::styled(format!(" {:<4} ", text), style)
+        };
+        if row.len() == 1 {
+            // Single-option row: the category name is the option itself.
+            spans.push(chip(start, group));
+        } else {
+            let heading_style = if is_selected_row {
+                Style::default()
+                    .fg(theme.secondary)
+                    .add_modifier(Modifier::BOLD)
+            } else {
+                Style::default().fg(theme.pending)
+            };
+            spans.push(Span::styled(format!(" {:<8}", group), heading_style));
+            for index in row.clone() {
+                spans.push(chip(index, app.menu[index].label));
+                spans.push(Span::raw(" "));
+            }
+        }
+        lines.push(Line::from(spans));
+        start = row.end;
+    }
+
+    let menu = Paragraph::new(lines).block(
+        Block::default()
+            .borders(Borders::ALL)
+            .border_style(Style::default().fg(theme.neutral))
+            .title(Span::styled(
                 " select mode ",
                 Style::default()
-                    .fg(app.theme.secondary)
+                    .fg(theme.secondary)
                     .add_modifier(Modifier::BOLD),
             )),
-        )
-        // Black on accent gives high contrast on every built-in theme since
-        // each one's `accent` is a bright color. A user who overrides accent
-        // to something dark would lose readability here — at that point they
-        // can override the slot.
-        .highlight_style(
-            Style::default()
-                .fg(Color::Black)
-                .bg(app.theme.accent)
-                .add_modifier(Modifier::BOLD),
-        )
-        .highlight_symbol("➤ ");
+    );
+    f.render_widget(menu, inner);
 
-    let mut state = ListState::default();
-    state.select(Some(app.menu_index));
-    f.render_stateful_widget(list, inner, &mut state);
-
-    let footer = Paragraph::new("  ↑/↓ navigate  ·  Enter start  ·  q quit  ·  ? help")
-        .style(Style::default().fg(app.theme.pending))
-        .wrap(Wrap { trim: true });
+    let footer =
+        Paragraph::new("  ↑/↓ category  ·  ←/→ option  ·  Enter start  ·  q quit  ·  ? help")
+            .style(Style::default().fg(app.theme.pending))
+            .wrap(Wrap { trim: true });
     f.render_widget(footer, layout[3]);
 }
 

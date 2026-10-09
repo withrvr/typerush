@@ -95,8 +95,12 @@ impl Word {
     }
 }
 
-/// One row in the main menu.
+/// One selectable option in the main menu. Consecutive items that share a
+/// `group` are drawn on one row ("time  15s  30s  60s  120s").
 pub struct MenuItem {
+    /// Category the option belongs to — the row's heading.
+    pub group: &'static str,
+    /// Option text within the row. Same as `group` for single-option rows.
     pub label: &'static str,
     /// Set for "start a game" rows; `None` for rows like "Stats" or "Quit".
     pub mode: Option<Mode>,
@@ -154,83 +158,53 @@ fn best_menu_match(menu: &[MenuItem], default_mode: DefaultMode) -> usize {
 /// Build the default menu shown on startup.
 pub fn default_menu() -> Vec<MenuItem> {
     use crate::words::CodeLang;
+    let start = |group, label, mode| MenuItem {
+        group,
+        label,
+        mode: Some(mode),
+        action: MenuAction::Start,
+    };
     vec![
+        start("time", "15s", Mode::Time(15)),
+        start("time", "30s", Mode::Time(30)),
+        start("time", "60s", Mode::Time(60)),
+        start("time", "120s", Mode::Time(120)),
+        start("words", "10", Mode::Words(10)),
+        start("words", "25", Mode::Words(25)),
+        start("words", "50", Mode::Words(50)),
+        start("words", "100", Mode::Words(100)),
+        start("code", "rust", Mode::Code(CodeLang::Rust)),
+        start("code", "python", Mode::Code(CodeLang::Python)),
+        start("code", "javascript", Mode::Code(CodeLang::JavaScript)),
+        start("quote", "quote", Mode::Quote),
+        start("zen", "zen", Mode::Zen),
         MenuItem {
-            label: "Time · 15s",
-            mode: Some(Mode::Time(15)),
-            action: MenuAction::Start,
-        },
-        MenuItem {
-            label: "Time · 30s",
-            mode: Some(Mode::Time(30)),
-            action: MenuAction::Start,
-        },
-        MenuItem {
-            label: "Time · 60s",
-            mode: Some(Mode::Time(60)),
-            action: MenuAction::Start,
-        },
-        MenuItem {
-            label: "Time · 120s",
-            mode: Some(Mode::Time(120)),
-            action: MenuAction::Start,
-        },
-        MenuItem {
-            label: "Words · 10",
-            mode: Some(Mode::Words(10)),
-            action: MenuAction::Start,
-        },
-        MenuItem {
-            label: "Words · 25",
-            mode: Some(Mode::Words(25)),
-            action: MenuAction::Start,
-        },
-        MenuItem {
-            label: "Words · 50",
-            mode: Some(Mode::Words(50)),
-            action: MenuAction::Start,
-        },
-        MenuItem {
-            label: "Words · 100",
-            mode: Some(Mode::Words(100)),
-            action: MenuAction::Start,
-        },
-        MenuItem {
-            label: "Quote",
-            mode: Some(Mode::Quote),
-            action: MenuAction::Start,
-        },
-        MenuItem {
-            label: "Code · Rust",
-            mode: Some(Mode::Code(CodeLang::Rust)),
-            action: MenuAction::Start,
-        },
-        MenuItem {
-            label: "Code · Python",
-            mode: Some(Mode::Code(CodeLang::Python)),
-            action: MenuAction::Start,
-        },
-        MenuItem {
-            label: "Code · JavaScript",
-            mode: Some(Mode::Code(CodeLang::JavaScript)),
-            action: MenuAction::Start,
-        },
-        MenuItem {
-            label: "Zen",
-            mode: Some(Mode::Zen),
-            action: MenuAction::Start,
-        },
-        MenuItem {
-            label: "Stats",
+            group: "stats",
+            label: "stats",
             mode: None,
             action: MenuAction::ShowStats,
         },
         MenuItem {
-            label: "Quit",
+            group: "quit",
+            label: "quit",
             mode: None,
             action: MenuAction::Quit,
         },
     ]
+}
+
+/// Index range of the menu row (group) containing `index`.
+pub fn menu_row(menu: &[MenuItem], index: usize) -> std::ops::Range<usize> {
+    let group = menu[index].group;
+    let start = menu[..index]
+        .iter()
+        .rposition(|item| item.group != group)
+        .map_or(0, |i| i + 1);
+    let end = menu[index..]
+        .iter()
+        .position(|item| item.group != group)
+        .map_or(menu.len(), |i| index + i);
+    start..end
 }
 
 /// The entire mutable state of the application.
@@ -335,6 +309,39 @@ impl App {
             stats_cache: None,
             session_just_saved: false,
         }
+    }
+
+    /// Menu ↑/↓: jump to the previous/next row (wrapping), keeping the same
+    /// column where the target row has one, else its last option.
+    pub fn menu_move_row(&mut self, down: bool) {
+        let row = menu_row(&self.menu, self.menu_index);
+        let column = self.menu_index - row.start;
+        let target = if down {
+            if row.end == self.menu.len() {
+                0
+            } else {
+                row.end
+            }
+        } else if row.start == 0 {
+            self.menu.len() - 1
+        } else {
+            row.start - 1
+        };
+        let target_row = menu_row(&self.menu, target);
+        self.menu_index = (target_row.start + column).min(target_row.end - 1);
+    }
+
+    /// Menu ←/→: previous/next option within the current row (wrapping).
+    pub fn menu_move_column(&mut self, right: bool) {
+        let row = menu_row(&self.menu, self.menu_index);
+        let len = row.len();
+        let column = self.menu_index - row.start;
+        let column = if right {
+            (column + 1) % len
+        } else {
+            (column + len - 1) % len
+        };
+        self.menu_index = row.start + column;
     }
 
     /// How long the user has been (or was) typing during the current session.
@@ -593,14 +600,14 @@ mod tests {
     fn best_menu_match_exact_time() {
         let menu = default_menu();
         let index = best_menu_match(&menu, DefaultMode::Time(30));
-        assert_eq!(menu[index].label, "Time · 30s");
+        assert_eq!(menu[index].label, "30s");
     }
 
     #[test]
     fn best_menu_match_exact_words() {
         let menu = default_menu();
         let index = best_menu_match(&menu, DefaultMode::Words(100));
-        assert_eq!(menu[index].label, "Words · 100");
+        assert_eq!(menu[index].label, "100");
     }
 
     #[test]
@@ -609,21 +616,63 @@ mod tests {
         // time row ("Time · 15s") rather than something unrelated.
         let menu = default_menu();
         let index = best_menu_match(&menu, DefaultMode::Time(45));
-        assert_eq!(menu[index].label, "Time · 15s");
+        assert_eq!(menu[index].label, "15s");
     }
 
     #[test]
     fn best_menu_match_falls_back_to_first_words_row() {
         let menu = default_menu();
         let index = best_menu_match(&menu, DefaultMode::Words(7));
-        assert_eq!(menu[index].label, "Words · 10");
+        assert_eq!(menu[index].label, "10");
     }
 
     #[test]
     fn best_menu_match_picks_zen_row() {
         let menu = default_menu();
         let index = best_menu_match(&menu, DefaultMode::Zen);
-        assert_eq!(menu[index].label, "Zen");
+        assert_eq!(menu[index].label, "zen");
+    }
+
+    fn menu_app() -> App {
+        App::new(
+            None,
+            crate::theme::ThemePalette::default(),
+            DefaultMode::Time(30),
+        )
+    }
+
+    #[test]
+    fn menu_left_right_stays_in_row_and_wraps() {
+        let mut app = menu_app(); // time · 30s
+        app.menu_move_column(true);
+        assert_eq!(app.menu[app.menu_index].label, "60s");
+        app.menu_move_column(true);
+        app.menu_move_column(true);
+        assert_eq!(app.menu[app.menu_index].label, "15s"); // wrapped
+        app.menu_move_column(false);
+        assert_eq!(app.menu[app.menu_index].label, "120s");
+    }
+
+    #[test]
+    fn menu_up_down_keeps_column_and_clamps() {
+        let mut app = menu_app(); // time · 30s (column 1)
+        app.menu_move_row(true);
+        assert_eq!(app.menu[app.menu_index].label, "25");
+        app.menu_move_row(true);
+        assert_eq!(app.menu[app.menu_index].label, "python");
+        app.menu_move_row(true);
+        assert_eq!(app.menu[app.menu_index].label, "quote"); // clamped
+        app.menu_move_row(false);
+        assert_eq!(app.menu[app.menu_index].label, "rust");
+    }
+
+    #[test]
+    fn menu_up_down_wraps_between_first_and_last_row() {
+        let mut app = menu_app();
+        app.menu_move_row(false);
+        assert_eq!(app.menu[app.menu_index].label, "quit");
+        app.menu_move_row(true);
+        assert_eq!(app.menu[app.menu_index].group, "time");
     }
 
     // ── per-key accuracy tracking (v0.3.0) ──────────────────────────────────

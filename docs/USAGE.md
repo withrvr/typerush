@@ -53,12 +53,16 @@ You can also pass `--file` alone to use the file inside the menu's "Custom" entr
 
 ### Main menu
 
-| Key                | Action                            |
-| ------------------ | --------------------------------- |
-| `↑ / ↓` or `j / k` | Move highlight                    |
-| `Enter`            | Start the selected mode           |
-| `Tab`              | Jump to the historical stats view |
-| `q`                | Quit                              |
+Modes are grouped one category per row — `time`, `words`, `code`, then
+`quote`, `zen`, `stats`, `quit`:
+
+| Key                | Action                                         |
+| ------------------ | ---------------------------------------------- |
+| `↑ / ↓` or `j / k` | Previous / next category (keeps the column)    |
+| `← / →` or `h / l` | Previous / next option in the category         |
+| `Enter`            | Start the selected mode                        |
+| `Tab`              | Jump to the historical stats view              |
+| `q`                | Quit                                           |
 
 ### While typing
 

@@ -289,19 +289,14 @@ fn toggle_help(app: &mut App) {
     }
 }
 
-/// Keymap for the main menu: arrow keys / j-k to navigate, Enter to act.
+/// Keymap for the main menu: ↑/↓ (j/k) pick a category row, ←/→ (h/l) pick
+/// an option within it, Enter to act.
 fn handle_menu_key(app: &mut App, code: KeyCode, _mods: KeyModifiers) {
     match code {
-        KeyCode::Up | KeyCode::Char('k') => {
-            if app.menu_index == 0 {
-                app.menu_index = app.menu.len() - 1;
-            } else {
-                app.menu_index -= 1;
-            }
-        }
-        KeyCode::Down | KeyCode::Char('j') => {
-            app.menu_index = (app.menu_index + 1) % app.menu.len();
-        }
+        KeyCode::Up | KeyCode::Char('k') => app.menu_move_row(false),
+        KeyCode::Down | KeyCode::Char('j') => app.menu_move_row(true),
+        KeyCode::Left | KeyCode::Char('h') => app.menu_move_column(false),
+        KeyCode::Right | KeyCode::Char('l') => app.menu_move_column(true),
         KeyCode::Enter => {
             let item = &app.menu[app.menu_index];
             let action = item.action;
