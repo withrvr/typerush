@@ -100,4 +100,33 @@ mod tests {
         let (_fg, bg) = render_and_sample(builtin::LIGHT, 79, 23);
         assert_eq!(bg, Color::Rgb(0xFA, 0xFA, 0xFA));
     }
+
+    /// Regression (#8): a wrong key on a space must show as a red, underlined
+    /// space — a plain colored blank would be invisible.
+    #[test]
+    fn wrong_space_renders_red_underlined() {
+        let palette = builtin::DARK;
+        let mut app = App::new(None, palette, DefaultMode::Time(15));
+        app.mode = crate::app::Mode::Custom;
+        app.words = vec![
+            crate::app::Word::new("hi".into()),
+            crate::app::Word::new("bye".into()),
+        ];
+        app.screen = crate::app::Screen::Typing;
+        for ch in "hix".chars() {
+            app.handle_char(ch);
+        }
+
+        let backend = TestBackend::new(80, 24);
+        let mut terminal = Terminal::new(backend).unwrap();
+        terminal.draw(|f| render(f, &app)).unwrap();
+        let buffer = terminal.backend().buffer();
+
+        let has_red_space = buffer.content().iter().any(|cell| {
+            cell.symbol() == " "
+                && cell.fg == palette.incorrect
+                && cell.modifier.contains(Modifier::UNDERLINED)
+        });
+        assert!(has_red_space);
+    }
 }

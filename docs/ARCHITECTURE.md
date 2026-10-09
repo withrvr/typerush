@@ -67,11 +67,15 @@ main.rs::handle_key  (matches on app.screen → per-screen handler)
     ▼  (e.g. for Screen::Typing)
 app.rs::handle_char / handle_backspace
     │
+    │   pure character check: the key is compared with the character under
+    │   the cursor (the space between words included). Match → correct,
+    │   anything else → wrong, and the cursor moves on one slot either way.
+    │
     │   mutates:
     │     - words[current].typed
     │     - correct_chars
     │     - total_typed_chars
-    │     - current_word (on space)
+    │     - current_word (when the cursor passes a word's trailing space)
     │     - screen → Results (when mode completes)
     ▼
 back to main loop ──► next frame is drawn from the new state
@@ -145,7 +149,7 @@ every 500ms. The current design renders a **steady** cursor as an
 underlined character in `theme.accent`:
 
 - on a character → the character itself, restyled with the cursor style
-- past the last character → an underlined trailing space, same style
+- on the space after a word → an underlined trailing space, same style
 
 Both cases use the same `fg = theme.accent, modifier = UNDERLINED`. The
 trailing space is always part of the layout, so toggling its style never
@@ -201,7 +205,7 @@ crate. We don't directly use any platform-specific code, so the binary is a
 2. Pattern-match it inside `App::start_game` to pick a word source.
 3. Update `Mode::label` so it persists nicely in stats.
 4. Add a row to `default_menu()`.
-5. If it has a unique completion condition, handle it in `submit_word()` /
+5. If it has a unique completion condition, handle it in `advance_word()` /
    `tick()`.
 6. (Optional) Add a CLI flag in `main.rs::Cli`.
 
@@ -211,8 +215,9 @@ crate. We don't directly use any platform-specific code, so the binary is a
 
 1. Declare a `pub const` of type `ThemePalette` in `src/theme/builtin.rs`.
    Fill every slot (`accent`, `secondary`, `correct`, `incorrect`, `pending`,
-   `extra`, `mode_tag`, `error`, `neutral`, `background`). For light-background
-   themes, pick colors at ≥4.5:1 contrast against the bg.
+   `extra`, `mode_tag`, `error`, `neutral`, `background`). `extra` is unused
+   but still required by the struct. For light-background themes, pick colors
+   at ≥4.5:1 contrast against the bg.
 2. Append `("name", YOUR_THEME)` to `ALL` in the same file.
 3. That's it. The CLI loader (`--theme <name>`), the config loader (`theme =
    "..."`), and `--list-themes` all iterate `ALL` — no other wiring needed.

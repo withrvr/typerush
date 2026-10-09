@@ -28,7 +28,7 @@ pub struct SessionRecord {
     pub word_count: usize,
     /// Characters typed that matched the target.
     pub correct_chars: usize,
-    /// Every keystroke counted toward accuracy (correct + wrong + extras + spaces).
+    /// Every keystroke counted toward accuracy (correct + wrong, spaces included).
     pub total_chars: usize,
     /// Duration of the session in seconds.
     pub duration_secs: f64,

@@ -65,7 +65,7 @@ You can also pass `--file` alone to use the file inside the menu's "Custom" entr
 | Key              | Action                                          |
 | ---------------- | ----------------------------------------------- |
 | any printable    | Type that character                             |
-| `Space`          | Submit the current word, advance to the next    |
+| `Space`          | Type a space — correct only where the text has one |
 | `Backspace`      | Delete the previous character                   |
 | `Ctrl+Backspace` | Delete the entire current word                  |
 | `Ctrl+W`         | Same — delete the entire current word            |
@@ -101,8 +101,13 @@ accuracy = (correct_chars / total_typed_chars) * 100
 ```
 
 Only characters you typed **at the correct position** count as `correct_chars`.
-Typing extra characters past the end of a word counts toward total typed (so it
-hurts accuracy) but never toward correct chars.
+Every character is checked on its own, and the space between words is a
+character like any other. The key you press is compared with the character
+under the cursor: a match is correct, anything else is wrong, and the cursor
+moves on one slot either way. So a letter typed where a space belongs is a wrong
+character (shown as a red underlined space), and a space typed mid-word is a
+wrong character too — it does not jump to the next word. The run ends when the
+last character is typed.
 
 ---
 
@@ -155,6 +160,8 @@ correct = "green"       # or ANSI name
 The 10 slots: `accent`, `secondary`, `correct`, `incorrect`, `pending`,
 `extra`, `mode_tag`, `error`, `neutral`, `background`. Each maps to a
 specific UI element — see `config.example.toml` for inline documentation.
+`extra` is currently unused (typing can no longer run past the end of a word)
+and is kept only so existing configs keep loading.
 
 > **Background.** The `dark` theme uses `Color::Reset` for `background` so it
 > picks up whatever your terminal's native background is — same look as v0.1.

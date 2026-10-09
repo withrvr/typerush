@@ -26,7 +26,7 @@ KEY:  ✅ done    🚧 in progress    🔲 planned    💡 idea
 
 ### UI
 - ✅ ASCII banner main menu
-- ✅ Live colored typing screen (green/red/dim/extra)
+- ✅ Live colored typing screen (green/red/dim)
 - ✅ **Steady, non-blinking cursor** (no layout jitter)
 - ✅ Progress gauge for word/time modes
 - ✅ Results screen with WPM delta vs last session

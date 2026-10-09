@@ -16,7 +16,6 @@
 use std::time::{Duration, Instant};
 
 use crate::config::load::{CodeLangKind, DefaultMode};
-use crate::game::{get_char_states, CharState};
 use crate::theme::ThemePalette;
 
 /// One of the high-level screens the user can be looking at. The current
@@ -79,8 +78,9 @@ pub struct Word {
     pub text: String,
     /// What the user has typed so far (may be incomplete, may have errors).
     pub typed: String,
-    /// True once the user has pressed space (or otherwise advanced past it).
-    pub submitted: bool,
+    /// True when a non-space key was typed where the trailing space belongs —
+    /// the space is rendered as an error until backspaced.
+    pub space_missed: bool,
 }
 
 impl Word {
@@ -88,7 +88,7 @@ impl Word {
         Self {
             text,
             typed: String::new(),
-            submitted: false,
+            space_missed: false,
         }
     }
 }
@@ -262,7 +262,7 @@ pub struct App {
     /// Characters typed that matched the target. Drives both WPM and accuracy.
     pub correct_chars: usize,
     /// Every character the user has typed during the session, including
-    /// spaces (a successfully submitted space counts as one extra correct char).
+    /// spaces (a correctly typed space also counts as a correct char).
     pub total_typed_chars: usize,
     /// Total backspaces pressed — informational only.
     pub backspaces: usize,
@@ -448,33 +448,41 @@ impl App {
     /// Handle a single visible character keypress (anything that isn't a
     /// control key — letters, digits, punctuation, and the space bar).
     ///
-    /// Space is special: it submits the current word and advances.
+    /// Pure character check: the text is one stream of characters, the space
+    /// between words included. The key is compared with the character under
+    /// the cursor — match is correct, anything else is wrong — and the cursor
+    /// moves on one slot either way. Space is not special: mid-word it is just
+    /// a wrong character.
     pub fn handle_char(&mut self, typed_char: char) {
         self.ensure_timer_started();
         if self.current_word >= self.words.len() {
             return;
         }
 
-        // The space bar is the "submit this word" key.
-        if typed_char == ' ' {
-            self.submit_word();
-            return;
-        }
-
+        let is_last_word = self.current_word + 1 >= self.words.len();
         let active_word = &mut self.words[self.current_word];
-        let target_chars: Vec<char> = active_word.text.chars().collect();
         let cursor_position = active_word.typed.chars().count();
-
-        active_word.typed.push(typed_char);
+        let word_len = active_word.text.chars().count();
         self.total_typed_chars += 1;
 
-        // Only chars that match the target's expected character at the cursor
-        // count as "correct". Anything else (wrong letter or typed past the
-        // end of the target word) does NOT add to correct_chars.
-        if let Some(&expected_char) = target_chars.get(cursor_position) {
-            if expected_char == typed_char {
+        let Some(expected_char) = active_word.text.chars().nth(cursor_position) else {
+            // Cursor on the space after the word: that slot is a character too.
+            active_word.space_missed = typed_char != ' ';
+            if typed_char == ' ' {
                 self.correct_chars += 1;
             }
+            self.advance_word();
+            return;
+        };
+
+        active_word.typed.push(typed_char);
+        if expected_char == typed_char {
+            self.correct_chars += 1;
+        }
+
+        // Last character of the last word typed: there is no trailing space.
+        if is_last_word && cursor_position + 1 == word_len {
+            self.advance_word();
         }
     }
 
@@ -482,8 +490,8 @@ impl App {
     /// erase everything typed for the current word; otherwise erase one char.
     ///
     /// If the current word is already empty and the user is not on the first
-    /// word, walks the cursor back to the previous word so they can fix a typo
-    /// in a word they've already submitted.
+    /// word, erases the space before it — the cursor walks back to the previous
+    /// word so they can fix a typo in a word they've already typed.
     pub fn handle_backspace(&mut self, delete_whole_word: bool) {
         if self.current_word >= self.words.len() {
             return;
@@ -494,7 +502,8 @@ impl App {
         if active_word.typed.is_empty() {
             if self.current_word > 0 {
                 self.current_word -= 1;
-                self.words[self.current_word].submitted = false;
+                self.words[self.current_word].space_missed = false;
+                self.backspaces += 1;
             }
             return;
         }
@@ -508,30 +517,9 @@ impl App {
         }
     }
 
-    /// Called when the user presses space — submits the current word as final
-    /// and advances `current_word`. Will also `finish_game()` if this submission
+    /// Moves the cursor to the next word. Will also `finish_game()` if this
     /// reaches the configured word/quote/code target.
-    fn submit_word(&mut self) {
-        if self.current_word >= self.words.len() {
-            return;
-        }
-        // The space itself is a typed character (it occupies a column on screen).
-        self.total_typed_chars += 1;
-
-        let active_word = &mut self.words[self.current_word];
-        active_word.submitted = true;
-
-        // A "perfectly typed" word means: typed length == target length and
-        // every character is Correct. In that case the trailing space also
-        // counts as a correct keystroke (matching how most typing trainers score).
-        let states = get_char_states(&active_word.text, &active_word.typed);
-        let typed_perfectly = !states.is_empty()
-            && states.iter().all(|(_, s)| *s == CharState::Correct)
-            && active_word.typed.chars().count() == active_word.text.chars().count();
-        if typed_perfectly {
-            self.correct_chars += 1;
-        }
-
+    fn advance_word(&mut self) {
         self.current_word += 1;
 
         // Word-count modes: stop once the user has hit the target.
@@ -618,12 +606,97 @@ mod tests {
         app.words = vec![Word::new("hi".into()), Word::new("bye".into())];
         app.screen = Screen::Typing;
 
-        // Type "hi" + space + "bye" + space.
-        for ch in "hi bye ".chars() {
+        // Type "hi" + space + "bye" — the last character ends the run.
+        for ch in "hi bye".chars() {
             app.handle_char(ch);
         }
 
         assert_eq!(app.screen, Screen::Results);
         assert!(app.ended_at.is_some());
+        // Every slot right, the space included.
+        assert_eq!(app.correct_chars, 6);
+        assert_eq!(app.total_typed_chars, 6);
+    }
+
+    /// Words mode also ends on the last character, with no trailing space.
+    #[test]
+    fn words_mode_finishes_on_last_char() {
+        let mut app = custom_app(&["hi", "bye"]);
+        app.mode = Mode::Words(2);
+
+        for ch in "hi by".chars() {
+            app.handle_char(ch);
+        }
+        assert_eq!(app.screen, Screen::Typing);
+
+        app.handle_char('e');
+        assert_eq!(app.screen, Screen::Results);
+    }
+
+    fn custom_app(words: &[&str]) -> App {
+        let palette = crate::theme::ThemePalette::default();
+        let mut app = App::new(None, palette, DefaultMode::Time(15));
+        app.mode = Mode::Custom;
+        app.words = words.iter().map(|w| Word::new((*w).into())).collect();
+        app.screen = Screen::Typing;
+        app
+    }
+
+    /// Regression (#8): a letter typed where the space belongs used to pile up
+    /// as extras on the current word. The space is a character like any other:
+    /// a wrong key there is a wrong character and the cursor moves on one slot.
+    #[test]
+    fn wrong_key_on_space_is_wrong_char() {
+        let mut app = custom_app(&["hi", "bye"]);
+
+        for ch in "hix".chars() {
+            app.handle_char(ch);
+        }
+        assert_eq!(app.words[0].typed, "hi");
+        assert!(app.words[0].space_missed);
+        assert_eq!(app.current_word, 1);
+        assert_eq!(app.words[1].typed, "");
+
+        // Next word lines up; the last char ends the run (no trailing space).
+        for ch in "bye".chars() {
+            app.handle_char(ch);
+        }
+        assert_eq!(app.correct_chars, 5);
+        assert_eq!(app.total_typed_chars, 6);
+        assert_eq!(app.screen, Screen::Results);
+    }
+
+    /// Space mid-word is just a wrong character — it must not jump words.
+    #[test]
+    fn space_mid_word_is_wrong_char() {
+        let mut app = custom_app(&["hi", "bye"]);
+
+        for ch in "h ".chars() {
+            app.handle_char(ch);
+        }
+        assert_eq!(app.words[0].typed, "h ");
+        assert_eq!(app.current_word, 0);
+        assert_eq!(app.correct_chars, 1);
+        assert_eq!(app.total_typed_chars, 2);
+
+        // Cursor is on the space now; the stray 'i' is wrong there too.
+        app.handle_char('i');
+        assert!(app.words[0].space_missed);
+        assert_eq!(app.current_word, 1);
+    }
+
+    /// Backspace from the start of a word erases the space before it.
+    #[test]
+    fn backspace_erases_wrong_space() {
+        let mut app = custom_app(&["hi", "bye"]);
+
+        for ch in "hix".chars() {
+            app.handle_char(ch);
+        }
+        app.handle_backspace(false);
+
+        assert_eq!(app.current_word, 0);
+        assert_eq!(app.words[0].typed, "hi");
+        assert!(!app.words[0].space_missed);
     }
 }
