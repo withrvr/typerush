@@ -14,6 +14,14 @@
    ██       ██    ██      ███████ ██   ██  ██████  ███████ ██   ██
 ```
 
+## 🎬 Launch video
+
+<a href="docs/brag/brag.mp4"><img src="docs/brag/brag.gif" alt="TypeRush launch video: live WPM and accuracy, four themes, and stats history, all in the terminal" width="100%"></a>
+
+The clip above loops silently. **[▶ Watch it with sound (MP4, 23s)](docs/brag/brag.mp4)**
+
+---
+
 ## 👀 Preview
 
 ![TypeRush demo](https://raw.githubusercontent.com/withrvr/typerush/main/assets/demo.gif)

@@ -1,0 +1,321 @@
+<!doctype html>
+<html>
+<head>
+<meta charset="utf-8">
+<title>TypeRush brag</title>
+<style>
+  :root {
+    --crust: #11111b; --base: #1e1e2e; --mantle: #181825; --text: #cdd6f4; --sub: #a6adc8; --overlay: #6c7086;
+    --teal: #94e2d5; --green: #a6e3a1; --red: #f38ba8; --yellow: #f9e2af; --mauve: #cba6f7;
+  }
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  html, body { width: 1920px; height: 1080px; overflow: hidden; background: var(--crust); }
+  body { font-family: "Inter", system-ui, sans-serif; color: var(--text); -webkit-font-smoothing: antialiased; }
+  .mono { font-family: "DejaVu Sans Mono", monospace; }
+  #stage { position: absolute; inset: 0; overflow: hidden; }
+  #glowA, #glowB { position: absolute; width: 1400px; height: 1400px; border-radius: 50%; }
+  #glowA { background: radial-gradient(circle, rgba(148,226,213,.13) 0%, rgba(148,226,213,0) 60%); }
+  #glowB { background: radial-gradient(circle, rgba(203,166,247,.10) 0%, rgba(203,166,247,0) 60%); }
+  #dots { position: absolute; inset: -40px;
+    background-image: radial-gradient(rgba(205,214,244,.05) 1.5px, transparent 1.5px); background-size: 36px 36px; }
+  .scene { position: absolute; inset: 0; opacity: 0; }
+
+  /* hook */
+  #hook { position: absolute; left: 0; right: 0; top: 50%; transform: translateY(-50%); text-align: center; }
+  #hook .ln { font-family: "DejaVu Sans Mono", monospace; font-weight: 700; font-size: 104px; letter-spacing: -2px;
+    line-height: 1.3; white-space: pre; }
+  #hook .ch { color: var(--overlay); }
+  #hook .ok { color: var(--text); }
+  #hook .ln2 .ok { color: var(--teal); }
+  #hook .bad { color: var(--red); text-decoration: underline; text-decoration-thickness: 6px; text-underline-offset: 14px; }
+  #hook .caret { display: inline-block; width: 0.6em; height: 1.05em; background: var(--teal); vertical-align: -0.17em;
+    margin-left: -0.6em; mix-blend-mode: difference; }
+
+  /* window */
+  .win { position: absolute; border-radius: 18px; overflow: hidden; box-shadow: 0 40px 120px rgba(0,0,0,.6), 0 0 0 1px rgba(255,255,255,.08); }
+  .win .bar { height: 46px; background: var(--mantle); display: flex; align-items: center; padding: 0 20px; gap: 10px; position: relative; }
+  .win .bar i { width: 15px; height: 15px; border-radius: 50%; display: block; }
+  .win .bar i:nth-child(1) { background: #f38ba8; } .win .bar i:nth-child(2) { background: #f9e2af; } .win .bar i:nth-child(3) { background: #a6e3a1; }
+  .win .bar .ttl { position: absolute; left: 0; right: 0; text-align: center; font-family: "DejaVu Sans Mono", monospace; font-size: 18px; color: var(--overlay); }
+  .win .body { position: relative; padding: 18px 22px; }
+  .win canvas { display: block; }
+  .cap { position: absolute; left: 0; right: 0; text-align: center; font-size: 64px; font-weight: 800; letter-spacing: -1.5px; line-height: 1.15; }
+  .cap .sub { display: block; color: var(--sub); font-weight: 500; font-size: 38px; letter-spacing: -.5px; margin-top: 14px; }
+  #prompt { position: absolute; left: 22px; top: 18px; font-size: 24px; color: var(--text); white-space: pre; }
+  #prompt .p { color: var(--green); }
+  #prompt .cur { display: inline-block; width: 14px; height: 28px; background: var(--text); vertical-align: -6px; }
+  .chip { position: absolute; font-family: "DejaVu Sans Mono", monospace; font-size: 30px; padding: 10px 24px; border-radius: 999px;
+    background: rgba(205,214,244,.08); border: 1px solid rgba(205,214,244,.16); color: var(--text); white-space: pre; }
+  .chip b { color: var(--teal); font-weight: 400; }
+
+  /* outro */
+  #oTag { position: absolute; left: 0; right: 0; top: 452px; text-align: center; font-size: 54px; font-weight: 800; letter-spacing: -1.5px; }
+  #oTag span { color: var(--teal); }
+  #oInstall { position: absolute; left: 50%; top: 586px; transform: translateX(-50%); font-family: "DejaVu Sans Mono", monospace; font-size: 46px;
+    padding: 22px 44px; border-radius: 18px; background: var(--base); border: 1px solid rgba(148,226,213,.35); white-space: pre; }
+  #oInstall .p { color: var(--green); }
+  #oLine { position: absolute; left: 0; right: 0; top: 744px; text-align: center; font-size: 40px; color: var(--sub); font-weight: 500; }
+  #oUrl { position: absolute; left: 0; right: 0; top: 850px; text-align: center; font-family: "DejaVu Sans Mono", monospace; font-size: 32px; color: var(--teal); }
+  #oUrl .plat { display: block; font-family: "Inter", sans-serif; font-size: 26px; color: var(--overlay); margin-top: 14px; }
+</style>
+</head>
+<body>
+<div id="stage">
+  <div id="glowA"></div><div id="glowB"></div><div id="dots"></div>
+
+  <div class="scene" id="s1"><div id="hook"><div class="ln ln1" id="hl1"></div><div class="ln ln2" id="hl2"></div></div></div>
+
+  <div class="scene" id="s2">
+    <div class="cap" id="c2" style="top:70px">A typing trainer that lives in your terminal.</div>
+    <div class="win" id="w2"><div class="bar"><i></i><i></i><i></i><div class="ttl">~ — typerush</div></div>
+      <div class="body"><canvas id="cv2"></canvas><div id="prompt" class="mono"></div></div></div>
+  </div>
+
+  <div class="scene" id="s3">
+    <div class="cap" id="c3" style="top:96px">Live WPM and accuracy,<span class="sub">keystroke by keystroke.</span></div>
+    <div class="win" id="w3"><div class="bar"><i></i><i></i><i></i><div class="ttl">typerush --words 10</div></div>
+      <div class="body"><canvas id="cv3"></canvas></div></div>
+  </div>
+
+  <div class="scene" id="s4">
+    <div class="cap" id="c4" style="top:90px">Four built-in themes.<span class="sub">Or bring your own colors.</span></div>
+    <div class="win" id="w4"><div class="bar"><i></i><i></i><i></i><div class="ttl" id="t4">typerush</div></div>
+      <div class="body"><canvas id="cv4"></canvas></div></div>
+    <div class="chip" id="chip4"></div>
+  </div>
+
+  <div class="scene" id="s5">
+    <div class="cap" id="c5" style="top:66px; font-size:56px">Every session saved, right on your machine.</div>
+    <div class="win" id="w5"><div class="bar"><i></i><i></i><i></i><div class="ttl">typerush · stats</div></div>
+      <div class="body"><canvas id="cv5"></canvas></div></div>
+  </div>
+
+  <div class="scene" id="s6">
+    <canvas id="cv6" style="position:absolute"></canvas>
+    <div id="oTag">Type faster. <span>Right in your terminal.</span></div>
+    <div id="oInstall"><span class="p">$</span> cargo install typerush</div>
+    <div id="oLine">One binary. No browser. No internet.</div>
+    <div id="oUrl">github.com/withrvr/typerush<span class="plat">Linux · macOS · Windows · WSL</span></div>
+  </div>
+</div>
+
+<script src="data.js"></script>
+<script>
+// ---------- palette: ANSI colors as pyte reports them -> Catppuccin Mocha (the repo's own VHS demo theme) ----------
+const XT = { "00cd00":"#a6e3a1", "00cdcd":"#94e2d5", "7f7f7f":"#6c7086", "cdcd00":"#f9e2af", "cd00cd":"#cba6f7",
+  "cd0000":"#f38ba8", "ffffff":"#cdd6f4", "000000":"#1e1e2e", "e5e5e5":"#bac2de", "0000ee":"#89b4fa",
+  "ff0000":"#f38ba8", "00ff00":"#a6e3a1", "ffff00":"#f9e2af", "00ffff":"#94e2d5", "ff00ff":"#f5c2e7", "5c5cff":"#89b4fa" };
+const THEMES = {   // window background + default fg for each recording
+  base:    { bg: "#1e1e2e", fg: "#cdd6f4", xt: true },
+  dark:    { bg: "#1e1e2e", fg: "#cdd6f4", xt: true },
+  monokai: { bg: "#272822", fg: "#f8f8f2", xt: false },
+  dracula: { bg: "#282a36", fg: "#f8f8f2", xt: false },
+  light:   { bg: "#fafafa", fg: "#202228", xt: false },
+};
+function col(c, th, isFg) {
+  if (c === "default") return isFg ? th.fg : null;
+  if (th.xt && XT[c]) return XT[c];
+  return "#" + c;
+}
+
+// ---------- terminal renderer: frame at time t -> canvas, block + box chars drawn as geometry ----------
+const FONT = "DejaVu Sans Mono";
+function cellMetrics(px) {
+  const c = document.createElement("canvas").getContext("2d");
+  c.font = `${px}px "${FONT}"`;
+  return { cw: c.measureText("M").width, ch: Math.round(px * 1.32), px };
+}
+function frameAt(rec, t) {
+  const fr = rec.frames; let lo = 0, hi = fr.length - 1, ans = 0;
+  while (lo <= hi) { const m = (lo + hi) >> 1; if (fr[m].t <= t) { ans = m; lo = m + 1; } else hi = m - 1; }
+  return ans;
+}
+const BLOCKS = { "▁":1, "▂":2, "▃":3, "▄":4, "▅":5, "▆":6, "▇":7, "█":8 };
+const BOX = { "─":"h", "│":"v", "┌":"dr", "┐":"dl", "└":"ur", "┘":"ul", "├":"vr", "┤":"vl", "┬":"hd", "┴":"hu", "┼":"vh" };
+const cache = new Map();
+function drawTerm(cv, name, t, opt) {
+  const rec = window.REC[name]; const th = THEMES[opt.theme || "base"];
+  const r0 = opt.r0 || 0, r1 = opt.r1 || rec.rows, c0 = opt.c0 || 0, c1 = opt.c1 || rec.cols;
+  const m = cellMetrics(opt.px);
+  const W = Math.ceil((c1 - c0) * m.cw), H = (r1 - r0) * m.ch;
+  const idx = frameAt(rec, t);
+  const key = cv.id + "|" + name + "|" + idx + "|" + (opt.theme || "");
+  if (cache.get(cv.id) === key) return { W, H };
+  cache.set(cv.id, key);
+  if (cv.width !== W || cv.height !== H) { cv.width = W; cv.height = H; }
+  const g = cv.getContext("2d");
+  g.clearRect(0, 0, W, H);
+  if (!opt.transparent) { g.fillStyle = th.bg; g.fillRect(0, 0, W, H); }
+  g.textBaseline = "middle";
+  const rows = rec.frames[idx].rows;
+  for (let y = r0; y < r1; y++) {
+    let x = 0;
+    for (const [text, fg, bg, bold, ul, rev] of rows[y]) {
+      let f = col(fg, th, true), b = col(bg, th, false);
+      if (rev) { const tmp = f; f = b || th.bg; b = tmp; }
+      for (const chr of text) {
+        if (x >= c0 && x < c1) {
+          const px = (x - c0) * m.cw, py = (y - r0) * m.ch;
+          if (b) { g.fillStyle = b; g.fillRect(Math.floor(px), py, Math.ceil(m.cw) + 1, m.ch); }
+          if (opt.only && !opt.only(chr)) { x++; continue; }
+          g.fillStyle = f;
+          if (BLOCKS[chr]) {
+            const h = m.ch * BLOCKS[chr] / 8;
+            g.fillRect(Math.floor(px), py + m.ch - h, Math.ceil(m.cw) + 1, h);
+          } else if (BOX[chr]) {
+            const k = BOX[chr], lw = Math.max(1.5, m.px / 14), cx = px + m.cw / 2, cy = py + m.ch / 2;
+            g.fillStyle = f;
+            const L = () => g.fillRect(px, cy - lw/2, m.cw/2 + lw/2, lw), R = () => g.fillRect(cx - lw/2, cy - lw/2, m.cw/2 + lw/2 + .5, lw);
+            const U = () => g.fillRect(cx - lw/2, py, lw, m.ch/2 + lw/2), D = () => g.fillRect(cx - lw/2, cy - lw/2, lw, m.ch/2 + lw/2 + .5);
+            if (k === "h") { L(); R(); } else if (k === "v") { U(); D(); }
+            else { if (k.includes("r")) R(); if (k.includes("l")) L(); if (k.includes("u")) U(); if (k.includes("d")) D();
+                   if (k[0] === "v") { U(); D(); } if (k[0] === "h") { L(); R(); } }
+          } else if (chr !== " ") {
+            g.font = `${bold ? "bold " : ""}${m.px}px "${FONT}"`;
+            g.fillText(chr, px, py + m.ch / 2 + 1);
+          }
+          if (ul && chr !== " ") g.fillRect(px, py + m.ch - Math.max(2, m.px/12) - 2, m.cw, Math.max(2, m.px/12));
+        }
+        x++;
+      }
+    }
+  }
+  return { W, H };
+}
+
+// ---------- helpers ----------
+const clamp = (x,a=0,b=1) => Math.min(b, Math.max(a, x));
+const P = (t,a,b) => clamp((t-a)/(b-a));
+const eo = x => 1 - Math.pow(1-x, 3);
+const eio = x => x < .5 ? 4*x*x*x : 1 - Math.pow(-2*x+2, 3)/2;
+const lerp = (a,b,x) => a + (b-a)*x;
+const $ = id => document.getElementById(id);
+function sceneAlpha(t,a,b) { return Math.min(eo(P(t,a,a+.35)), 1 - eio(P(t,b-.3,b))); }
+function rise(el, x, dy=40) { el.style.opacity = x; el.style.transform = `translateY(${(1-x)*dy}px)`; }
+function placeWin(win, W, H, cx, top, extra="") {
+  const ww = W + 44, wh = H + 36 + 46;
+  win.style.width = ww + "px"; win.style.height = wh + "px";
+  win.style.left = (cx - ww/2) + "px"; win.style.top = top + "px";
+  return { ww, wh };
+}
+
+const SC = [[0,3.3],[3.3,6.1],[6.1,13.6],[13.6,16.6],[16.6,19.4],[19.4,23.0]];
+const DURATION = 23.0;
+
+// hook: a scripted typing of the headline, TypeRush-style (pending grey, typed, one red typo fixed)
+const L1 = "Type faster.", L2 = "Right in your terminal.";
+const KEYS1 = []; { let t = 0.25; for (const k of ["T","y","p","e"," ","f","!s","<","a","s","t","e","r","."]) { KEYS1.push([t,k]); t += 0.075; } }
+const KEYS2 = []; { let t = 1.45; for (const ch of L2) { KEYS2.push([t,ch]); t += 0.032; } }
+function hookLine(target, keys, t) {
+  let typed = [];  // [char, ok]
+  for (const [kt,k] of keys) { if (kt > t) break;
+    if (k === "<") typed.pop(); else if (k[0] === "!") typed.push([k[1], false]); else typed.push([k, true]); }
+  let html = "";
+  for (let i = 0; i < target.length; i++) {
+    const tc = typed[i];
+    if (!tc) html += `<span class="ch">${target[i]}</span>`;
+    else html += `<span class="${tc[1] ? "ok" : "bad"}">${tc[1] ? target[i] : tc[0]}</span>`;
+    if (i === typed.length - 1) html += `<span class="caret"></span>`;
+  }
+  return { html, n: typed.length };
+}
+
+const THEME_ORDER = ["dark", "monokai", "dracula", "light"];
+
+// ?freeze holds the background still (used for the README GIF, where a drifting glow costs megabytes)
+const FREEZE_BG = new URLSearchParams(location.search).has("freeze");
+function render(t) {
+  const bt = FREEZE_BG ? 0 : t;
+  $("glowA").style.transform = `translate(${-700 + 600 + Math.sin(bt*.3)*240}px, ${-700 + 380 + Math.cos(bt*.24)*120}px)`;
+  $("glowB").style.transform = `translate(${-700 + 1350 + Math.cos(bt*.26)*200}px, ${-700 + 720 + Math.sin(bt*.31)*120}px)`;
+  $("dots").style.transform = `translate(${(bt*5)%36}px, ${(bt*2.5)%36}px)`;
+  SC.forEach(([a,b],i) => { const el = $("s"+(i+1)); const al = i === 0 ? 1 - eio(P(t,b-.3,b)) : sceneAlpha(t,a,b);
+    el.style.opacity = al; el.style.visibility = al > .001 ? "visible" : "hidden"; });
+
+  // 1 hook
+  {
+    const a = hookLine(L1, KEYS1, t), b = hookLine(L2, KEYS2, t);
+    const blink = Math.floor(t * 3) % 2 === 0;
+    let h1 = a.html, h2 = b.html;
+    if (a.n === 0) h1 = `<span class="caret" style="margin-left:0;margin-right:-0.6em"></span>` + h1;
+    if (b.n === 0 || b.n === L2.length) h2 = h2.replace('<span class="caret"></span>', "");
+    if (a.n === L1.length && b.n > 0) h1 = h1.replace('<span class="caret"></span>', "");
+    if (b.n === L2.length) h2 += blink ? `<span class="caret" style="margin-left:0.05em"></span>` : "";
+    $("hl1").innerHTML = h1; $("hl2").innerHTML = h2;
+    $("hl2").style.opacity = eo(P(t,1.25,1.45));
+  }
+
+  // 2 reveal: window rises, `typerush` typed at a prompt, then the real menu recording
+  {
+    const s = 3.3;
+    rise($("c2"), eo(P(t,s+.15,s+.55)), 30);
+    const d = drawTerm($("cv2"), "menu", Math.max(0, (t - (s+1.05)) + 0.9), { px: 26, r0: 1, r1: 21, c0: 11, c1: 82 });
+    const { wh } = placeWin($("w2"), d.W, d.H, 960, 180);
+    const wi = eo(P(t,s+.1,s+.6)); $("w2").style.opacity = wi; $("w2").style.transform = `translateY(${(1-wi)*70}px)`;
+    const cmd = "typerush"; const n = Math.floor(clamp((t - (s+.45)) / .06, 0, cmd.length));
+    const showPrompt = t < s + 1.05;
+    $("prompt").innerHTML = showPrompt ? `<span class="p">❯</span> ${cmd.slice(0,n)}<span class="cur" style="opacity:${Math.floor(t*3)%2?1:.25}"></span>` : "";
+    $("cv2").style.opacity = showPrompt ? 0 : 1;
+    $("prompt").parentElement.style.background = THEMES.base.bg;
+  }
+
+  // 3 live typing: the real --words 10 take, then its results screen
+  {
+    const s = 6.1;
+    rise($("c3"), eo(P(t,s+.15,s+.55)), 30);
+    const d = drawTerm($("cv3"), "typing", 0.95 + (t - s), { px: 30, r0: 0, r1: 12 });
+    placeWin($("w3"), d.W, d.H, 960, 340);
+    const z = lerp(1, 1.035, eio(P(t, s, s+7.5)));
+    const wi = eo(P(t,s+.05,s+.5));
+    $("w3").style.opacity = wi; $("w3").style.transform = `translateY(${(1-wi)*50}px) scale(${z})`;
+    $("w3").querySelector(".body").style.background = THEMES.base.bg;
+  }
+
+  // 4 themes: the same mid-session screen in each built-in theme, live
+  {
+    const s = 13.6, seg = 0.72, start = s + 0.12;
+    rise($("c4"), eo(P(t,s+.12,s+.5)), 30);
+    const k = clamp(Math.floor((t - start) / seg), 0, 3), th = THEME_ORDER[k];
+    const local = t - (start + k*seg);
+    const d = drawTerm($("cv4"), "theme-" + th, 2.2 + Math.max(0, t - start), { px: 30, r0: 0, r1: 12, theme: th });
+    const { ww, wh } = placeWin($("w4"), d.W, d.H, 960, 330);
+    $("w4").querySelector(".body").style.background = THEMES[th].bg;
+    const light = th === "light";
+    $("w4").querySelector(".bar").style.background = light ? "#e6e6e9" : (th === "dark" ? "#181825" : (th === "monokai" ? "#1e1f1a" : "#21222c"));
+    $("t4").textContent = `typerush --theme ${th}`;
+    $("t4").style.color = light ? "#55575c" : "#6c7086";
+    const pop = k === 0 ? eo(P(t,s+.05,s+.45)) : 1;
+    const kick = k > 0 ? 1 + .02 * (1 - eo(clamp(local / .25))) : 1;
+    $("w4").style.opacity = pop; $("w4").style.transform = `translateY(${(1-pop)*50}px) scale(${kick})`;
+    const chip = $("chip4"); chip.innerHTML = `--theme <b>${th}</b>`;
+    chip.style.top = (330 + wh + 40) + "px"; chip.style.left = (960 - chip.offsetWidth/2) + "px";
+    chip.style.opacity = eo(P(t,s+.3,s+.6));
+  }
+
+  // 5 stats screen (real, after pressing Tab in the menu)
+  {
+    const s = 16.6;
+    rise($("c5"), eo(P(t,s+.12,s+.5)), 30);
+    const d = drawTerm($("cv5"), "stats", 1.1 + (t - s), { px: 24, r0: 0, r1: 22 });
+    placeWin($("w5"), d.W, d.H, 960, 178);
+    const wi = eo(P(t,s+.05,s+.5)); $("w5").style.opacity = wi; $("w5").style.transform = `translateY(${(1-wi)*50}px)`;
+    $("w5").querySelector(".body").style.background = THEMES.base.bg;
+  }
+
+  // 6 outro: the real TYPERUSH banner from the menu screen, then install line
+  {
+    const s = 19.4;
+    const d = drawTerm($("cv6"), "menu", 3.0, { px: 30, r0: 2, r1: 7, c0: 13, c1: 81, transparent: true });
+    const cv = $("cv6"); cv.style.left = (960 - d.W/2) + "px"; cv.style.top = "190px";
+    const bi = eo(P(t,s+.1,s+.55)); cv.style.opacity = bi; cv.style.transform = `translateY(${(1-bi)*40}px)`;
+    rise($("oTag"), eo(P(t,s+.35,s+.75)), 30);
+    const ii = eo(P(t,s+.6,s+1.0)); $("oInstall").style.opacity = ii; $("oInstall").style.transform = `translateX(-50%) translateY(${(1-ii)*30}px)`;
+    rise($("oLine"), eo(P(t,s+.85,s+1.25)), 24);
+    rise($("oUrl"), eo(P(t,s+1.1,s+1.5)), 20);
+  }
+}
+window.render = render; window.DURATION = DURATION;
+render(Number(new URLSearchParams(location.search).get("t") || 0));
+</script>
+</body>
+</html>

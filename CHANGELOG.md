@@ -9,7 +9,8 @@ and the project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
 
 ## [Unreleased]
 
-_No unreleased changes yet._
+### Added
+- **A launch video** in the README: a looping silent GIF that links to the full 23-second MP4 with sound (`docs/brag/`, made with `/brag`). Every terminal frame is the real binary, recorded in a pseudo-terminal. `docs/brag/source/` has the scripts to re-record and re-render it.
 
 ---
 
