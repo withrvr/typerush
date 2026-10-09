@@ -427,11 +427,7 @@ fn save_current_session(app: &mut App) {
             .map(|(k, v)| (k.to_string(), *v))
             .collect(),
     };
-    // Persist to stats.json (save_session also updates aggregate.json on disk).
     app.session_just_saved = storage::save_session(&record).is_ok();
-    // Keep the in-memory aggregate current so the Stats panel stays accurate
-    // without an extra disk read.
-    storage::apply_session_to_aggregate(&mut app.aggregate, &record);
     // Invalidate the session cache so the next Stats screen visit reloads fresh data.
     app.stats_cache = None;
 }

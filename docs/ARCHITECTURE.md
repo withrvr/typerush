@@ -67,11 +67,15 @@ main.rs::handle_key  (matches on app.screen → per-screen handler)
     ▼  (e.g. for Screen::Typing)
 app.rs::handle_char / handle_backspace
     │
+    │   pure character check: the key is compared with the character under
+    │   the cursor (the space between words included). Match → correct,
+    │   anything else → wrong, and the cursor moves on one slot either way.
+    │
     │   mutates:
     │     - words[current].typed
     │     - correct_chars
     │     - total_typed_chars
-    │     - current_word (on space)
+    │     - current_word (when the cursor passes a word's trailing space)
     │     - screen → Results (when mode completes)
     ▼
 back to main loop ──► next frame is drawn from the new state
@@ -95,11 +99,9 @@ src/
 │                        colored feedback. Unit-tested here.
 │
 ├── storage.rs           SessionRecord struct + read/write of
-│                        ~/.typerush/stats.json. AggregateStats + read/write
-│                        of ~/.typerush/aggregate.json. Helpers: personal_best,
+│                        ~/.typerush/stats.json. Helpers: personal_best,
 │                        personal_best_for_mode, average_accuracy, streak,
-│                        avg_wpm_last_n_days, key_accuracy_from_aggregate
-│                        (v0.3.0).
+│                        avg_wpm_last_n_days, key_accuracy (v0.3.0).
 │
 ├── theme/
 │   ├── mod.rs           ThemePalette struct (10 themable color slots)
@@ -148,7 +150,7 @@ every 500ms. The current design renders a **steady** cursor as an
 underlined character in `theme.accent`:
 
 - on a character → the character itself, restyled with the cursor style
-- past the last character → an underlined trailing space, same style
+- on the space after a word → an underlined trailing space, same style
 
 Both cases use the same `fg = theme.accent, modifier = UNDERLINED`. The
 trailing space is always part of the layout, so toggling its style never
@@ -176,33 +178,26 @@ before v0.3.0, slightly larger with per-key maps) that we rewrite it whole on
 every save. Zen-mode sessions are deliberately excluded.
 
 v0.3.0 added two optional fields to `SessionRecord`:
-- `key_hits: HashMap<String, u64>` — per-key correct-press counts
-- `key_misses: HashMap<String, u64>` — per-key wrong/extra-press counts
+- `key_hits: HashMap<String, u64>` — per expected character, times typed correctly
+- `key_misses: HashMap<String, u64>` — per expected character, times something
+  else was typed instead (the space between words counts as a character)
 
 Both fields use `#[serde(default)]` so old records without them load cleanly
 as empty maps. The aggregation helpers (`streak`, `avg_wpm_last_n_days`,
-`personal_best_for_mode`) all live in `storage.rs` and are pure functions over
+`personal_best_for_mode`, `key_accuracy`) all live in `storage.rs` and are pure functions over
 `&[SessionRecord]`.
 
 ### Read-path performance (v0.3.0)
 
-Two caches keep the Stats and Results screens from touching disk on every
-frame (the render loop runs at 10 fps):
+The Stats and Results screens never touch disk on a frame (the render loop
+runs at 10 fps). **`App::stats_cache: Option<Vec<SessionRecord>>`** holds the
+full history, read from `stats.json` once when the user *enters* the Stats or
+Results screen and reused for every frame of that visit. It's set to `None`
+(invalidated) whenever a session is saved, so the next visit reloads fresh data.
 
-- **`App::stats_cache: Option<Vec<SessionRecord>>`** — the full history is read
-  from `stats.json` once, when the user *enters* the Stats or Results screen,
-  and reused for every frame of that visit. It's set to `None` (invalidated)
-  whenever a session is saved, so the next visit reloads fresh data.
-- **`App::aggregate: AggregateStats`** — cumulative per-key hit/miss totals,
-  persisted to `~/.typerush/aggregate.json`. Updated incrementally on each save
-  (O(keys-in-session)) so the key-accuracy heatmap reads via
-  `key_accuracy_from_aggregate` in O(distinct-keys) instead of rescanning the
-  whole history. On first launch after upgrading (no aggregate file yet), it's
-  rebuilt once from `stats.json` and written out.
-
-The aggregate is kept consistent in two places on save: `storage::save_session`
-updates the on-disk file, and `main.rs` applies the same delta to the in-memory
-`App::aggregate` so the UI stays correct without an extra disk read.
+Every summary figure — PB, streak, rolling averages, the key-accuracy heatmap —
+is computed from that cached slice, so `stats.json` is the single source of
+truth: deleting or editing it is always reflected on the next visit.
 
 ### Cross-platform
 crossterm handles Windows Console API, ANSI escape codes, and raw mode in one
@@ -233,7 +228,7 @@ crate. We don't directly use any platform-specific code, so the binary is a
 2. Pattern-match it inside `App::start_game` to pick a word source.
 3. Update `Mode::label` so it persists nicely in stats.
 4. Add a row to `default_menu()`.
-5. If it has a unique completion condition, handle it in `submit_word()` /
+5. If it has a unique completion condition, handle it in `advance_word()` /
    `tick()`.
 6. (Optional) Add a CLI flag in `main.rs::Cli`.
 
@@ -243,8 +238,9 @@ crate. We don't directly use any platform-specific code, so the binary is a
 
 1. Declare a `pub const` of type `ThemePalette` in `src/theme/builtin.rs`.
    Fill every slot (`accent`, `secondary`, `correct`, `incorrect`, `pending`,
-   `extra`, `mode_tag`, `error`, `neutral`, `background`). For light-background
-   themes, pick colors at ≥4.5:1 contrast against the bg.
+   `extra`, `mode_tag`, `error`, `neutral`, `background`). `extra` is unused
+   but still required by the struct. For light-background themes, pick colors
+   at ≥4.5:1 contrast against the bg.
 2. Append `("name", YOUR_THEME)` to `ALL` in the same file.
 3. That's it. The CLI loader (`--theme <name>`), the config loader (`theme =
    "..."`), and `--list-themes` all iterate `ALL` — no other wiring needed.

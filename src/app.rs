@@ -17,8 +17,7 @@ use std::collections::HashMap;
 use std::time::{Duration, Instant};
 
 use crate::config::load::{CodeLangKind, DefaultMode};
-use crate::game::{get_char_states, CharState};
-use crate::storage::{self, AggregateStats, SessionRecord};
+use crate::storage::SessionRecord;
 use crate::theme::ThemePalette;
 
 /// One of the high-level screens the user can be looking at. The current
@@ -81,8 +80,9 @@ pub struct Word {
     pub text: String,
     /// What the user has typed so far (may be incomplete, may have errors).
     pub typed: String,
-    /// True once the user has pressed space (or otherwise advanced past it).
-    pub submitted: bool,
+    /// True when a non-space key was typed where the trailing space belongs —
+    /// the space is rendered as an error until backspaced.
+    pub space_missed: bool,
 }
 
 impl Word {
@@ -90,7 +90,7 @@ impl Word {
         Self {
             text,
             typed: String::new(),
-            submitted: false,
+            space_missed: false,
         }
     }
 }
@@ -264,7 +264,7 @@ pub struct App {
     /// Characters typed that matched the target. Drives both WPM and accuracy.
     pub correct_chars: usize,
     /// Every character the user has typed during the session, including
-    /// spaces (a successfully submitted space counts as one extra correct char).
+    /// spaces (a correctly typed space also counts as a correct char).
     pub total_typed_chars: usize,
     /// Total backspaces pressed — informational only.
     pub backspaces: usize,
@@ -282,19 +282,15 @@ pub struct App {
     pub theme: ThemePalette,
 
     // --- per-key accuracy (v0.3.0) ---
-    /// Number of times each key was typed at the correct position.
+    /// Per expected character: how many times it was typed correctly.
     pub key_hits: HashMap<char, u64>,
-    /// Number of times each key was typed but did not match (wrong key or extra).
+    /// Per expected character: how many times something else was typed instead.
     pub key_misses: HashMap<char, u64>,
 
     // --- stats caching (v0.3.0) ---
     /// Full session history, loaded once when the Stats screen is entered and
     /// invalidated on each session save. `None` until the first Stats visit.
     pub stats_cache: Option<Vec<SessionRecord>>,
-    /// Running aggregate of per-key hit/miss totals across all sessions.
-    /// Loaded from `aggregate.json` at startup; kept current in memory after
-    /// each save so the key-accuracy panel never re-reads the full history.
-    pub aggregate: AggregateStats,
     /// Whether the session currently shown on the Results screen was actually
     /// written to stats.json. False for Zen, sub-1-second, and zero-keystroke
     /// sessions (and on disk failure) — the Results screen uses this to know
@@ -338,23 +334,6 @@ impl App {
             key_misses: HashMap::new(),
             stats_cache: None,
             session_just_saved: false,
-            aggregate: {
-                let mut agg = storage::load_aggregate();
-                // One-time O(n) rebuild when upgrading from a version that
-                // predates aggregate.json — after this the file exists and
-                // subsequent startups are O(1).
-                if agg.key_hits.is_empty() && agg.key_misses.is_empty() {
-                    if let Ok(sessions) = storage::load_sessions() {
-                        for s in &sessions {
-                            storage::apply_session_to_aggregate(&mut agg, s);
-                        }
-                        if !agg.key_hits.is_empty() || !agg.key_misses.is_empty() {
-                            storage::save_aggregate(&agg);
-                        }
-                    }
-                }
-                agg
-            },
         }
     }
 
@@ -493,39 +472,48 @@ impl App {
     /// Handle a single visible character keypress (anything that isn't a
     /// control key — letters, digits, punctuation, and the space bar).
     ///
-    /// Space is special: it submits the current word and advances.
+    /// Pure character check: the text is one stream of characters, the space
+    /// between words included. The key is compared with the character under
+    /// the cursor — match is correct, anything else is wrong — and the cursor
+    /// moves on one slot either way. Space is not special: mid-word it is just
+    /// a wrong character.
     pub fn handle_char(&mut self, typed_char: char) {
         self.ensure_timer_started();
         if self.current_word >= self.words.len() {
             return;
         }
 
-        // The space bar is the "submit this word" key.
-        if typed_char == ' ' {
-            self.submit_word();
+        let is_last_word = self.current_word + 1 >= self.words.len();
+        let active_word = &mut self.words[self.current_word];
+        let cursor_position = active_word.typed.chars().count();
+        let word_len = active_word.text.chars().count();
+        self.total_typed_chars += 1;
+
+        // Past the end of the word the cursor sits on the space after it.
+        let expected_char = active_word.text.chars().nth(cursor_position);
+        let target_char = expected_char.unwrap_or(' ');
+        let is_correct = typed_char == target_char;
+        // Per-key stats are kept for the key that *should* have been pressed.
+        let key_counts = if is_correct {
+            self.correct_chars += 1;
+            &mut self.key_hits
+        } else {
+            &mut self.key_misses
+        };
+        *key_counts.entry(target_char).or_insert(0) += 1;
+
+        if expected_char.is_none() {
+            // Cursor on the space after the word: that slot is a character too.
+            active_word.space_missed = !is_correct;
+            self.advance_word();
             return;
         }
 
-        let active_word = &mut self.words[self.current_word];
-        let target_chars: Vec<char> = active_word.text.chars().collect();
-        let cursor_position = active_word.typed.chars().count();
-
         active_word.typed.push(typed_char);
-        self.total_typed_chars += 1;
 
-        // Only chars that match the target's expected character at the cursor
-        // count as "correct". Anything else (wrong letter or typed past the
-        // end of the target word) does NOT add to correct_chars.
-        if let Some(&expected_char) = target_chars.get(cursor_position) {
-            if expected_char == typed_char {
-                self.correct_chars += 1;
-                *self.key_hits.entry(typed_char).or_insert(0) += 1;
-            } else {
-                *self.key_misses.entry(typed_char).or_insert(0) += 1;
-            }
-        } else {
-            // Extra character typed past the end of the target word.
-            *self.key_misses.entry(typed_char).or_insert(0) += 1;
+        // Last character of the last word typed: there is no trailing space.
+        if is_last_word && cursor_position + 1 == word_len {
+            self.advance_word();
         }
     }
 
@@ -533,8 +521,8 @@ impl App {
     /// erase everything typed for the current word; otherwise erase one char.
     ///
     /// If the current word is already empty and the user is not on the first
-    /// word, walks the cursor back to the previous word so they can fix a typo
-    /// in a word they've already submitted.
+    /// word, erases the space before it — the cursor walks back to the previous
+    /// word so they can fix a typo in a word they've already typed.
     pub fn handle_backspace(&mut self, delete_whole_word: bool) {
         if self.current_word >= self.words.len() {
             return;
@@ -545,7 +533,8 @@ impl App {
         if active_word.typed.is_empty() {
             if self.current_word > 0 {
                 self.current_word -= 1;
-                self.words[self.current_word].submitted = false;
+                self.words[self.current_word].space_missed = false;
+                self.backspaces += 1;
             }
             return;
         }
@@ -559,30 +548,9 @@ impl App {
         }
     }
 
-    /// Called when the user presses space — submits the current word as final
-    /// and advances `current_word`. Will also `finish_game()` if this submission
+    /// Moves the cursor to the next word. Will also `finish_game()` if this
     /// reaches the configured word/quote/code target.
-    fn submit_word(&mut self) {
-        if self.current_word >= self.words.len() {
-            return;
-        }
-        // The space itself is a typed character (it occupies a column on screen).
-        self.total_typed_chars += 1;
-
-        let active_word = &mut self.words[self.current_word];
-        active_word.submitted = true;
-
-        // A "perfectly typed" word means: typed length == target length and
-        // every character is Correct. In that case the trailing space also
-        // counts as a correct keystroke (matching how most typing trainers score).
-        let states = get_char_states(&active_word.text, &active_word.typed);
-        let typed_perfectly = !states.is_empty()
-            && states.iter().all(|(_, s)| *s == CharState::Correct)
-            && active_word.typed.chars().count() == active_word.text.chars().count();
-        if typed_perfectly {
-            self.correct_chars += 1;
-        }
-
+    fn advance_word(&mut self) {
         self.current_word += 1;
 
         // Word-count modes: stop once the user has hit the target.
@@ -683,20 +651,22 @@ mod tests {
     #[test]
     fn wrong_char_increments_key_misses() {
         let mut app = make_app_with_word("abc");
-        app.handle_char('z'); // expected 'a', typed 'z'
-        assert_eq!(*app.key_hits.get(&'z').unwrap_or(&0), 0);
-        assert_eq!(*app.key_misses.get(&'z').unwrap_or(&0), 1);
+        app.handle_char('z'); // expected 'a', typed 'z' — the miss belongs to 'a'
+        assert_eq!(*app.key_misses.get(&'a').unwrap_or(&0), 1);
+        assert!(!app.key_misses.contains_key(&'z'));
+        assert!(app.key_hits.is_empty());
     }
 
     #[test]
-    fn extra_char_increments_key_misses() {
-        let mut app = make_app_with_word("ab");
+    fn space_slot_tracks_hit_and_miss() {
+        let mut app = custom_app(&["ab", "cd"]);
         app.handle_char('a');
         app.handle_char('b');
-        // Now at position 2, past the end of "ab".
-        app.handle_char('x');
-        assert_eq!(*app.key_misses.get(&'x').unwrap_or(&0), 1);
-        assert_eq!(*app.key_hits.get(&'x').unwrap_or(&0), 0);
+        app.handle_char('x'); // wrong key where the space belongs
+        assert_eq!(*app.key_misses.get(&' ').unwrap_or(&0), 1);
+        app.handle_backspace(false);
+        app.handle_char(' '); // correct space
+        assert_eq!(*app.key_hits.get(&' ').unwrap_or(&0), 1);
     }
 
     #[test]
@@ -704,9 +674,9 @@ mod tests {
         let mut app = make_app_with_word("aaa");
         app.handle_char('a'); // hit
         app.handle_char('a'); // hit
-        app.handle_char('b'); // miss (expected 'a', typed 'b')
+        app.handle_char('b'); // miss on 'a' (expected 'a', typed 'b')
         assert_eq!(*app.key_hits.get(&'a').unwrap_or(&0), 2);
-        assert_eq!(*app.key_misses.get(&'b').unwrap_or(&0), 1);
+        assert_eq!(*app.key_misses.get(&'a').unwrap_or(&0), 1);
     }
 
     #[test]
@@ -731,12 +701,97 @@ mod tests {
         app.words = vec![Word::new("hi".into()), Word::new("bye".into())];
         app.screen = Screen::Typing;
 
-        // Type "hi" + space + "bye" + space.
-        for ch in "hi bye ".chars() {
+        // Type "hi" + space + "bye" — the last character ends the run.
+        for ch in "hi bye".chars() {
             app.handle_char(ch);
         }
 
         assert_eq!(app.screen, Screen::Results);
         assert!(app.ended_at.is_some());
+        // Every slot right, the space included.
+        assert_eq!(app.correct_chars, 6);
+        assert_eq!(app.total_typed_chars, 6);
+    }
+
+    /// Words mode also ends on the last character, with no trailing space.
+    #[test]
+    fn words_mode_finishes_on_last_char() {
+        let mut app = custom_app(&["hi", "bye"]);
+        app.mode = Mode::Words(2);
+
+        for ch in "hi by".chars() {
+            app.handle_char(ch);
+        }
+        assert_eq!(app.screen, Screen::Typing);
+
+        app.handle_char('e');
+        assert_eq!(app.screen, Screen::Results);
+    }
+
+    fn custom_app(words: &[&str]) -> App {
+        let palette = crate::theme::ThemePalette::default();
+        let mut app = App::new(None, palette, DefaultMode::Time(15));
+        app.mode = Mode::Custom;
+        app.words = words.iter().map(|w| Word::new((*w).into())).collect();
+        app.screen = Screen::Typing;
+        app
+    }
+
+    /// Regression (#8): a letter typed where the space belongs used to pile up
+    /// as extras on the current word. The space is a character like any other:
+    /// a wrong key there is a wrong character and the cursor moves on one slot.
+    #[test]
+    fn wrong_key_on_space_is_wrong_char() {
+        let mut app = custom_app(&["hi", "bye"]);
+
+        for ch in "hix".chars() {
+            app.handle_char(ch);
+        }
+        assert_eq!(app.words[0].typed, "hi");
+        assert!(app.words[0].space_missed);
+        assert_eq!(app.current_word, 1);
+        assert_eq!(app.words[1].typed, "");
+
+        // Next word lines up; the last char ends the run (no trailing space).
+        for ch in "bye".chars() {
+            app.handle_char(ch);
+        }
+        assert_eq!(app.correct_chars, 5);
+        assert_eq!(app.total_typed_chars, 6);
+        assert_eq!(app.screen, Screen::Results);
+    }
+
+    /// Space mid-word is just a wrong character — it must not jump words.
+    #[test]
+    fn space_mid_word_is_wrong_char() {
+        let mut app = custom_app(&["hi", "bye"]);
+
+        for ch in "h ".chars() {
+            app.handle_char(ch);
+        }
+        assert_eq!(app.words[0].typed, "h ");
+        assert_eq!(app.current_word, 0);
+        assert_eq!(app.correct_chars, 1);
+        assert_eq!(app.total_typed_chars, 2);
+
+        // Cursor is on the space now; the stray 'i' is wrong there too.
+        app.handle_char('i');
+        assert!(app.words[0].space_missed);
+        assert_eq!(app.current_word, 1);
+    }
+
+    /// Backspace from the start of a word erases the space before it.
+    #[test]
+    fn backspace_erases_wrong_space() {
+        let mut app = custom_app(&["hi", "bye"]);
+
+        for ch in "hix".chars() {
+            app.handle_char(ch);
+        }
+        app.handle_backspace(false);
+
+        assert_eq!(app.current_word, 0);
+        assert_eq!(app.words[0].typed, "hi");
+        assert!(!app.words[0].space_missed);
     }
 }

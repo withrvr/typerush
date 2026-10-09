@@ -33,18 +33,19 @@ pub struct SessionRecord {
     pub word_count: usize,
     /// Characters typed that matched the target.
     pub correct_chars: usize,
-    /// Every keystroke counted toward accuracy (correct + wrong + extras + spaces).
+    /// Every keystroke counted toward accuracy (correct + wrong, spaces included).
     pub total_chars: usize,
     /// Duration of the session in seconds.
     pub duration_secs: f64,
     /// When the session ended, in local time.
     pub timestamp: DateTime<Local>,
-    /// Per-key hit counts: number of times each key was typed correctly.
+    /// Per-key hit counts: times each expected character was typed correctly.
     /// Key is a single character serialised as a string (JSON map keys must be strings).
     /// Added in v0.3.0; old records without this field deserialise to an empty map.
     #[serde(default)]
     pub key_hits: HashMap<String, u64>,
-    /// Per-key miss counts: number of times each key was typed but did not match.
+    /// Per-key miss counts: times something else was typed where this
+    /// character was expected (the space between words included).
     /// Added in v0.3.0; old records without this field deserialise to an empty map.
     #[serde(default)]
     pub key_misses: HashMap<String, u64>,
@@ -63,11 +64,6 @@ pub fn stats_path() -> PathBuf {
     data_dir().join("stats.json")
 }
 
-/// Full path to the incremental key-accuracy aggregate file.
-fn aggregate_path() -> PathBuf {
-    data_dir().join("aggregate.json")
-}
-
 /// Write `contents` to `path` atomically: write a sibling `*.tmp` file first,
 /// then rename it over the target. `rename` is atomic on the same filesystem
 /// on Linux, macOS, and Windows, so a crash or power loss mid-write can never
@@ -81,73 +77,13 @@ fn write_atomic(path: &Path, contents: &str) -> std::io::Result<()> {
     fs::rename(&tmp, path)
 }
 
-/// Cumulative per-key press totals across **all** saved sessions.
-///
-/// Stored in `~/.typerush/aggregate.json` and updated with each session save
-/// (O(keys_in_session)), so key-accuracy reads stay O(1) regardless of how
-/// large `stats.json` grows.
-#[derive(Debug, Clone, Default, Serialize, Deserialize)]
-pub struct AggregateStats {
-    /// Total correct presses per key across every saved session.
-    #[serde(default)]
-    pub key_hits: HashMap<String, u64>,
-    /// Total wrong / extra presses per key across every saved session.
-    #[serde(default)]
-    pub key_misses: HashMap<String, u64>,
-}
-
-/// Load the aggregate from disk. Returns a zeroed `AggregateStats` when the
-/// file is missing or unreadable (first run, or after manual deletion).
-pub fn load_aggregate() -> AggregateStats {
-    load_aggregate_from_path(&aggregate_path())
-}
-
-/// Persist the aggregate to disk. Best-effort — never panics.
-pub fn save_aggregate(agg: &AggregateStats) {
-    save_aggregate_to_path(&aggregate_path(), agg);
-}
-
-/// Path-based variant of [`load_aggregate`]. Exposed for tests.
-pub fn load_aggregate_from_path(path: &Path) -> AggregateStats {
-    if !path.exists() {
-        return AggregateStats::default();
-    }
-    let Ok(raw) = fs::read_to_string(path) else {
-        return AggregateStats::default();
-    };
-    serde_json::from_str(&raw).unwrap_or_default()
-}
-
-/// Path-based variant of [`save_aggregate`]. Exposed for tests.
-pub fn save_aggregate_to_path(path: &Path, agg: &AggregateStats) {
-    if let Ok(json) = serde_json::to_string_pretty(agg) {
-        let _ = write_atomic(path, &json);
-    }
-}
-
-/// Apply one session's key data to an in-memory aggregate. Pure — no disk I/O.
-/// Call `save_aggregate` separately when you want to persist the result.
-pub fn apply_session_to_aggregate(agg: &mut AggregateStats, record: &SessionRecord) {
-    for (k, &v) in &record.key_hits {
-        *agg.key_hits.entry(k.clone()).or_insert(0) += v;
-    }
-    for (k, &v) in &record.key_misses {
-        *agg.key_misses.entry(k.clone()).or_insert(0) += v;
-    }
-}
-
 /// Append `record` to the stats file, creating the data directory if needed.
-/// Also updates `aggregate.json` incrementally so key-accuracy reads stay fast.
 ///
 /// The whole stats file is rewritten on each save — fine in practice because
 /// the file is tiny and the user only saves once at the end of a session.
 pub fn save_session(record: &SessionRecord) -> Result<()> {
     fs::create_dir_all(data_dir())?;
-    save_session_to_path(&stats_path(), record)?;
-    let mut agg = load_aggregate();
-    apply_session_to_aggregate(&mut agg, record);
-    save_aggregate(&agg);
-    Ok(())
+    save_session_to_path(&stats_path(), record)
 }
 
 /// Load every saved session in the order they were recorded (oldest first).
@@ -161,8 +97,18 @@ pub fn load_sessions() -> Result<Vec<SessionRecord>> {
 pub fn save_session_to_path(path: &Path, record: &SessionRecord) -> Result<()> {
     let mut history: Vec<SessionRecord> = if path.exists() {
         let raw = fs::read_to_string(path)?;
-        // If the file is corrupt or empty, start over rather than panicking.
-        serde_json::from_str(&raw).unwrap_or_default()
+        match serde_json::from_str(&raw) {
+            Ok(history) => history,
+            Err(_) if raw.trim().is_empty() => vec![],
+            // Corrupt file: start over, but copy it aside first so the
+            // rewrite below can never silently destroy the user's history.
+            Err(_) => {
+                let mut backup = path.as_os_str().to_owned();
+                backup.push(".corrupt");
+                fs::copy(path, PathBuf::from(backup))?;
+                vec![]
+            }
+        }
     } else {
         vec![]
     };
@@ -287,9 +233,9 @@ pub fn avg_wpm_last_n_days(sessions: &[SessionRecord], days: u32) -> Option<f64>
 /// Aggregated per-key accuracy across all sessions, sorted by accuracy
 /// ascending (worst keys first). Only keys with at least `min_presses`
 /// total keystrokes (hits + misses) are included.
-/// Used by tests; production code uses `key_accuracy_from_aggregate`.
-#[cfg(test)]
-fn key_accuracy(sessions: &[SessionRecord], min_presses: u64) -> Vec<KeyAccuracyStat> {
+// ponytail: rescans every session's key map per call (~40 keys × sessions);
+// cache the result alongside `App::stats_cache` if huge histories get slow.
+pub fn key_accuracy(sessions: &[SessionRecord], min_presses: u64) -> Vec<KeyAccuracyStat> {
     let mut hits: HashMap<char, u64> = HashMap::new();
     let mut misses: HashMap<char, u64> = HashMap::new();
 
@@ -339,54 +285,14 @@ fn key_accuracy(sessions: &[SessionRecord], min_presses: u64) -> Vec<KeyAccuracy
     stats
 }
 
-/// Same as `key_accuracy` but reads from a pre-computed `AggregateStats`
-/// instead of iterating all sessions. O(distinct_keys) — always fast.
-/// Prefer this in the render path.
-pub fn key_accuracy_from_aggregate(agg: &AggregateStats, min_presses: u64) -> Vec<KeyAccuracyStat> {
-    let all_keys: std::collections::HashSet<&str> = agg
-        .key_hits
-        .keys()
-        .chain(agg.key_misses.keys())
-        .map(String::as_str)
-        .collect();
-
-    let mut stats: Vec<KeyAccuracyStat> = all_keys
-        .into_iter()
-        .filter_map(|k| {
-            let c = k.chars().next()?;
-            let h = agg.key_hits.get(k).copied().unwrap_or(0);
-            let m = agg.key_misses.get(k).copied().unwrap_or(0);
-            let total = h + m;
-            if total < min_presses {
-                return None;
-            }
-            let accuracy = h as f64 / total as f64 * 100.0;
-            Some(KeyAccuracyStat {
-                key: c,
-                total,
-                hits: h,
-                accuracy,
-            })
-        })
-        .collect();
-
-    stats.sort_by(|a, b| {
-        a.accuracy
-            .partial_cmp(&b.accuracy)
-            .unwrap_or(std::cmp::Ordering::Equal)
-            .then_with(|| a.key.cmp(&b.key))
-    });
-    stats
-}
-
 /// Accuracy statistics for a single key, used by the key-accuracy heatmap.
 #[derive(Debug, Clone)]
 pub struct KeyAccuracyStat {
-    /// The typed character.
+    /// The expected character.
     pub key: char,
-    /// Total times this key was pressed (hits + misses).
+    /// Times this character was due (hits + misses).
     pub total: u64,
-    /// Times this key was pressed at the correct position.
+    /// Times it was typed correctly.
     pub hits: u64,
     /// Accuracy as a percentage, 0–100.
     pub accuracy: f64,
@@ -1167,82 +1073,15 @@ mod tests {
         assert_eq!(stats.parent().unwrap(), dir);
     }
 
-    // ═══════════════════════════════════════════════════════════════════════
-    //  AggregateStats — the production key-accuracy read path (v0.3.0)
-    // ═══════════════════════════════════════════════════════════════════════
-
     #[test]
-    fn aggregate_apply_accumulates_across_sessions() {
-        let mut agg = AggregateStats::default();
-        let s1 = make_record_with_keys(50.0, "time-30s", 0, &[("a", 8), ("b", 3)], &[("a", 2)]);
-        let s2 = make_record_with_keys(55.0, "words-25", 1, &[("a", 2)], &[("a", 8), ("c", 1)]);
-        apply_session_to_aggregate(&mut agg, &s1);
-        apply_session_to_aggregate(&mut agg, &s2);
-        assert_eq!(agg.key_hits.get("a"), Some(&10));
-        assert_eq!(agg.key_hits.get("b"), Some(&3));
-        assert_eq!(agg.key_misses.get("a"), Some(&10));
-        assert_eq!(agg.key_misses.get("c"), Some(&1));
-    }
-
-    #[test]
-    fn aggregate_result_matches_full_history_scan() {
-        // The incremental aggregate must produce byte-identical results to
-        // the reference full-scan implementation over the same history.
-        let sessions = scenario_10_varied();
-        let mut agg = AggregateStats::default();
-        for s in &sessions {
-            apply_session_to_aggregate(&mut agg, s);
-        }
-        let from_agg = key_accuracy_from_aggregate(&agg, 1);
-        let from_scan = key_accuracy(&sessions, 1);
-        assert_eq!(from_agg.len(), from_scan.len());
-        for (a, b) in from_agg.iter().zip(from_scan.iter()) {
-            assert_eq!(a.key, b.key);
-            assert_eq!(a.total, b.total);
-            assert_eq!(a.hits, b.hits);
-            assert!((a.accuracy - b.accuracy).abs() < 1e-9);
-        }
-    }
-
-    #[test]
-    fn aggregate_key_accuracy_stable_tiebreak_and_min_presses() {
-        let mut agg = AggregateStats::default();
-        // 'r' and 'n' both 80% (4/5); 'q' only pressed twice (filtered at 3).
-        agg.key_hits.insert("r".into(), 4);
-        agg.key_misses.insert("r".into(), 1);
-        agg.key_hits.insert("n".into(), 4);
-        agg.key_misses.insert("n".into(), 1);
-        agg.key_hits.insert("q".into(), 2);
-        let stats = key_accuracy_from_aggregate(&agg, 3);
-        assert_eq!(stats.len(), 2);
-        assert_eq!(stats[0].key, 'n'); // alphabetical tiebreak — stable order
-        assert_eq!(stats[1].key, 'r');
-    }
-
-    #[test]
-    fn aggregate_roundtrip_via_path() {
+    fn save_over_corrupt_file_keeps_a_backup() {
         let dir = tempfile::tempdir().unwrap();
-        let path = dir.path().join("aggregate.json");
-        let mut agg = AggregateStats::default();
-        agg.key_hits.insert("e".into(), 100);
-        agg.key_misses.insert("e".into(), 7);
-        save_aggregate_to_path(&path, &agg);
-        let loaded = load_aggregate_from_path(&path);
-        assert_eq!(loaded.key_hits.get("e"), Some(&100));
-        assert_eq!(loaded.key_misses.get("e"), Some(&7));
-    }
-
-    #[test]
-    fn aggregate_missing_or_corrupt_file_loads_default() {
-        let dir = tempfile::tempdir().unwrap();
-        let missing = dir.path().join("nope.json");
-        let loaded = load_aggregate_from_path(&missing);
-        assert!(loaded.key_hits.is_empty() && loaded.key_misses.is_empty());
-
-        let corrupt = dir.path().join("aggregate.json");
-        std::fs::write(&corrupt, "not { json").unwrap();
-        let loaded = load_aggregate_from_path(&corrupt);
-        assert!(loaded.key_hits.is_empty() && loaded.key_misses.is_empty());
+        let path = dir.path().join("stats.json");
+        std::fs::write(&path, "[{\"wpm\": 1").unwrap();
+        save_session_to_path(&path, &make_record(50.0, "time-30s", 0)).unwrap();
+        let backup = std::fs::read_to_string(dir.path().join("stats.json.corrupt")).unwrap();
+        assert_eq!(backup, "[{\"wpm\": 1");
+        assert_eq!(load_sessions_from_path(&path).unwrap().len(), 1);
     }
 
     // ── Atomic writes — crash mid-write must never corrupt history ─────────
@@ -1260,11 +1099,5 @@ mod tests {
         // And the target must be complete, valid JSON with all 5 records.
         let loaded = load_sessions_from_path(&path).unwrap();
         assert_eq!(loaded.len(), 5);
-
-        // Same invariant for the aggregate.
-        let agg_path = dir.path().join("aggregate.json");
-        save_aggregate_to_path(&agg_path, &AggregateStats::default());
-        assert!(!dir.path().join("aggregate.json.tmp").exists());
-        assert!(agg_path.exists());
     }
 }

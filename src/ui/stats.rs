@@ -1,7 +1,6 @@
 //! Historical stats screen — reads session data from `App`'s in-memory cache
-//! (populated once on screen entry from `~/.typerush/stats.json`) and key
-//! accuracy from the pre-computed `App::aggregate`. No disk I/O in the render
-//! path.
+//! (populated once on screen entry from `~/.typerush/stats.json`). No disk I/O
+//! in the render path.
 //!
 //! v0.3.0 additions:
 //!  - Daily streak counter (top summary card)
@@ -25,13 +24,13 @@ pub fn render(f: &mut Frame, app: &App) {
     //   1 — summary (left) + key accuracy (right) (8 rows)
     //   2 — WPM sparkline (5 rows)
     //   3 — recent sessions table (fills remaining space)
-    //   4 — footer (3 rows)
+    //   4 — footer (1 row — the table gets the rest, 5 sessions at 24 rows)
     let layout = Layout::vertical([
         Constraint::Length(2),
         Constraint::Length(8),
         Constraint::Length(5),
         Constraint::Min(4),
-        Constraint::Length(3),
+        Constraint::Length(1),
     ])
     .split(area);
 
@@ -156,14 +155,13 @@ fn render_summary_and_heatmap(
 
     // ── Key accuracy heatmap ─────────────────────────────────────────────────
 
-    render_key_heatmap(f, app, cols[1]);
+    render_key_heatmap(f, app, cols[1], sessions);
 }
 
 /// Render the key-accuracy panel (worst keys, sorted by accuracy ascending).
-/// Reads from `app.aggregate` — O(distinct_keys), no disk I/O.
-fn render_key_heatmap(f: &mut Frame, app: &App, area: Rect) {
+fn render_key_heatmap(f: &mut Frame, app: &App, area: Rect, sessions: &[storage::SessionRecord]) {
     let theme = &app.theme;
-    let worst_keys = storage::key_accuracy_from_aggregate(&app.aggregate, 3);
+    let worst_keys = storage::key_accuracy(sessions, 3);
 
     if worst_keys.is_empty() {
         let msg = Paragraph::new(vec![
@@ -293,7 +291,7 @@ fn render_sessions_table(
         recent_rows,
         [
             Constraint::Length(18),
-            Constraint::Length(14),
+            Constraint::Length(16), // fits "code-javascript"
             Constraint::Length(8),
             Constraint::Length(8),
             Constraint::Length(8),

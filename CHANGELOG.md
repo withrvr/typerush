@@ -13,19 +13,20 @@ _No unreleased changes yet._
 
 ---
 
-## [0.3.0] — 2026-07-09 — smarter stats
+## [0.3.0] — 2026-10-09 — smarter stats
 
 ### Added
 
-- **Per-key accuracy heatmap.** TypeRush now tracks how often you type each
-  key correctly vs. incorrectly. After enough sessions the Stats screen shows
+- **Per-key accuracy heatmap.** TypeRush now tracks, for every character you
+  are asked to type (the space between words included), how often you hit it
+  and how often you typed something else instead. After enough sessions the Stats screen shows
   a "key accuracy" panel with up to 5 of your worst keys, including hit/total
   counts and a colour-coded accuracy percentage (red < 80%, amber < 93%,
   green otherwise). The panel shows "no key data yet (keep typing!)" until at
-  least one key has been pressed 3 or more times. Per-key data is stored in
+  least one key has come up 3 or more times. Per-key data is stored in
   `stats.json` alongside each session record.
 - **Per-mode personal bests.** The Results screen now shows the personal best
-  specifically for the mode you just finished (e.g. `time-30s best`) instead
+  specifically for the mode you just finished (a `mode best` row) instead
   of the all-time best across all modes. A `★ new best!` badge fires whenever
   you beat your previous record for that mode, including on your first session.
   Zen-mode results display `— (zen not saved)` since Zen sessions are not saved.
@@ -46,7 +47,9 @@ _No unreleased changes yet._
 - **Stats screen layout redesigned.** The summary card and the new key-accuracy
   heatmap sit side by side in a two-column top row, followed by the WPM
   sparkline and the recent-sessions table. The sparkline is slightly shorter
-  (5 rows instead of 7) so the full screen still fits in a 24-row terminal.
+  (5 rows instead of 7) and the footer takes one row, so the recent-sessions
+  table still shows 5 sessions in a 24-row terminal. The mode column is wide
+  enough for `code-javascript`.
 - **Results screen body expanded** from `Constraint::Length(9)` to
   `Constraint::Length(10)` to accommodate the mode-specific best row.
 
@@ -56,31 +59,50 @@ _No unreleased changes yet._
   The session history is loaded once when you enter either screen and cached
   in memory for the duration of the visit, then invalidated when a new session
   is saved.
-- **Per-key accuracy is now O(1) to display.** A small running aggregate
-  (`~/.typerush/aggregate.json`) keeps cumulative per-key hit/miss totals,
-  updated incrementally on each save, so the heatmap no longer rescans the full
-  history every render. The aggregate is rebuilt automatically from existing
-  sessions on first launch after upgrading.
 
 ### Fixed
 
 - **Stable ordering in the key-accuracy panel.** Keys with identical accuracy
   (e.g. two keys both at 80%) are now broken ties alphabetically, so they no
   longer swap positions and flicker between renders.
-- **Crash-safe stats writes.** `stats.json` and `aggregate.json` are now
-  written atomically (temp file + rename), so a crash or power loss mid-save
-  can never corrupt the file — and can never silently wipe your history on
-  the next save. Works on Linux, macOS, and Windows.
+- **Crash-safe stats writes.** `stats.json` is now written atomically (temp
+  file + rename), so a crash or power loss mid-save can never leave a
+  half-written file. Works on Linux, macOS, and Windows.
+- **A corrupt `stats.json` is no longer silently wiped.** If the file can't be
+  parsed when a session is saved, it is copied to `stats.json.corrupt` before
+  a fresh history is started.
 - **Accurate Results screen for unsaved sessions.** Sessions that are not
   recorded (Zen mode, shorter than 1 second, or zero keystrokes) no longer
   shift the "vs last" delta by one session, and can no longer flash a
-  `★ new best!` badge for a record that was never kept.
+  `★ new best!` badge for a record that was never kept. If no session for the
+  mode has been recorded yet, the mode best shows `—`.
 
 ### Compatibility
 
-- Existing CLI flags, modes, config, and the stats file format are all
-  unchanged. Old `stats.json` records load correctly and contribute to
+- Existing CLI flags, modes, and config are unchanged. The stats file only
+  gains two optional fields (`key_hits`, `key_misses`). Old `stats.json` records load correctly and contribute to
   global stats; they just won't provide per-key heatmap data.
+
+---
+
+## [0.2.1] — pure character checking
+
+### Changed
+- **Pure character checking.** Typing is now one stream of characters, and
+  the space between words is a character like any other. Each key is
+  compared with the character under the cursor — match is correct, anything
+  else is wrong — and the cursor moves on one slot either way. A space typed
+  mid-word is a wrong character and no longer jumps to the next word. The run
+  ends when the last character is typed; no trailing space is needed.
+  Backspace walks back over spaces one character at a time.
+- The `extra` color slot is now unused (typing can no longer run past the end
+  of a word). It is still accepted in config files so existing configs load.
+
+### Fixed
+- **Wrong key on a space no longer piles up letters** ([#8]). Typing a letter
+  where a space belongs used to append surplus characters to the word and
+  leave the cursor stuck until space was pressed. It now counts as a wrong
+  character: the space is shown red and underlined and the cursor moves on.
 
 ---
 
@@ -182,6 +204,8 @@ _No unreleased changes yet._
 - Demo GIF uses absolute GitHub raw URL for correct display on crates.io.
 
 [Unreleased]: https://github.com/withrvr/typerush/compare/v0.3.0...HEAD
-[0.3.0]: https://github.com/withrvr/typerush/compare/v0.2.0...v0.3.0
+[0.3.0]: https://github.com/withrvr/typerush/compare/v0.2.1...v0.3.0
+[0.2.1]: https://github.com/withrvr/typerush/compare/v0.2.0...v0.2.1
 [0.2.0]: https://github.com/withrvr/typerush/compare/v0.1.1...v0.2.0
 [0.1.1]: https://github.com/withrvr/typerush/releases/tag/v0.1.1
+[#8]: https://github.com/withrvr/typerush/issues/8

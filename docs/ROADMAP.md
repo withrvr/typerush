@@ -26,7 +26,7 @@ KEY:  ✅ done    🚧 in progress    🔲 planned    💡 idea
 
 ### UI
 - ✅ ASCII banner main menu
-- ✅ Live colored typing screen (green/red/dim/extra)
+- ✅ Live colored typing screen (green/red/dim)
 - ✅ **Steady, non-blinking cursor** (no layout jitter)
 - ✅ Progress gauge for word/time modes
 - ✅ Results screen with WPM delta vs last session
@@ -66,7 +66,7 @@ KEY:  ✅ done    🚧 in progress    🔲 planned    💡 idea
 - ✅ Daily streak counter
 - ✅ Average WPM over the last 7 / 30 days
 - ✅ Crash-safe (atomic) stats writes
-- ✅ O(1) stats rendering via `aggregate.json` + in-memory session cache
+- ✅ Stats screens read `stats.json` once per visit (in-memory session cache)
 
 ---
 

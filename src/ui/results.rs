@@ -96,12 +96,11 @@ pub fn render(f: &mut Frame, app: &App) {
             Span::styled("  — (zen not saved)", Style::default().fg(theme.pending)),
         ])
     } else {
-        let mode_pb_now = storage::personal_best_for_mode(sessions, &mode_label).unwrap_or(wpm);
-        // Right-pad label to keep WPM value at a consistent column.
-        let raw_label = format!("{} best", mode_label);
-        let padded_label = format!("  {:<13}", raw_label);
+        // No recorded session for this mode yet (e.g. this one was too short
+        // to save) → there is no best to show.
+        let mode_pb_now = storage::personal_best_for_mode(sessions, &mode_label);
         let pb_value = Span::styled(
-            format!("{:>6.1} wpm", mode_pb_now),
+            mode_pb_now.map_or("     — wpm".to_string(), |pb| format!("{:>6.1} wpm", pb)),
             Style::default()
                 .fg(theme.accent)
                 .add_modifier(Modifier::BOLD),
@@ -117,7 +116,9 @@ pub fn render(f: &mut Frame, app: &App) {
             Span::raw("")
         };
         Line::from(vec![
-            Span::styled(padded_label, Style::default().fg(theme.pending)),
+            // The mode is named on the row above; a fixed-width label keeps
+            // the value in the same column as wpm/accuracy for every mode.
+            Span::styled("  mode best  ", Style::default().fg(theme.pending)),
             pb_value,
             badge,
         ])
