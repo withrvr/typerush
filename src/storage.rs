@@ -13,6 +13,7 @@ use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::{
     fs,
+    io::Write,
     path::{Path, PathBuf},
 };
 
@@ -33,18 +34,19 @@ pub struct SessionRecord {
     pub word_count: usize,
     /// Characters typed that matched the target.
     pub correct_chars: usize,
-    /// Every keystroke counted toward accuracy (correct + wrong + extras + spaces).
+    /// Every keystroke counted toward accuracy (correct + wrong, spaces included).
     pub total_chars: usize,
     /// Duration of the session in seconds.
     pub duration_secs: f64,
     /// When the session ended, in local time.
     pub timestamp: DateTime<Local>,
-    /// Per-key hit counts: number of times each key was typed correctly.
+    /// Per-key hit counts: times each expected character was typed correctly.
     /// Key is a single character serialised as a string (JSON map keys must be strings).
     /// Added in v0.3.0; old records without this field deserialise to an empty map.
     #[serde(default)]
     pub key_hits: HashMap<String, u64>,
-    /// Per-key miss counts: number of times each key was typed but did not match.
+    /// Per-key miss counts: times something else was typed where this
+    /// character was expected (the space between words included).
     /// Added in v0.3.0; old records without this field deserialise to an empty map.
     #[serde(default)]
     pub key_misses: HashMap<String, u64>,
@@ -63,119 +65,81 @@ pub fn stats_path() -> PathBuf {
     data_dir().join("stats.json")
 }
 
-/// Full path to the incremental key-accuracy aggregate file.
-fn aggregate_path() -> PathBuf {
-    data_dir().join("aggregate.json")
-}
-
-/// Write `contents` to `path` atomically: write a sibling `*.tmp` file first,
-/// then rename it over the target. `rename` is atomic on the same filesystem
-/// on Linux, macOS, and Windows, so a crash or power loss mid-write can never
-/// leave a half-written (corrupt) stats file behind — the old file survives
-/// intact until the new one is fully on disk.
+/// Write `contents` to `path` atomically: write a sibling `*.tmp` file, flush
+/// it to disk, then rename it over the target. `rename` is atomic on the same
+/// filesystem on Linux, macOS, and Windows, and the `sync_all` before it makes
+/// sure the new data is on disk first — without it, a power loss right after
+/// the rename can leave a zero-length file on filesystems with delayed
+/// allocation (XFS, btrfs, some ext4 setups).
 ///
-/// `pub(crate)` so `state.rs` shares the same guarantee for `state.json`.
+/// A symlinked target is followed, so the link survives and the file it points
+/// at is replaced; the existing file's permissions are kept. The temp name
+/// includes the process id so two TypeRush windows saving at once never write
+/// into the same temp file.
+///
+/// `pub(crate)` so `state.rs` gets the same guarantee for `state.json`.
 pub(crate) fn write_atomic(path: &Path, contents: &str) -> std::io::Result<()> {
+    let path = fs::canonicalize(path).unwrap_or_else(|_| path.to_path_buf());
     let mut tmp = path.as_os_str().to_owned();
-    tmp.push(".tmp");
+    tmp.push(format!(".{}.tmp", std::process::id()));
     let tmp = PathBuf::from(tmp);
-    fs::write(&tmp, contents)?;
-    fs::rename(&tmp, path)
-}
-
-/// Cumulative per-key press totals across **all** saved sessions.
-///
-/// Stored in `~/.typerush/aggregate.json` and updated with each session save
-/// (O(keys_in_session)), so key-accuracy reads stay O(1) regardless of how
-/// large `stats.json` grows.
-#[derive(Debug, Clone, Default, Serialize, Deserialize)]
-pub struct AggregateStats {
-    /// Total correct presses per key across every saved session.
-    #[serde(default)]
-    pub key_hits: HashMap<String, u64>,
-    /// Total wrong / extra presses per key across every saved session.
-    #[serde(default)]
-    pub key_misses: HashMap<String, u64>,
-}
-
-/// Load the aggregate from disk. Returns a zeroed `AggregateStats` when the
-/// file is missing or unreadable (first run, or after manual deletion).
-pub fn load_aggregate() -> AggregateStats {
-    load_aggregate_from_path(&aggregate_path())
-}
-
-/// Persist the aggregate to disk. Best-effort — never panics.
-pub fn save_aggregate(agg: &AggregateStats) {
-    save_aggregate_to_path(&aggregate_path(), agg);
-}
-
-/// Path-based variant of [`load_aggregate`]. Exposed for tests.
-pub fn load_aggregate_from_path(path: &Path) -> AggregateStats {
-    if !path.exists() {
-        return AggregateStats::default();
+    let mut file = fs::File::create(&tmp)?;
+    if let Ok(metadata) = fs::metadata(&path) {
+        file.set_permissions(metadata.permissions())?;
     }
-    let Ok(raw) = fs::read_to_string(path) else {
-        return AggregateStats::default();
-    };
-    serde_json::from_str(&raw).unwrap_or_default()
-}
-
-/// Path-based variant of [`save_aggregate`]. Exposed for tests.
-pub fn save_aggregate_to_path(path: &Path, agg: &AggregateStats) {
-    if let Ok(json) = serde_json::to_string_pretty(agg) {
-        let _ = write_atomic(path, &json);
+    file.write_all(contents.as_bytes())?;
+    file.sync_all()?;
+    drop(file);
+    fs::rename(&tmp, &path)?;
+    // Make the rename itself durable. Best-effort, Unix only: Windows can't
+    // open a directory as a file.
+    #[cfg(unix)]
+    if let Some(dir) = path.parent().filter(|dir| !dir.as_os_str().is_empty()) {
+        let _ = fs::File::open(dir).and_then(|dir| dir.sync_all());
     }
-}
-
-/// Apply one session's key data to an in-memory aggregate. Pure — no disk I/O.
-/// Call `save_aggregate` separately when you want to persist the result.
-pub fn apply_session_to_aggregate(agg: &mut AggregateStats, record: &SessionRecord) {
-    for (k, &v) in &record.key_hits {
-        *agg.key_hits.entry(k.clone()).or_insert(0) += v;
-    }
-    for (k, &v) in &record.key_misses {
-        *agg.key_misses.entry(k.clone()).or_insert(0) += v;
-    }
-}
-
-/// Append `record` to the stats file, creating the data directory if needed.
-/// Also updates `aggregate.json` incrementally so key-accuracy reads stay fast.
-///
-/// The whole stats file is rewritten on each save — fine in practice because
-/// the file is tiny and the user only saves once at the end of a session.
-pub fn save_session(record: &SessionRecord) -> Result<()> {
-    fs::create_dir_all(data_dir())?;
-    save_session_to_path(&stats_path(), record)?;
-    let mut agg = load_aggregate();
-    apply_session_to_aggregate(&mut agg, record);
-    save_aggregate(&agg);
     Ok(())
 }
 
-/// Load every saved session in the order they were recorded (oldest first).
-/// Returns an empty vec when the file doesn't exist yet.
-pub fn load_sessions() -> Result<Vec<SessionRecord>> {
-    load_sessions_from_path(&stats_path())
-}
-
-/// Path-based variant of [`save_session`]. Exposed for tests (and any future
-/// caller that wants to control where stats are stored).
-pub fn save_session_to_path(path: &Path, record: &SessionRecord) -> Result<()> {
+/// Append `record` to the stats file at `path` (normally [`stats_path`]),
+/// creating its directory if needed. Returns the full updated history so
+/// callers can cache it without re-reading the file.
+///
+/// The whole stats file is rewritten on each save — fine in practice because
+/// the file is tiny and the user only saves once at the end of a session.
+pub fn save_session_to_path(path: &Path, record: &SessionRecord) -> Result<Vec<SessionRecord>> {
+    if let Some(dir) = path.parent().filter(|dir| !dir.as_os_str().is_empty()) {
+        fs::create_dir_all(dir)?;
+    }
     let mut history: Vec<SessionRecord> = if path.exists() {
         let raw = fs::read_to_string(path)?;
-        // If the file is corrupt or empty, start over rather than panicking.
-        serde_json::from_str(&raw).unwrap_or_default()
+        match serde_json::from_str(&raw) {
+            Ok(history) => history,
+            Err(_) if raw.trim().is_empty() => vec![],
+            // Corrupt file: start over, but copy it aside first so the
+            // rewrite below can never silently destroy the user's history.
+            // Timestamped, so a later corruption can't overwrite this backup.
+            Err(_) => {
+                let mut backup = path.as_os_str().to_owned();
+                backup.push(
+                    Local::now()
+                        .format(".corrupt-%Y%m%d-%H%M%S%.3f")
+                        .to_string(),
+                );
+                fs::copy(path, PathBuf::from(backup))?;
+                vec![]
+            }
+        }
     } else {
         vec![]
     };
     history.push(record.clone());
     write_atomic(path, &serde_json::to_string_pretty(&history)?)?;
-    Ok(())
+    Ok(history)
 }
 
-/// Path-based variant of [`load_sessions`]. A missing file is treated as an
-/// empty history; a corrupt file falls back to an empty list (the same
-/// loss-tolerant behavior used in production).
+/// Load every saved session at `path` (normally [`stats_path`]) in the order
+/// they were recorded (oldest first). A missing file is treated as an empty
+/// history; a corrupt file falls back to an empty list.
 pub fn load_sessions_from_path(path: &Path) -> Result<Vec<SessionRecord>> {
     if !path.exists() {
         return Ok(vec![]);
@@ -186,14 +150,7 @@ pub fn load_sessions_from_path(path: &Path) -> Result<Vec<SessionRecord>> {
 
 /// All-time best WPM across every saved session.
 pub fn personal_best(sessions: &[SessionRecord]) -> Option<f64> {
-    sessions
-        .iter()
-        .map(|s| s.wpm)
-        .fold(None, |best, wpm| match best {
-            None => Some(wpm),
-            Some(current_best) if wpm > current_best => Some(wpm),
-            Some(current_best) => Some(current_best),
-        })
+    sessions.iter().map(|s| s.wpm).reduce(f64::max)
 }
 
 /// Mean accuracy across every saved session, 0–100. `None` if no sessions.
@@ -212,11 +169,7 @@ pub fn personal_best_for_mode(sessions: &[SessionRecord], mode_label: &str) -> O
         .iter()
         .filter(|s| s.mode == mode_label)
         .map(|s| s.wpm)
-        .fold(None, |best, wpm| match best {
-            None => Some(wpm),
-            Some(b) if wpm > b => Some(wpm),
-            Some(b) => Some(b),
-        })
+        .reduce(f64::max)
 }
 
 /// Current daily streak: the number of consecutive calendar days (in local
@@ -270,13 +223,14 @@ pub fn streak(sessions: &[SessionRecord]) -> u32 {
     count
 }
 
-/// Mean WPM across all sessions whose timestamp falls within the last `days`
-/// calendar days (counted from now). Returns `None` when no sessions qualify.
+/// Mean WPM across all sessions from the last `days` calendar days in local
+/// time, today included (so `7` = today and the 6 days before it) — the same
+/// day boundaries `streak` uses. Returns `None` when no sessions qualify.
 pub fn avg_wpm_last_n_days(sessions: &[SessionRecord], days: u32) -> Option<f64> {
-    let cutoff = Local::now() - chrono::Duration::days(days as i64);
+    let first_day = Local::now().date_naive() - chrono::Days::new(days.saturating_sub(1) as u64);
     let relevant: Vec<f64> = sessions
         .iter()
-        .filter(|s| s.timestamp > cutoff)
+        .filter(|s| s.timestamp.date_naive() >= first_day)
         .map(|s| s.wpm)
         .collect();
     if relevant.is_empty() {
@@ -289,20 +243,18 @@ pub fn avg_wpm_last_n_days(sessions: &[SessionRecord], days: u32) -> Option<f64>
 /// Aggregated per-key accuracy across all sessions, sorted by accuracy
 /// ascending (worst keys first). Only keys with at least `min_presses`
 /// total keystrokes (hits + misses) are included.
-/// Used by tests; production code uses `key_accuracy_from_aggregate`.
-#[cfg(test)]
-fn key_accuracy(sessions: &[SessionRecord], min_presses: u64) -> Vec<KeyAccuracyStat> {
+pub fn key_accuracy(sessions: &[SessionRecord], min_presses: u64) -> Vec<KeyAccuracyStat> {
     let mut hits: HashMap<char, u64> = HashMap::new();
     let mut misses: HashMap<char, u64> = HashMap::new();
 
     for session in sessions {
         for (k, &v) in &session.key_hits {
-            if let Some(c) = k.chars().next() {
+            if let Some(c) = single_char(k) {
                 *hits.entry(c).or_insert(0) += v;
             }
         }
         for (k, &v) in &session.key_misses {
-            if let Some(c) = k.chars().next() {
+            if let Some(c) = single_char(k) {
                 *misses.entry(c).or_insert(0) += v;
             }
         }
@@ -341,66 +293,107 @@ fn key_accuracy(sessions: &[SessionRecord], min_presses: u64) -> Vec<KeyAccuracy
     stats
 }
 
-/// Same as `key_accuracy` but reads from a pre-computed `AggregateStats`
-/// instead of iterating all sessions. O(distinct_keys) — always fast.
-/// Prefer this in the render path.
-pub fn key_accuracy_from_aggregate(agg: &AggregateStats, min_presses: u64) -> Vec<KeyAccuracyStat> {
-    let all_keys: std::collections::HashSet<&str> = agg
-        .key_hits
-        .keys()
-        .chain(agg.key_misses.keys())
-        .map(String::as_str)
-        .collect();
-
-    let mut stats: Vec<KeyAccuracyStat> = all_keys
-        .into_iter()
-        .filter_map(|k| {
-            let c = k.chars().next()?;
-            let h = agg.key_hits.get(k).copied().unwrap_or(0);
-            let m = agg.key_misses.get(k).copied().unwrap_or(0);
-            let total = h + m;
-            if total < min_presses {
-                return None;
-            }
-            let accuracy = h as f64 / total as f64 * 100.0;
-            Some(KeyAccuracyStat {
-                key: c,
-                total,
-                hits: h,
-                accuracy,
-            })
-        })
-        .collect();
-
-    stats.sort_by(|a, b| {
-        a.accuracy
-            .partial_cmp(&b.accuracy)
-            .unwrap_or(std::cmp::Ordering::Equal)
-            .then_with(|| a.key.cmp(&b.key))
-    });
-    stats
+/// The key's character if `key` is exactly one character. Anything else (a
+/// hand-edited or damaged entry) is skipped rather than read as its first char.
+fn single_char(key: &str) -> Option<char> {
+    let mut chars = key.chars();
+    match (chars.next(), chars.next()) {
+        (Some(c), None) => Some(c),
+        _ => None,
+    }
 }
 
 /// Accuracy statistics for a single key, used by the key-accuracy heatmap.
 #[derive(Debug, Clone)]
 pub struct KeyAccuracyStat {
-    /// The typed character.
+    /// The expected character.
     pub key: char,
-    /// Total times this key was pressed (hits + misses).
+    /// Times this character was due (hits + misses).
     pub total: u64,
-    /// Times this key was pressed at the correct position.
+    /// Times it was typed correctly.
     pub hits: u64,
     /// Accuracy as a percentage, 0–100.
     pub accuracy: f64,
+}
+
+/// What the Results screen compares the just-finished session against,
+/// computed once when the screen opens instead of on every frame.
+#[derive(Debug, Clone, Copy, Default, PartialEq)]
+pub struct ResultsComparison {
+    /// WPM of the session before this one (any mode).
+    pub last_wpm: Option<f64>,
+    /// Best WPM in this mode *before* this session.
+    pub previous_mode_best: Option<f64>,
+}
+
+impl ResultsComparison {
+    /// `sessions` is the full history; `includes_current` says whether the
+    /// last entry is the session being shown (it was saved) and must be left
+    /// out. Unsaved sessions (Zen, < 1 s, zero keystrokes) aren't in history.
+    pub fn new(sessions: &[SessionRecord], includes_current: bool, mode_label: &str) -> Self {
+        let previous =
+            &sessions[..sessions.len() - usize::from(includes_current).min(sessions.len())];
+        Self {
+            last_wpm: previous.last().map(|s| s.wpm),
+            previous_mode_best: personal_best_for_mode(previous, mode_label),
+        }
+    }
+}
+
+/// Everything the Stats screen's summary card and key-accuracy panel show,
+/// computed in one pass over the history. Built once each time the Stats
+/// screen is opened instead of on every frame.
+#[derive(Debug, Clone, Default)]
+pub struct StatsSummary {
+    pub personal_best: Option<f64>,
+    pub average_accuracy: Option<f64>,
+    pub sessions: usize,
+    pub last_wpm: Option<f64>,
+    pub streak: u32,
+    pub avg_wpm_7_days: Option<f64>,
+    pub avg_wpm_30_days: Option<f64>,
+    /// Keys with at least 3 occurrences, worst first.
+    pub worst_keys: Vec<KeyAccuracyStat>,
+}
+
+impl StatsSummary {
+    pub fn new(sessions: &[SessionRecord]) -> Self {
+        Self {
+            personal_best: personal_best(sessions),
+            average_accuracy: average_accuracy(sessions),
+            sessions: sessions.len(),
+            last_wpm: sessions.last().map(|s| s.wpm),
+            streak: streak(sessions),
+            avg_wpm_7_days: avg_wpm_last_n_days(sessions, 7),
+            avg_wpm_30_days: avg_wpm_last_n_days(sessions, 30),
+            worst_keys: key_accuracy(sessions, 3),
+        }
+    }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
 
+    /// `hour:minute` local time, `days_ago` calendar days before today.
+    /// Stepping by calendar day (not by 24 h) keeps day-based tests correct
+    /// across DST changes. If that time falls in a DST gap (e.g. 00:01 where
+    /// clocks jump at midnight), the first moment after the gap is used.
+    fn days_ago_at(days_ago: i64, hour: u32, minute: u32) -> DateTime<Local> {
+        let date = Local::now().date_naive() - chrono::Days::new(days_ago as u64);
+        let time = date.and_hms_opt(hour, minute, 0).unwrap();
+        (0..=2)
+            .find_map(|h| {
+                (time + chrono::Duration::hours(h))
+                    .and_local_timezone(Local)
+                    .earliest()
+            })
+            .unwrap()
+    }
+
     /// Build a minimal `SessionRecord` for testing purposes.
     fn make_record(wpm: f64, mode: &str, days_ago: i64) -> SessionRecord {
-        let timestamp = Local::now() - chrono::Duration::days(days_ago);
+        let timestamp = days_ago_at(days_ago, 12, 0);
         SessionRecord {
             wpm,
             accuracy: 95.0,
@@ -557,6 +550,17 @@ mod tests {
         ];
         let avg = avg_wpm_last_n_days(&sessions, 7).unwrap();
         assert!((avg - 50.0).abs() < 0.001);
+    }
+
+    /// The window is calendar days, like the streak: the first minute of the
+    /// 7th day back counts, the last minute of the 8th doesn't.
+    #[test]
+    fn avg_wpm_window_uses_calendar_days() {
+        let mut inside = make_record(40.0, "time-30s", 0);
+        inside.timestamp = days_ago_at(6, 0, 1);
+        let mut outside = make_record(90.0, "time-30s", 0);
+        outside.timestamp = days_ago_at(7, 23, 59);
+        assert_eq!(avg_wpm_last_n_days(&[inside, outside], 7), Some(40.0));
     }
 
     #[test]
@@ -1169,82 +1173,82 @@ mod tests {
         assert_eq!(stats.parent().unwrap(), dir);
     }
 
-    // ═══════════════════════════════════════════════════════════════════════
-    //  AggregateStats — the production key-accuracy read path (v0.3.0)
-    // ═══════════════════════════════════════════════════════════════════════
-
     #[test]
-    fn aggregate_apply_accumulates_across_sessions() {
-        let mut agg = AggregateStats::default();
-        let s1 = make_record_with_keys(50.0, "time-30s", 0, &[("a", 8), ("b", 3)], &[("a", 2)]);
-        let s2 = make_record_with_keys(55.0, "words-25", 1, &[("a", 2)], &[("a", 8), ("c", 1)]);
-        apply_session_to_aggregate(&mut agg, &s1);
-        apply_session_to_aggregate(&mut agg, &s2);
-        assert_eq!(agg.key_hits.get("a"), Some(&10));
-        assert_eq!(agg.key_hits.get("b"), Some(&3));
-        assert_eq!(agg.key_misses.get("a"), Some(&10));
-        assert_eq!(agg.key_misses.get("c"), Some(&1));
-    }
-
-    #[test]
-    fn aggregate_result_matches_full_history_scan() {
-        // The incremental aggregate must produce byte-identical results to
-        // the reference full-scan implementation over the same history.
-        let sessions = scenario_10_varied();
-        let mut agg = AggregateStats::default();
-        for s in &sessions {
-            apply_session_to_aggregate(&mut agg, s);
-        }
-        let from_agg = key_accuracy_from_aggregate(&agg, 1);
-        let from_scan = key_accuracy(&sessions, 1);
-        assert_eq!(from_agg.len(), from_scan.len());
-        for (a, b) in from_agg.iter().zip(from_scan.iter()) {
-            assert_eq!(a.key, b.key);
-            assert_eq!(a.total, b.total);
-            assert_eq!(a.hits, b.hits);
-            assert!((a.accuracy - b.accuracy).abs() < 1e-9);
-        }
-    }
-
-    #[test]
-    fn aggregate_key_accuracy_stable_tiebreak_and_min_presses() {
-        let mut agg = AggregateStats::default();
-        // 'r' and 'n' both 80% (4/5); 'q' only pressed twice (filtered at 3).
-        agg.key_hits.insert("r".into(), 4);
-        agg.key_misses.insert("r".into(), 1);
-        agg.key_hits.insert("n".into(), 4);
-        agg.key_misses.insert("n".into(), 1);
-        agg.key_hits.insert("q".into(), 2);
-        let stats = key_accuracy_from_aggregate(&agg, 3);
-        assert_eq!(stats.len(), 2);
-        assert_eq!(stats[0].key, 'n'); // alphabetical tiebreak — stable order
-        assert_eq!(stats[1].key, 'r');
-    }
-
-    #[test]
-    fn aggregate_roundtrip_via_path() {
+    fn save_over_corrupt_file_keeps_a_backup() {
         let dir = tempfile::tempdir().unwrap();
-        let path = dir.path().join("aggregate.json");
-        let mut agg = AggregateStats::default();
-        agg.key_hits.insert("e".into(), 100);
-        agg.key_misses.insert("e".into(), 7);
-        save_aggregate_to_path(&path, &agg);
-        let loaded = load_aggregate_from_path(&path);
-        assert_eq!(loaded.key_hits.get("e"), Some(&100));
-        assert_eq!(loaded.key_misses.get("e"), Some(&7));
+        let path = dir.path().join("stats.json");
+        std::fs::write(&path, "[{\"wpm\": 1").unwrap();
+        save_session_to_path(&path, &make_record(50.0, "time-30s", 0)).unwrap();
+        let backups = || -> Vec<std::path::PathBuf> {
+            std::fs::read_dir(dir.path())
+                .unwrap()
+                .map(|e| e.unwrap().path())
+                .filter(|p| p.to_string_lossy().contains(".corrupt-"))
+                .collect()
+        };
+        let first = backups();
+        assert_eq!(first.len(), 1);
+        assert_eq!(std::fs::read_to_string(&first[0]).unwrap(), "[{\"wpm\": 1");
+        assert_eq!(load_sessions_from_path(&path).unwrap().len(), 1);
+
+        // A second corruption gets its own backup; the first one survives.
+        std::thread::sleep(std::time::Duration::from_millis(5));
+        std::fs::write(&path, "garbage").unwrap();
+        save_session_to_path(&path, &make_record(60.0, "time-30s", 0)).unwrap();
+        assert_eq!(backups().len(), 2);
+        assert_eq!(std::fs::read_to_string(&first[0]).unwrap(), "[{\"wpm\": 1");
     }
 
     #[test]
-    fn aggregate_missing_or_corrupt_file_loads_default() {
-        let dir = tempfile::tempdir().unwrap();
-        let missing = dir.path().join("nope.json");
-        let loaded = load_aggregate_from_path(&missing);
-        assert!(loaded.key_hits.is_empty() && loaded.key_misses.is_empty());
+    fn results_comparison_leaves_out_the_saved_session() {
+        let sessions = vec![
+            make_record(70.0, "words-10", 1),
+            make_record(40.0, "time-30s", 0),
+            make_record(90.0, "words-10", 0), // the session just saved
+        ];
+        let saved = ResultsComparison::new(&sessions, true, "words-10");
+        assert_eq!(saved.last_wpm, Some(40.0));
+        assert_eq!(saved.previous_mode_best, Some(70.0));
+        // Not saved: the last entry is a previous session.
+        let unsaved = ResultsComparison::new(&sessions, false, "words-10");
+        assert_eq!(unsaved.last_wpm, Some(90.0));
+        assert_eq!(unsaved.previous_mode_best, Some(90.0));
+        assert_eq!(
+            ResultsComparison::new(&[], true, "zen"),
+            ResultsComparison::default()
+        );
+    }
 
-        let corrupt = dir.path().join("aggregate.json");
-        std::fs::write(&corrupt, "not { json").unwrap();
-        let loaded = load_aggregate_from_path(&corrupt);
-        assert!(loaded.key_hits.is_empty() && loaded.key_misses.is_empty());
+    #[test]
+    fn key_accuracy_skips_multi_char_keys() {
+        let s = make_record_with_keys(50.0, "time-30s", 0, &[("ab", 9), ("a", 3)], &[]);
+        let stats = key_accuracy(&[s], 1);
+        assert_eq!(stats.len(), 1);
+        assert_eq!((stats[0].key, stats[0].hits), ('a', 3));
+    }
+
+    /// A symlinked stats.json (e.g. into a dotfiles folder) stays a symlink,
+    /// and the file's permissions survive a save.
+    #[cfg(unix)]
+    #[test]
+    fn save_keeps_symlink_and_permissions() {
+        use std::os::unix::fs::PermissionsExt;
+        let dir = tempfile::tempdir().unwrap();
+        let real = dir.path().join("real.json");
+        let link = dir.path().join("stats.json");
+        save_session_to_path(&real, &make_record(50.0, "time-30s", 0)).unwrap();
+        std::fs::set_permissions(&real, std::fs::Permissions::from_mode(0o600)).unwrap();
+        std::os::unix::fs::symlink(&real, &link).unwrap();
+
+        save_session_to_path(&link, &make_record(60.0, "time-30s", 0)).unwrap();
+
+        assert!(std::fs::symlink_metadata(&link)
+            .unwrap()
+            .file_type()
+            .is_symlink());
+        assert_eq!(load_sessions_from_path(&real).unwrap().len(), 2);
+        let mode = std::fs::metadata(&real).unwrap().permissions().mode();
+        assert_eq!(mode & 0o777, 0o600);
     }
 
     // ── Atomic writes — crash mid-write must never corrupt history ─────────
@@ -1258,15 +1262,19 @@ mod tests {
             save_session_to_path(&path, &r).unwrap();
         }
         // The temp file must be gone after every successful save.
-        assert!(!dir.path().join("stats.json.tmp").exists());
+        let leftovers = std::fs::read_dir(dir.path())
+            .unwrap()
+            .filter(|e| {
+                e.as_ref()
+                    .unwrap()
+                    .path()
+                    .to_string_lossy()
+                    .ends_with(".tmp")
+            })
+            .count();
+        assert_eq!(leftovers, 0);
         // And the target must be complete, valid JSON with all 5 records.
         let loaded = load_sessions_from_path(&path).unwrap();
         assert_eq!(loaded.len(), 5);
-
-        // Same invariant for the aggregate.
-        let agg_path = dir.path().join("aggregate.json");
-        save_aggregate_to_path(&agg_path, &AggregateStats::default());
-        assert!(!dir.path().join("aggregate.json.tmp").exists());
-        assert!(agg_path.exists());
     }
 }

@@ -1,11 +1,13 @@
 //! Small key-value state persisted alongside the stats file.
 //!
-//! `~/.typerush/state.json` is a tiny JSON blob that remembers UI preferences
-//! between launches — currently just the last `--file` path the user typed
-//! against, so the "Custom" menu row stays useful after the CLI flag is gone.
+//! `~/.typerush/state.json` remembers UI choices between launches — currently
+//! just the last custom file the user typed (a `--file` path or a snippet),
+//! so the menu's "custom" row can offer it again without the CLI flag.
 //!
-//! Like stats persistence, every operation here is best-effort: a missing,
-//! corrupt or unreadable file is treated as "no state", never as an error.
+//! Like stats persistence, everything here is best-effort: a missing, corrupt
+//! or unreadable file is treated as "no state", never as an error. Callers
+//! pass the file path in (normally [`state_path`]) so tests never touch the
+//! user's real home directory.
 
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -14,55 +16,24 @@ use serde::{Deserialize, Serialize};
 
 use crate::storage;
 
-// Per-thread override for the `state.json` location. `App::new` and
-// `persist_custom_file` both touch disk, so tests that construct an `App`
-// would otherwise clobber the real user's `~/.typerush/state.json`. A
-// thread-local path lets each test point at its own tempdir without
-// coordinating a global mutex.
-#[cfg(test)]
-thread_local! {
-    static TEST_STATE_PATH: std::cell::RefCell<Option<PathBuf>> =
-        const { std::cell::RefCell::new(None) };
-}
-
-/// Redirect `state_path()` to `path` for the current thread. Test-only.
-/// Pass `None` to clear the override and go back to `~/.typerush/state.json`.
-#[cfg(test)]
-pub(crate) fn set_test_state_path(path: Option<PathBuf>) {
-    TEST_STATE_PATH.with(|cell| *cell.borrow_mut() = path);
-}
-
 /// On-disk shape of `state.json`.
 ///
-/// Every field is optional and uses `#[serde(default)]` so the loader can
-/// add new fields in future versions without breaking old files.
+/// `#[serde(default)]` on the struct lets future versions add fields without
+/// breaking old files, and unknown fields from newer versions are ignored.
 #[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(default)]
 pub struct AppState {
-    /// Absolute path to the most recently used custom file (`--file <path>`
-    /// or a snippet picked from the menu). `None` means the user has never
-    /// run a custom-file session.
+    /// Path of the most recently started custom file. Stored as a string so
+    /// the file stays human-readable; non-UTF-8 paths are simply not saved.
     pub last_custom_file: Option<String>,
 }
 
-/// Path to `~/.typerush/state.json` (or the thread-local test override,
-/// when the caller is a `cfg(test)` build that installed one).
+/// Path to `~/.typerush/state.json`.
 pub fn state_path() -> PathBuf {
-    #[cfg(test)]
-    {
-        if let Some(p) = TEST_STATE_PATH.with(|c| c.borrow().clone()) {
-            return p;
-        }
-    }
     storage::data_dir().join("state.json")
 }
 
-/// Load saved state from disk. Missing / corrupt files return `Default`.
-pub fn load_state() -> AppState {
-    load_from_path(&state_path())
-}
-
-/// Path-based variant of [`load_state`]. Exposed so tests can use a temp dir.
+/// Load state from `path`. Missing or corrupt files give the default state.
 pub fn load_from_path(path: &Path) -> AppState {
     let Ok(raw) = fs::read_to_string(path) else {
         return AppState::default();
@@ -70,24 +41,12 @@ pub fn load_from_path(path: &Path) -> AppState {
     serde_json::from_str(&raw).unwrap_or_default()
 }
 
-/// Persist `state` to `~/.typerush/state.json`. Best-effort — never panics.
-/// Uses the same atomic temp-file + rename as `stats.json` so a crash
-/// mid-write can never truncate the file.
-pub fn save_state(state: &AppState) {
-    let path = state_path();
-    if let Some(parent) = path.parent() {
-        let _ = fs::create_dir_all(parent);
-    }
-    if let Ok(json) = serde_json::to_string_pretty(state) {
-        let _ = storage::write_atomic(&path, &json);
-    }
-}
-
-/// Path-based variant of [`save_state`]. Used by tests.
-#[cfg(test)]
-fn save_to_path(path: &Path, state: &AppState) -> std::io::Result<()> {
-    if let Some(parent) = path.parent() {
-        fs::create_dir_all(parent)?;
+/// Write `state` to `path`, creating the parent directory if needed. Uses the
+/// same atomic, fsynced write as `stats.json`, so a crash mid-save can never
+/// leave a truncated file behind.
+pub fn save_to_path(path: &Path, state: &AppState) -> std::io::Result<()> {
+    if let Some(dir) = path.parent().filter(|dir| !dir.as_os_str().is_empty()) {
+        fs::create_dir_all(dir)?;
     }
     let json = serde_json::to_string_pretty(state)
         .map_err(|e| std::io::Error::new(std::io::ErrorKind::InvalidData, e))?;
@@ -101,9 +60,10 @@ mod tests {
     #[test]
     fn missing_file_returns_default() {
         let dir = tempfile::tempdir().unwrap();
-        let path = dir.path().join("nope.json");
-        let state = load_from_path(&path);
-        assert_eq!(state, AppState::default());
+        assert_eq!(
+            load_from_path(&dir.path().join("nope.json")),
+            AppState::default()
+        );
     }
 
     #[test]
@@ -111,8 +71,7 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("state.json");
         fs::write(&path, "{ broken json").unwrap();
-        let state = load_from_path(&path);
-        assert_eq!(state, AppState::default());
+        assert_eq!(load_from_path(&path), AppState::default());
     }
 
     #[test]
@@ -123,49 +82,55 @@ mod tests {
             last_custom_file: Some("/tmp/typing-fodder.txt".to_string()),
         };
         save_to_path(&path, &state).unwrap();
-        let loaded = load_from_path(&path);
-        assert_eq!(loaded, state);
+        assert_eq!(load_from_path(&path), state);
     }
 
     #[test]
-    fn empty_object_loads_as_default() {
-        // Forward-compat: an empty JSON object should yield a default state,
-        // not error out. Old versions of TypeRush may have written one.
+    fn save_creates_missing_parent_directory() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir
+            .path()
+            .join("fresh")
+            .join(".typerush")
+            .join("state.json");
+        save_to_path(&path, &AppState::default()).unwrap();
+        assert!(path.exists());
+    }
+
+    /// Forward compatibility: an empty object and unknown fields both load.
+    #[test]
+    fn empty_object_and_unknown_fields_load() {
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("state.json");
         fs::write(&path, "{}").unwrap();
-        let state = load_from_path(&path);
-        assert_eq!(state, AppState::default());
-    }
-
-    #[test]
-    fn unknown_fields_are_ignored() {
-        // Forward-compat: future versions may add fields; old TypeRush must
-        // still be able to read its own subset.
-        let dir = tempfile::tempdir().unwrap();
-        let path = dir.path().join("state.json");
+        assert_eq!(load_from_path(&path), AppState::default());
         fs::write(
             &path,
             r#"{"last_custom_file": "/tmp/x.txt", "future_thing": 42}"#,
         )
         .unwrap();
-        let state = load_from_path(&path);
-        assert_eq!(state.last_custom_file.as_deref(), Some("/tmp/x.txt"));
+        assert_eq!(
+            load_from_path(&path).last_custom_file.as_deref(),
+            Some("/tmp/x.txt")
+        );
     }
 
-    /// Same atomic-write invariant `stats.json` has: after a save there is
-    /// no stray `.tmp` sibling and the target parses as valid JSON.
+    /// Same atomic-write invariant as stats.json: no temp file left behind,
+    /// and the target parses.
     #[test]
-    fn atomic_save_leaves_no_tmp_file_and_valid_json() {
+    fn atomic_save_leaves_no_temp_file() {
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("state.json");
         let state = AppState {
             last_custom_file: Some("/tmp/atomic.txt".to_string()),
         };
         save_to_path(&path, &state).unwrap();
-        assert!(!dir.path().join("state.json.tmp").exists());
-        let raw = fs::read_to_string(&path).unwrap();
-        let parsed: AppState = serde_json::from_str(&raw).unwrap();
-        assert_eq!(parsed, state);
+        let leftovers: Vec<_> = fs::read_dir(dir.path())
+            .unwrap()
+            .filter_map(Result::ok)
+            .filter(|e| e.file_name().to_string_lossy().ends_with(".tmp"))
+            .collect();
+        assert!(leftovers.is_empty());
+        assert_eq!(load_from_path(&path), state);
     }
 }

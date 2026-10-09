@@ -14,6 +14,14 @@
    ██       ██    ██      ███████ ██   ██  ██████  ███████ ██   ██
 ```
 
+## 🎬 Launch video
+
+<a href="docs/brag/brag.mp4"><img src="docs/brag/brag.gif" alt="TypeRush launch video: live WPM and accuracy, four themes, and stats history, all in the terminal" width="100%"></a>
+
+The clip above loops silently. **[▶ Watch it with sound (MP4, 23s)](docs/brag/brag.mp4)**
+
+---
+
 ## 👀 Preview
 
 ![TypeRush demo](https://raw.githubusercontent.com/withrvr/typerush/main/assets/demo.gif)
@@ -29,6 +37,8 @@ with a quote — TypeRush meets you where you already work: the command line.
 ## ✨ Why TypeRush
 
 - 🚀 **Instant feedback** — see your WPM and accuracy climb keystroke by keystroke
+- 🎯 **Honest scoring** — every character counts, the space between words included
+- 🖱 **Keyboard or mouse** — arrow-key menu, or click any option and footer hint
 - 🎨 **Themes built-in** — `dark`, `light`, `monokai`, `dracula`, or roll your own colors
 - ⏱ **Seven built-in modes** — Time, Words, Quote, Code, Symbols, Zen, and Custom-file
 - 🔤 **Seven code languages** — Rust, Python, JavaScript, Go, Java, SQL, Shell
@@ -99,14 +109,16 @@ typerush --list-snippets      # see every snippet in ~/.typerush/snippets/
 
 ## ⌨️ A few keys to know
 
-| Key        | Action                          |
-| ---------- | ------------------------------- |
-| `Enter`    | start / restart a session       |
-| `Esc`      | back to menu / end session      |
-| `Ctrl+R`   | restart the current mode        |
-| `Tab`      | jump to your stats history      |
-| `?`        | open the keybindings overlay    |
-| `Ctrl+C`   | quit                            |
+| Key             | Action                          |
+| --------------- | ------------------------------- |
+| `Enter`         | start / restart a session       |
+| `Esc`           | back to menu / end session      |
+| `Ctrl+R` / `F5` | restart the current mode        |
+| `Tab` / `s`     | jump to your stats history      |
+| `?` / `F1`      | open the keybindings overlay    |
+| `Ctrl+C`        | quit                            |
+
+The mouse works too: click a menu option or any footer hint.
 
 Full keymap: see [`docs/USAGE.md`](docs/USAGE.md).
 
@@ -119,7 +131,7 @@ shows your personal best, average accuracy, a trend sparkline, and your last
 10 runs — plus, as of v0.3:
 
 - 🔥 **Daily streak** — consecutive days you've practiced
-- 📅 **7- and 30-day rolling WPM averages**
+- 📅 **7- and 30-day WPM averages**
 - ⌨️ **Per-key accuracy heatmap** — find the keys that slow you down
 - 🏅 **Per-mode personal bests** — a separate record for `time-30s`, `words-50`, etc.
 

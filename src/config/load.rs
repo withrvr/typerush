@@ -1,9 +1,9 @@
 //! Disk I/O for the config file plus the "resolve everything" entry point.
 //!
-//! `load_or_default()` is the single function the rest of the app calls. It
-//! returns a fully-resolved `ResolvedConfig` and a list of human-readable
-//! warnings — never an error. The caller (typically `main.rs`) can choose to
-//! surface the first warning via the error modal.
+//! `load_or_default_with(CliOverrides)` is the single function the rest of the
+//! app calls. It returns a fully-resolved `ResolvedConfig` and a list of
+//! human-readable warnings — never an error. The caller (typically `main.rs`)
+//! can choose to surface the first warning via the error modal.
 
 use std::path::PathBuf;
 
@@ -209,7 +209,7 @@ fn resolve_words_section(
     let pool = match words.pool.as_deref() {
         None => WordPool::Common,
         Some(name) => match name.to_lowercase().as_str() {
-            "common" | "small" | "1000" | "1k" => WordPool::Common,
+            "common" | "small" => WordPool::Common,
             "extended" | "big" | "10000" | "10k" => WordPool::Extended,
             other => {
                 warnings.push(format!(

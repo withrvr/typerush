@@ -13,105 +13,86 @@ _No unreleased changes yet._
 
 ---
 
-## [0.4.0] — more content & menu UX
+## [0.4.0] — more content
+
+More to type: a bigger word pool, a programming-symbols drill, four more
+code languages, punctuation and number drills, and your own text files
+straight from the menu.
 
 ### Added
 
-- **10,000-word English pool.** A new `ENGLISH_10000` pool sits alongside the
-  existing common-word pool. Opt in with `--big` or `[words] pool = "extended"`
-  in `config.toml`. The default behavior is unchanged (Common pool, ≈1k words).
-- **Programming-symbols mode.** A new `Mode::Symbols(N)` drills punctuation —
-  tokens like `=>`, `(){};`, `&&`, `?.`, `[]`, `<T>` — sourced from a curated
-  pool plus a handful of randomly composed tokens. Menu rows for 25 and 50
-  tokens; `--symbols N` from the CLI; per-mode PB tracked as `symbols-N`.
-- **Four new Code languages.** Added Go, Java, SQL, and Shell snippet pools.
-  Menu rows: `Code · Go`, `Code · Java`, `Code · SQL`, `Code · Shell`. CLI
-  accepts `--code go|java|sql|shell` plus the usual aliases (`golang`, `sh`,
-  `bash`).
-- **Punctuation / numbers toggles.** When enabled, randomly attach
-  punctuation marks to ~25% of words and replace ~12% of slots with random
-  1–4 digit numbers in Time / Words modes. Toggle via the `[words]` config
-  section or the `--punctuation` / `--numbers` CLI flags. Zen mode ignores
-  these toggles to stay calm.
-- **Custom snippet library.** Drop `.txt` files into `~/.typerush/snippets/`
-  and they appear as `Snippet · <name>` rows under the menu's Custom
-  section. New `--list-snippets` CLI flag prints every snippet TypeRush
-  found, one per line (`name\tpath`).
-- **"Custom" menu row + last-file memory.** The menu now has a dedicated
-  Custom row even when `--file` isn't passed. The path of the most recent
-  custom session is persisted to `~/.typerush/state.json` so the menu
-  pre-fills the row with `Custom · <truncated path>` across launches.
-- **Visual section gaps in the main menu.** Rows are grouped under muted
-  `── Section ──` headers (Time / Words / Quote / Code / Symbols / Zen /
-  Custom / More). Arrow-key navigation skips headers automatically so the
-  highlight always lands on a selectable row.
-- **`docs/USAGE.md`** documents the new flags, modes, snippet workflow, and
-  the new `[words]` config section. **`config.example.toml`** carries
-  inline comments for every new option. **`docs/ARCHITECTURE.md`** picks up
-  the new modules (`state.rs`, `words/snippets.rs`, `words/symbols.rs`) and
-  gains a "When you add a new code language" runbook.
+- **10,000-word English pool.** `--big`, or `pool = "extended"` in a new
+  `[words]` config section. The default pool (~430 frequent words) is
+  unchanged.
+- **Programming-symbols mode.** A `symbols` row in the menu (25 or 50 tokens)
+  drills the keys typists under-train: `=>`, `(){};`, `&&`, `?.`, `<T>` and
+  friends, plus randomly composed punctuation runs. Also `--symbols N` and
+  `[defaults] mode = "symbols"` / `symbol_count`. Personal bests are kept per
+  count (`symbols-25`, `symbols-50`) and the progress gauge counts tokens.
+- **Go, Java, SQL and Shell** in the `code` row, next to Rust, Python and
+  JavaScript. `--code` and `[defaults] code_lang` accept `go`/`golang`,
+  `java`, `sql`, `shell`/`sh`/`bash`.
+- **Punctuation and numbers drills.** `--punctuation` adds commas, periods,
+  quotes and brackets to about a quarter of random words; `--numbers` mixes
+  in 1–4 digit numbers. Also `punctuation = true` / `numbers = true` under
+  `[words]`. They apply to time and words modes; zen stays plain.
+- **Snippet library.** Every `.txt` file in `~/.typerush/snippets/` (any
+  capitalisation of `.txt`) is an option in the menu's new `custom` row,
+  sorted by name. `--list-snippets` prints them as `name<TAB>path`.
+- **"custom" menu row that remembers your last file.** The file you last
+  typed — from `--file` or a snippet — is offered first in the `custom` row
+  on the next launch, saved in `~/.typerush/state.json`. It is stored as an
+  absolute path, so it works whichever directory you start TypeRush from,
+  and it is only saved once the file has actually loaded. With no files yet,
+  the row explains how to add one.
+- **Launch video** in the README: a looping silent GIF linking to the full
+  23-second MP4 with sound (`docs/brag/`, made with `/brag`), recorded from
+  the real binary.
 
 ### Changed
 
-- `App::new` now takes the word pool and decoration as required arguments
-  instead of defaulting them silently. Callers in main and tests pass the
-  desired values explicitly. (Internal-only change — no end-user impact.)
-- The menu builder is now `app::build_menu(snippets, last_custom_file)`
-  instead of a `default_menu()` constant — the same function is used by the
-  app and by tests.
-- The mode label `Mode::Code(JavaScript)` is documented as deliberately
-  serializing to `"code-javascript"` (not the slug `"js"`) for backward
-  compatibility with v0.3 and earlier `stats.json` records.
+- Menu rows wider than the menu box (seven code languages, many snippets)
+  wrap onto an indented line below instead of running off the edge. Long
+  snippet names are shortened with `…`. Every option stays clickable.
+- Custom-file errors name the file (`can't read /home/you/notes.txt: No such file or
+  directory`, `notes.txt is empty`) instead of a bare OS error.
+- The help overlay shows where snippets go.
 
 ### Fixed
 
-- **`state.json` is written atomically** (temp file + rename), the same
-  crash-safety guarantee `stats.json` and `aggregate.json` gained in
-  v0.3.0 — a crash mid-save can never truncate the file or lose the
-  remembered custom-file path. Works on Linux, macOS, and Windows.
-- **The remembered custom-file path is only persisted after the session
-  actually starts.** Previously a typo'd `--file` path could overwrite a
-  previously-working remembered path before the error surfaced.
-- **Snippet discovery is case-insensitive** — `NOTES.TXT` and `Mixed.Txt`
-  on case-preserving filesystems (Windows, default macOS) now appear in
-  the menu like their lowercase siblings.
-- **`--time 0`, `--words 0`, and `--symbols 0` are rejected at the CLI**
-  with a clear error instead of starting an un-finishable session.
-- **Opening the `?` Help overlay from the Results screen no longer
-  duplicates the session.** Previously, Results → `?` → Esc re-saved the
-  just-finished session — a duplicate record in `stats.json`, double-counted
-  key aggregates, and a misleading "+0 vs last" delta. (Pre-existing defect
-  since v0.1; surfaced by the v0.4 review pass.)
+- `--time 0`, `--words 0` and `--symbols 0` are rejected with a clear error.
+  They used to start a session with nothing to type that only Esc could end.
 
 ### Compatibility
 
-- Existing CLI flags (`--time`, `--words`, `--quote`, `--code`, `--zen`,
-  `--file`, `--theme`, `--list-themes`) are unchanged. The new flags
-  (`--big`, `--punctuation`, `--numbers`, `--symbols`, `--list-snippets`)
-  are purely additive.
-- `~/.typerush/stats.json` and `aggregate.json` formats are unchanged. Old
-  session records load and aggregate correctly; no migration needed.
-- `~/.typerush/config.toml` adds an optional `[words]` section and three
-  new optional `[defaults]` keys (`symbol_count`, plus extended `code_lang`
-  aliases). Existing configs continue to load without modification.
-- `~/.typerush/state.json` is new in v0.4.0 and entirely optional — TypeRush
-  creates it lazily the first time a custom-file session is started.
+- Every existing CLI flag, mode, menu row, key, theme and config key works as
+  before; the new flags and config keys are additive. `--file` now accepts
+  any path your OS allows.
+- `stats.json` is unchanged and old records load as before. Saved personal
+  bests keep their mode labels (`code-javascript` included).
+- `state.json` is new and optional; it is written atomically, like
+  `stats.json`, and a missing or corrupt one is simply ignored.
 
 ---
 
-## [0.3.0] — 2026-07-09 — smarter stats
+## [0.3.0] — 2026-10-09 — smarter stats
+
+Planned as a stats release. Two additions came in beyond that plan: the
+**grouped main menu** (pulled forward from v0.4) and **mouse support with
+keyboard alternates** for accessibility.
 
 ### Added
 
-- **Per-key accuracy heatmap.** TypeRush now tracks how often you type each
-  key correctly vs. incorrectly. After enough sessions the Stats screen shows
+- **Per-key accuracy heatmap.** TypeRush now tracks, for every character you
+  are asked to type (the space between words included), how often you hit it
+  and how often you typed something else instead. After enough sessions the Stats screen shows
   a "key accuracy" panel with up to 5 of your worst keys, including hit/total
   counts and a colour-coded accuracy percentage (red < 80%, amber < 93%,
   green otherwise). The panel shows "no key data yet (keep typing!)" until at
-  least one key has been pressed 3 or more times. Per-key data is stored in
+  least one key has come up 3 or more times. Per-key data is stored in
   `stats.json` alongside each session record.
 - **Per-mode personal bests.** The Results screen now shows the personal best
-  specifically for the mode you just finished (e.g. `time-30s best`) instead
+  specifically for the mode you just finished (a `mode best` row) instead
   of the all-time best across all modes. A `★ new best!` badge fires whenever
   you beat your previous record for that mode, including on your first session.
   Zen-mode results display `— (zen not saved)` since Zen sessions are not saved.
@@ -120,53 +101,109 @@ _No unreleased changes yet._
   Streak counts backward from today (or yesterday — the streak is still active
   if you haven't typed yet today). Displayed as "1 day", "N days", or "—" when
   the streak is broken.
-- **Average WPM over the last 7 and 30 days.** Two rolling-window WPM
-  averages appear in the Stats screen summary. Both show "—" when no sessions
-  fall within the window.
+- **Average WPM over the last 7 and 30 days.** Two WPM averages appear in
+  the Stats screen summary, over the last 7 and 30 calendar days in local time
+  (today included — the same day boundaries as the streak). Both show "—" when
+  no sessions fall within the window.
 - **Backward-compatible stats file.** New `key_hits` / `key_misses` fields
   use `#[serde(default)]` so existing `~/.typerush/stats.json` records without
   them load cleanly — no migration needed.
 
+### Added (input)
+
+- **Mouse support.** Click a menu option to start it, click any footer hint
+  (`Enter start`, `s stats`, `esc finish`, `? help`, …) to do what its key
+  does, scroll the wheel to move through the menu, and click anywhere to close
+  the help overlay or an error message. Every mouse action maps to an existing
+  key (WCAG 2.1.1). A click only fires when the button is pressed and released
+  on the same target, so sliding off — or dragging onto another option —
+  cancels it (WCAG 2.5.2).
+- **Alternate keys.** `F1` opens help (next to `?`), `F5` restarts while
+  typing (next to `Ctrl+R`), `Space` starts the selected menu mode (next to
+  `Enter`), and `s` opens stats from the menu (next to `Tab`).
+
 ### Changed
 
+- **Main menu grouped by category.** `time`, `words` and `code` each get a
+  heading with their options on the line below (`15s 30s 60s 120s`,
+  `10 25 50 100`, `rust python javascript`), then `quote`, `zen`, `stats`,
+  `quit`, with spacing between groups. `↑/↓` (`j/k`) moves between categories, `←/→` (`h/l`) between the
+  options in a category.
 - **Stats screen layout redesigned.** The summary card and the new key-accuracy
   heatmap sit side by side in a two-column top row, followed by the WPM
   sparkline and the recent-sessions table. The sparkline is slightly shorter
-  (5 rows instead of 7) so the full screen still fits in a 24-row terminal.
+  (5 rows instead of 7) and the footer takes one row, so the recent-sessions
+  table still shows 5 sessions in a 24-row terminal. The mode column is wide
+  enough for `code-javascript`.
+- **Short terminals.** The menu scrolls to keep the selected option visible
+  (and clickable), and the help overlay's close hint sits in its bottom border
+  so it shows even when the box is cut short. Error messages get a box tall
+  enough for the whole message.
+- **Footers.** The typing footer now reads `esc finish` (Esc ends the session
+  and shows results; it never went straight to the menu) and drops `? help`,
+  since `?` is typed as a character there. The help overlay is sized to its
+  content and fits an 80×24 terminal.
 - **Results screen body expanded** from `Constraint::Length(9)` to
   `Constraint::Length(10)` to accommodate the mode-specific best row.
 
 ### Performance
 
 - **Stats and Results screens no longer read `stats.json` on every frame.**
-  The session history is loaded once when you enter either screen and cached
-  in memory for the duration of the visit, then invalidated when a new session
-  is saved.
-- **Per-key accuracy is now O(1) to display.** A small running aggregate
-  (`~/.typerush/aggregate.json`) keeps cumulative per-key hit/miss totals,
-  updated incrementally on each save, so the heatmap no longer rescans the full
-  history every render. The aggregate is rebuilt automatically from existing
-  sessions on first launch after upgrading.
+  The history is read once and kept in memory; each save hands back the
+  updated list, so finishing a session no longer re-reads the file. The Stats
+  summary (streak, averages, key heatmap) is computed once each time the
+  screen opens rather than on every redraw.
 
 ### Fixed
 
 - **Stable ordering in the key-accuracy panel.** Keys with identical accuracy
   (e.g. two keys both at 80%) are now broken ties alphabetically, so they no
   longer swap positions and flicker between renders.
-- **Crash-safe stats writes.** `stats.json` and `aggregate.json` are now
-  written atomically (temp file + rename), so a crash or power loss mid-save
-  can never corrupt the file — and can never silently wipe your history on
-  the next save. Works on Linux, macOS, and Windows.
+- **Crash-safe stats writes.** `stats.json` is now written atomically (temp
+  file flushed to disk, then renamed over the old one), so a crash or power
+  loss mid-save can't leave a half-written or empty file. A symlinked
+  `stats.json` (e.g. into a dotfiles folder) stays a symlink, its permissions
+  are kept, and two TypeRush windows saving at once never share a temp file.
+  Works on Linux, macOS, and Windows.
+- **A corrupt `stats.json` is no longer silently wiped.** If the file can't be
+  parsed when a session is saved, it is copied to a timestamped
+  `stats.json.corrupt-YYYYMMDD-HHMMSS.mmm` before a fresh history is started,
+  so a later corruption can't overwrite an earlier backup.
+- **A session could be saved twice.** Opening help from the Results screen and
+  closing it saved the same session again (and hid the `★ new best!` badge).
+  Each finished game is now saved exactly once.
 - **Accurate Results screen for unsaved sessions.** Sessions that are not
   recorded (Zen mode, shorter than 1 second, or zero keystrokes) no longer
   shift the "vs last" delta by one session, and can no longer flash a
-  `★ new best!` badge for a record that was never kept.
+  `★ new best!` badge for a record that was never kept. If no session for the
+  mode has been recorded yet, the mode best shows `—`.
 
 ### Compatibility
 
-- Existing CLI flags, modes, config, and the stats file format are all
-  unchanged. Old `stats.json` records load correctly and contribute to
+- Existing CLI flags, modes, and config are unchanged. The stats file only
+  gains two optional fields (`key_hits`, `key_misses`). Old `stats.json` records load correctly and contribute to
   global stats; they just won't provide per-key heatmap data.
+
+---
+
+## [0.2.1] — pure character checking
+
+### Changed
+- **Pure character checking.** Typing is now one stream of characters, and
+  the space between words is a character like any other. Each key is
+  compared with the character under the cursor — match is correct, anything
+  else is wrong — and the cursor moves on one slot either way. A space typed
+  mid-word is a wrong character and no longer jumps to the next word. The run
+  ends when the last character is typed; no trailing space is needed.
+  Backspace walks back over spaces one character at a time.
+- The `extra` color slot is now unused (typing can no longer run past the end
+  of a word). It is still accepted in config files so existing configs load.
+
+### Fixed
+- **Wrong key on a space no longer piles up letters** ([#8]). Typing a letter
+  where a space belongs used to append surplus characters to the word and
+  leave the cursor stuck until space was pressed. It now counts as a wrong
+  character: the space is shown red and underlined and the cursor moves on.
 
 ---
 
@@ -269,6 +306,8 @@ _No unreleased changes yet._
 
 [Unreleased]: https://github.com/withrvr/typerush/compare/v0.4.0...HEAD
 [0.4.0]: https://github.com/withrvr/typerush/compare/v0.3.0...v0.4.0
-[0.3.0]: https://github.com/withrvr/typerush/compare/v0.2.0...v0.3.0
+[0.3.0]: https://github.com/withrvr/typerush/compare/v0.2.1...v0.3.0
+[0.2.1]: https://github.com/withrvr/typerush/compare/v0.2.0...v0.2.1
 [0.2.0]: https://github.com/withrvr/typerush/compare/v0.1.1...v0.2.0
 [0.1.1]: https://github.com/withrvr/typerush/releases/tag/v0.1.1
+[#8]: https://github.com/withrvr/typerush/issues/8

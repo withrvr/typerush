@@ -9,6 +9,9 @@ pub mod quotes;
 pub mod snippets;
 pub mod symbols;
 
+use std::path::Path;
+
+use anyhow::Context;
 use rand::seq::SliceRandom;
 use rand::{thread_rng, Rng};
 
@@ -19,7 +22,7 @@ use rand::{thread_rng, Rng};
 /// dictionary on top, which trades some smoothness for vocabulary breadth.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub enum WordPool {
-    /// Frequency-sorted ≈1,000 most common words. Default.
+    /// The default pool: ~430 frequent words (`english::ENGLISH_1000`).
     #[default]
     Common,
     /// Larger 10,000-word pool — includes the common words plus a wide
@@ -141,9 +144,11 @@ pub enum CodeLang {
 }
 
 /// Read a user-supplied text file and split it into words on whitespace.
-/// Empty files / missing files surface as `Err`.
-pub fn words_from_file(path: &str) -> anyhow::Result<Vec<String>> {
-    let content = std::fs::read_to_string(path)?;
+/// A missing or unreadable file surfaces as `Err` naming the path — a stale
+/// remembered file or deleted snippet otherwise shows a bare OS error.
+pub fn words_from_file(path: &Path) -> anyhow::Result<Vec<String>> {
+    let content =
+        std::fs::read_to_string(path).with_context(|| format!("can't read {}", path.display()))?;
     Ok(content.split_whitespace().map(|s| s.to_string()).collect())
 }
 

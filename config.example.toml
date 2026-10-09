@@ -36,7 +36,7 @@ symbol_count = 25
 # CLI flags `--big`, `--punctuation`, `--numbers` override these per-launch.
 # -----------------------------------------------------------------------------
 # [words]
-# pool = "common"        # "common" (≈1k words, default) | "extended" (10k words)
+# pool = "common"        # "common" (default, ~430 frequent words) | "extended" (10,000 words)
 # punctuation = false    # attach commas, periods, quotes, etc. to ~25% of words
 # numbers = false        # mix in random 1–4 digit number tokens (~12% of slots)
 
@@ -55,7 +55,7 @@ symbol_count = 25
 # correct    = "#A6E22E"   # correctly-typed characters + accuracy %
 # incorrect  = "#F92672"   # wrongly-typed characters
 # pending    = "#75715E"   # untyped characters + muted labels/footers
-# extra      = "#FD971F"   # surplus characters past end of word
+# extra      = "#FD971F"   # unused — kept so existing configs still load
 # mode_tag   = "#AE81FF"   # [mode] badge in the header
 # error      = "#F92672"   # error modal border
 # neutral    = "#F8F8F2"   # emphasized neutral text (char totals)

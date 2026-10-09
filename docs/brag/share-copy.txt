@@ -1,0 +1,1 @@
+TypeRush is a typing trainer that lives in your terminal: live WPM and accuracy as you type, six modes including real code snippets, four themes, and every session saved locally. One binary, no browser, no internet. cargo install typerush · github.com/withrvr/typerush

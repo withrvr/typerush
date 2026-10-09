@@ -13,13 +13,17 @@
 //!   └────────────── Esc / 'm' ───────────────────┘
 //! ```
 
+use std::cell::RefCell;
 use std::collections::HashMap;
+use std::path::{Path, PathBuf};
 use std::time::{Duration, Instant};
 
+use crossterm::event::{KeyCode, KeyModifiers};
+use ratatui::layout::Rect;
+
 use crate::config::load::{CodeLangKind, DefaultMode};
-use crate::game::{get_char_states, CharState};
 use crate::state::{self, AppState};
-use crate::storage::{self, AggregateStats, SessionRecord};
+use crate::storage::{ResultsComparison, SessionRecord, StatsSummary};
 use crate::theme::ThemePalette;
 use crate::words::{snippets::Snippet, WordDecor, WordPool};
 
@@ -55,11 +59,10 @@ pub enum Mode {
     Code(crate::words::CodeLang),
     /// No timer, no stats. Just type.
     Zen,
-    /// Words sourced from a user-supplied text file (`--file path.txt` or a
-    /// snippet picked from `~/.typerush/snippets/`).
+    /// Words sourced from a user-supplied text file (`--file path.txt`, the
+    /// remembered last file, or a snippet from `~/.typerush/snippets/`).
     Custom,
-    /// Drill programming punctuation: type N short symbol tokens like `=>`,
-    /// `(){};` and other characters typists usually under-train.
+    /// Programming-symbols drill: type N short tokens like `=>` or `(){};`.
     Symbols(usize),
 }
 
@@ -68,9 +71,9 @@ impl Mode {
     /// "words-50", "code-rust", …). Keeping the format stable means old stats
     /// stay readable across releases.
     ///
-    /// `Mode::Code(JavaScript)` deliberately serialises as `"code-javascript"`
-    /// rather than the slug `"js"` — old session records use that string and
-    /// per-mode PB lookup matches by exact label, so we must not regress it.
+    /// Code labels come from the variant name, so JavaScript stays
+    /// `"code-javascript"` and the new languages are `"code-go"`,
+    /// `"code-java"`, `"code-sql"`, `"code-shell"`.
     pub fn label(&self) -> String {
         match self {
             Mode::Time(seconds) => format!("time-{}s", seconds),
@@ -92,8 +95,9 @@ pub struct Word {
     pub text: String,
     /// What the user has typed so far (may be incomplete, may have errors).
     pub typed: String,
-    /// True once the user has pressed space (or otherwise advanced past it).
-    pub submitted: bool,
+    /// True when a non-space key was typed where the trailing space belongs —
+    /// the space is rendered as an error until backspaced.
+    pub space_missed: bool,
 }
 
 impl Word {
@@ -101,42 +105,49 @@ impl Word {
         Self {
             text,
             typed: String::new(),
-            submitted: false,
+            space_missed: false,
         }
     }
 }
 
-/// One row in the main menu.
+/// What a mouse click on a drawn region does. Every click maps onto an
+/// existing keyboard action, so the mouse never reaches anything the
+/// keyboard can't.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum ClickAction {
+    /// Behave exactly like this key press (footer hints).
+    Key(KeyCode, KeyModifiers),
+    /// Select this menu option and activate it, like ←/→ then Enter.
+    Menu(usize),
+}
+
+/// One selectable option in the main menu. Consecutive items that share a
+/// `group` are drawn under one heading, side by side ("15s  30s  60s  120s").
 pub struct MenuItem {
-    /// User-visible row label. Owned `String` so dynamic rows (e.g. the
-    /// "Custom · last/file.txt" row, or one per discovered snippet) can show
-    /// runtime data.
+    /// Category the option belongs to — the row's heading.
+    pub group: &'static str,
+    /// Option text within the row. Same as `group` for single-option rows.
+    /// Owned because custom options show runtime names (snippet, file).
     pub label: String,
-    /// Set for "start a game" rows; `None` for rows like "Stats" or "Quit"
-    /// or visual section separators.
+    /// Set for "start a game" rows; `None` for rows like "Stats" or "Quit".
     pub mode: Option<Mode>,
     pub action: MenuAction,
-    /// For `MenuAction::StartCustom`, the snippet path to use as the word
-    /// source. `None` for every other row.
-    pub custom_path: Option<String>,
+    /// File a `StartCustom` option types from. `None` everywhere else, and
+    /// on the placeholder "custom" option shown when there's nothing to offer.
+    pub custom_path: Option<PathBuf>,
 }
 
 /// What pressing Enter on a menu item should do.
-#[derive(Clone, Copy, Debug)]
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub enum MenuAction {
     /// Start the game in `MenuItem::mode`.
     Start,
-    /// Start a custom-file session using `MenuItem::custom_path`. If the path
-    /// is `None`, falls back to the remembered last custom file from
-    /// `state.json`; if that's also missing, surfaces a friendly error.
+    /// Start a custom-file session from `MenuItem::custom_path`.
     StartCustom,
     /// Jump to the historical stats screen.
     ShowStats,
     /// Quit the application.
     Quit,
-    /// Decorative section header / spacer — Enter does nothing and the
-    /// keymap skips over it when navigating with arrow keys.
-    Separator,
 }
 
 /// Translate a `DefaultMode` (the config-side enum) into a runtime `Mode`.
@@ -179,126 +190,115 @@ fn best_menu_match(menu: &[MenuItem], default_mode: DefaultMode) -> usize {
                 | (Some(Mode::Symbols(_)), DefaultMode::Symbols(_))
         )
     });
-    // Skip separator rows when no other match exists.
-    family_match
-        .or_else(|| {
-            menu.iter()
-                .position(|item| !matches!(item.action, MenuAction::Separator))
-        })
-        .unwrap_or(0)
+    family_match.unwrap_or(0)
 }
 
-/// Build a menu row representing a visual section header. Rows with
-/// `MenuAction::Separator` are skipped by arrow-key navigation and rendered
-/// in muted style by the menu UI.
-fn separator(label: &str) -> MenuItem {
-    MenuItem {
+/// The menu with no custom sources — what tests and a fresh `App` start from.
+#[cfg(test)]
+pub fn default_menu() -> Vec<MenuItem> {
+    build_menu(&[], None)
+}
+
+/// Build the main menu. The `custom` row offers `last_custom_file` (unless it
+/// is one of the snippets) followed by every snippet; with neither, it shows
+/// a single placeholder option that explains how to add one.
+///
+/// The v0.3 rows keep their order; the v0.4 `symbols` and `custom` rows sit
+/// between `zen` and `stats`, so ↑/↓ through the original rows is unchanged.
+pub fn build_menu(snippets: &[Snippet], last_custom_file: Option<&Path>) -> Vec<MenuItem> {
+    use crate::words::CodeLang;
+    let start = |group, label: &str, mode| MenuItem {
+        group,
         label: label.to_string(),
-        mode: None,
-        action: MenuAction::Separator,
-        custom_path: None,
-    }
-}
-
-/// Convenience constructor for a "start this mode" row.
-fn start_row(label: impl Into<String>, mode: Mode) -> MenuItem {
-    MenuItem {
-        label: label.into(),
         mode: Some(mode),
         action: MenuAction::Start,
         custom_path: None,
-    }
-}
-
-/// Build the default menu shown on startup, plus any user-discovered
-/// snippets. `last_custom_file` (if any) populates the "Custom" row with the
-/// last path so a one-key restart works.
-pub fn build_menu(snippets: &[Snippet], last_custom_file: Option<&str>) -> Vec<MenuItem> {
-    use crate::words::CodeLang;
-    let mut menu: Vec<MenuItem> = vec![
-        separator("── Time ──"),
-        start_row("Time · 15s", Mode::Time(15)),
-        start_row("Time · 30s", Mode::Time(30)),
-        start_row("Time · 60s", Mode::Time(60)),
-        start_row("Time · 120s", Mode::Time(120)),
-        separator("── Words ──"),
-        start_row("Words · 10", Mode::Words(10)),
-        start_row("Words · 25", Mode::Words(25)),
-        start_row("Words · 50", Mode::Words(50)),
-        start_row("Words · 100", Mode::Words(100)),
-        separator("── Quote ──"),
-        start_row("Quote", Mode::Quote),
-        separator("── Code ──"),
-        start_row("Code · Rust", Mode::Code(CodeLang::Rust)),
-        start_row("Code · Python", Mode::Code(CodeLang::Python)),
-        start_row("Code · JavaScript", Mode::Code(CodeLang::JavaScript)),
-        start_row("Code · Go", Mode::Code(CodeLang::Go)),
-        start_row("Code · Java", Mode::Code(CodeLang::Java)),
-        start_row("Code · SQL", Mode::Code(CodeLang::Sql)),
-        start_row("Code · Shell", Mode::Code(CodeLang::Shell)),
-        separator("── Symbols ──"),
-        start_row("Symbols · 25", Mode::Symbols(25)),
-        start_row("Symbols · 50", Mode::Symbols(50)),
-        separator("── Zen ──"),
-        start_row("Zen", Mode::Zen),
-        separator("── Custom ──"),
-        custom_row(last_custom_file),
-    ];
-    for snippet in snippets {
-        menu.push(MenuItem {
-            label: format!("Snippet · {}", snippet.name),
-            mode: Some(Mode::Custom),
-            action: MenuAction::StartCustom,
-            custom_path: Some(snippet.path.to_string_lossy().to_string()),
-        });
-    }
-    menu.push(separator("── More ──"));
-    menu.push(MenuItem {
-        label: "Stats".to_string(),
-        mode: None,
-        action: MenuAction::ShowStats,
-        custom_path: None,
-    });
-    menu.push(MenuItem {
-        label: "Quit".to_string(),
-        mode: None,
-        action: MenuAction::Quit,
-        custom_path: None,
-    });
-    menu
-}
-
-/// "Custom" menu row. Shows the last-used path (truncated) when one exists,
-/// otherwise a hint that the user should pass `--file` or drop snippets.
-fn custom_row(last_custom_file: Option<&str>) -> MenuItem {
-    let label = match last_custom_file {
-        Some(path) => format!("Custom · {}", truncate_for_menu(path, 48)),
-        None => "Custom · (pass --file or drop a .txt in ~/.typerush/snippets/)".to_string(),
     };
-    MenuItem {
+    let other = |group: &'static str, action| MenuItem {
+        group,
+        label: group.to_string(),
+        mode: None,
+        action,
+        custom_path: None,
+    };
+    let custom = |label: String, path: Option<PathBuf>| MenuItem {
+        group: "custom",
         label,
         mode: Some(Mode::Custom),
         action: MenuAction::StartCustom,
-        custom_path: None,
+        custom_path: path,
+    };
+
+    let mut menu = vec![
+        start("time", "15s", Mode::Time(15)),
+        start("time", "30s", Mode::Time(30)),
+        start("time", "60s", Mode::Time(60)),
+        start("time", "120s", Mode::Time(120)),
+        start("words", "10", Mode::Words(10)),
+        start("words", "25", Mode::Words(25)),
+        start("words", "50", Mode::Words(50)),
+        start("words", "100", Mode::Words(100)),
+        start("code", "rust", Mode::Code(CodeLang::Rust)),
+        start("code", "python", Mode::Code(CodeLang::Python)),
+        start("code", "javascript", Mode::Code(CodeLang::JavaScript)),
+        start("code", "go", Mode::Code(CodeLang::Go)),
+        start("code", "java", Mode::Code(CodeLang::Java)),
+        start("code", "sql", Mode::Code(CodeLang::Sql)),
+        start("code", "shell", Mode::Code(CodeLang::Shell)),
+        start("quote", "quote", Mode::Quote),
+        start("zen", "zen", Mode::Zen),
+        start("symbols", "25", Mode::Symbols(25)),
+        start("symbols", "50", Mode::Symbols(50)),
+    ];
+
+    let custom_start = menu.len();
+    if let Some(last) = last_custom_file {
+        if !snippets.iter().any(|s| same_file(&s.path, last)) {
+            let name = last.file_name().map_or_else(
+                || last.display().to_string(),
+                |n| n.to_string_lossy().into_owned(),
+            );
+            menu.push(custom(name, Some(last.to_path_buf())));
+        }
+    }
+    for snippet in snippets {
+        menu.push(custom(snippet.name.clone(), Some(snippet.path.clone())));
+    }
+    if menu.len() == custom_start {
+        menu.push(custom("custom".to_string(), None));
+    }
+
+    menu.push(other("stats", MenuAction::ShowStats));
+    menu.push(other("quit", MenuAction::Quit));
+    menu
+}
+
+/// Do two paths name the same file? Equal paths trivially do; otherwise
+/// compare canonical forms, which resolves `./notes.txt` vs an absolute path
+/// and symlinks. Paths that can't be canonicalized (e.g. missing) only match
+/// when they are literally equal.
+fn same_file(a: &Path, b: &Path) -> bool {
+    if a == b {
+        return true;
+    }
+    match (std::fs::canonicalize(a), std::fs::canonicalize(b)) {
+        (Ok(a), Ok(b)) => a == b,
+        _ => false,
     }
 }
 
-/// Shorten `path` to at most `max` characters (not bytes) by replacing the
-/// middle with `…`, keeping the head and (more importantly) the file name
-/// visible.
-fn truncate_for_menu(path: &str, max: usize) -> String {
-    let chars: Vec<char> = path.chars().collect();
-    if chars.len() <= max {
-        return path.to_string();
-    }
-    // Reserve one slot for the ellipsis itself; weight the kept text toward
-    // the tail so the file name on the right stays visible.
-    let keep = max.saturating_sub(1);
-    let head = keep / 3;
-    let tail = keep - head;
-    let head_s: String = chars.iter().take(head).collect();
-    let tail_s: String = chars.iter().skip(chars.len() - tail).collect();
-    format!("{}…{}", head_s, tail_s)
+/// Index range of the menu row (group) containing `index`.
+pub fn menu_row(menu: &[MenuItem], index: usize) -> std::ops::Range<usize> {
+    let group = menu[index].group;
+    let start = menu[..index]
+        .iter()
+        .rposition(|item| item.group != group)
+        .map_or(0, |i| i + 1);
+    let end = menu[index..]
+        .iter()
+        .position(|item| item.group != group)
+        .map_or(menu.len(), |i| index + i);
+    start..end
 }
 
 /// The entire mutable state of the application.
@@ -332,14 +332,15 @@ pub struct App {
     /// Characters typed that matched the target. Drives both WPM and accuracy.
     pub correct_chars: usize,
     /// Every character the user has typed during the session, including
-    /// spaces (a successfully submitted space counts as one extra correct char).
+    /// spaces (a correctly typed space also counts as a correct char).
     pub total_typed_chars: usize,
     /// Total backspaces pressed — informational only.
     pub backspaces: usize,
 
     // --- misc ---
-    /// Path passed to `--file`, if any.
-    pub custom_file: Option<String>,
+    /// File the next `Mode::Custom` session types from: `--file`, or the
+    /// custom option picked in the menu. Kept for Ctrl+R / Enter restarts.
+    pub custom_file: Option<PathBuf>,
     /// Set to `true` from any handler to exit the main loop cleanly.
     pub should_quit: bool,
     /// Transient error message rendered as a modal overlay.
@@ -348,37 +349,52 @@ pub struct App {
     pub tick_count: u64,
     /// Active color palette — read by every UI module on every frame.
     pub theme: ThemePalette,
-    /// Which English-word pool to draw from in Time / Words modes. Picked at
-    /// startup from config + CLI; can be toggled at runtime from the menu.
-    pub word_pool: WordPool,
-    /// Punctuation / numbers decoration to apply to randomly-picked words.
-    pub word_decor: WordDecor,
-    /// Persistent UI state (last custom file, etc.) loaded once at startup.
-    pub app_state: AppState,
-    /// User snippet library discovered at startup from
-    /// `~/.typerush/snippets/*.txt`. Held here so the menu can be rebuilt
-    /// (e.g. when the Custom row label changes) without re-scanning the disk.
-    pub snippets: Vec<Snippet>,
 
     // --- per-key accuracy (v0.3.0) ---
-    /// Number of times each key was typed at the correct position.
+    /// Per expected character: how many times it was typed correctly.
     pub key_hits: HashMap<char, u64>,
-    /// Number of times each key was typed but did not match (wrong key or extra).
+    /// Per expected character: how many times something else was typed instead.
     pub key_misses: HashMap<char, u64>,
 
     // --- stats caching (v0.3.0) ---
-    /// Full session history, loaded once when the Stats screen is entered and
-    /// invalidated on each session save. `None` until the first Stats visit.
+    /// Full session history, read from disk the first time the Stats or
+    /// Results screen needs it and replaced by the updated list on every
+    /// save. `None` until first needed (or after a failed save).
     pub stats_cache: Option<Vec<SessionRecord>>,
-    /// Running aggregate of per-key hit/miss totals across all sessions.
-    /// Loaded from `aggregate.json` at startup; kept current in memory after
-    /// each save so the key-accuracy panel never re-reads the full history.
-    pub aggregate: AggregateStats,
+    /// Summary figures for the Stats screen, computed from `stats_cache`
+    /// each time that screen is entered. `None` until the first Stats visit.
+    pub stats_summary: Option<StatsSummary>,
+    /// What the Results screen compares against, computed when that screen
+    /// is entered (after the session is saved).
+    pub results_comparison: Option<ResultsComparison>,
     /// Whether the session currently shown on the Results screen was actually
     /// written to stats.json. False for Zen, sub-1-second, and zero-keystroke
     /// sessions (and on disk failure) — the Results screen uses this to know
     /// whether the last history entry is the current session or a previous one.
     pub session_just_saved: bool,
+
+    // --- word sources (v0.4.0) ---
+    /// English pool for Time / Words / Zen (`--big` or `[words] pool`).
+    pub word_pool: WordPool,
+    /// Punctuation / numbers decoration for Time / Words (never Zen).
+    pub word_decor: WordDecor,
+    /// Snippet library found in `~/.typerush/snippets/` at startup. Kept so
+    /// the menu can be rebuilt without rescanning the directory.
+    pub snippets: Vec<Snippet>,
+    /// Persisted UI state (the remembered last custom file).
+    pub app_state: AppState,
+    /// Where `app_state` is saved. `None` means "don't persist" — the
+    /// default, so tests never write to the real home directory.
+    pub state_file: Option<PathBuf>,
+
+    // --- mouse ---
+    /// Clickable regions drawn in the last frame. Rebuilt by `ui::render` on
+    /// every frame (hence the `RefCell`: rendering only gets `&App`) and
+    /// read by the mouse handler in `main.rs`.
+    pub click_targets: RefCell<Vec<(Rect, ClickAction)>>,
+    /// Target under the pointer when the left button went down; a release
+    /// only acts if it lands on this same target.
+    pub pressed_target: Option<ClickAction>,
 }
 
 impl App {
@@ -388,24 +404,15 @@ impl App {
     /// is pre-selected and what `app.mode` starts as. `palette` is the active
     /// color theme — UI modules read it on every frame.
     ///
-    /// Discovers `~/.typerush/snippets/*.txt` and loads `state.json` so the
-    /// "Custom" row and snippet rows are populated immediately.
+    /// Touches no disk: snippets and the remembered file are added later by
+    /// [`App::load_custom_sources`]. A `custom_file` (`--file`) is offered in
+    /// the menu's custom row straight away.
     pub fn new(
-        custom_file: Option<String>,
+        custom_file: Option<PathBuf>,
         palette: ThemePalette,
         default_mode: DefaultMode,
-        word_pool: WordPool,
-        word_decor: WordDecor,
     ) -> Self {
-        let app_state = state::load_state();
-        let snippets = crate::words::snippets::discover_snippets();
-        // `--file` from the CLI always wins for the initial custom path; if
-        // unset, fall back to the last-used file we persisted in state.json so
-        // the "Custom" menu row works on a bare `typerush` launch.
-        let effective_custom_file = custom_file
-            .clone()
-            .or_else(|| app_state.last_custom_file.clone());
-        let menu = build_menu(&snippets, effective_custom_file.as_deref());
+        let menu = build_menu(&[], custom_file.as_deref());
         let initial_mode = mode_for(default_mode);
         let menu_index = best_menu_match(&menu, default_mode);
         Self {
@@ -421,75 +428,150 @@ impl App {
             correct_chars: 0,
             total_typed_chars: 0,
             backspaces: 0,
-            custom_file: effective_custom_file,
+            custom_file,
             should_quit: false,
             error_message: None,
             tick_count: 0,
             theme: palette,
-            word_pool,
-            word_decor,
-            app_state,
-            snippets,
             key_hits: HashMap::new(),
             key_misses: HashMap::new(),
             stats_cache: None,
+            stats_summary: None,
+            results_comparison: None,
             session_just_saved: false,
-            aggregate: {
-                let mut agg = storage::load_aggregate();
-                // One-time O(n) rebuild when upgrading from a version that
-                // predates aggregate.json — after this the file exists and
-                // subsequent startups are O(1).
-                if agg.key_hits.is_empty() && agg.key_misses.is_empty() {
-                    if let Ok(sessions) = storage::load_sessions() {
-                        for s in &sessions {
-                            storage::apply_session_to_aggregate(&mut agg, s);
-                        }
-                        if !agg.key_hits.is_empty() || !agg.key_misses.is_empty() {
-                            storage::save_aggregate(&agg);
-                        }
-                    }
-                }
-                agg
-            },
+            word_pool: WordPool::Common,
+            word_decor: WordDecor::default(),
+            snippets: Vec::new(),
+            app_state: AppState::default(),
+            state_file: None,
+            click_targets: RefCell::new(Vec::new()),
+            pressed_target: None,
         }
     }
 
-    /// Stage `path` as the target for the next `Mode::Custom` session, in
-    /// memory only. **Does not touch disk** — pair with
-    /// [`App::persist_custom_file`] after `start_game` succeeds so a
-    /// broken path doesn't pollute `state.json`.
-    pub fn set_custom_file(&mut self, path: &str) {
-        self.custom_file = Some(path.to_string());
+    /// Choose the English pool and decoration for Time / Words / Zen.
+    pub fn set_word_source(&mut self, pool: WordPool, decor: WordDecor) {
+        self.word_pool = pool;
+        self.word_decor = decor;
     }
 
-    /// Persist the currently-staged `custom_file` (if any) to
-    /// `~/.typerush/state.json` and refresh the menu's "Custom" row so its
-    /// label reflects the new path. Call this **after** a successful
-    /// `start_game(Mode::Custom)` — writing state before the session boots
-    /// would strand the user with a menu row that fails on every restart.
+    /// Offer the snippet library and the remembered last custom file in the
+    /// menu, and remember future custom picks in `state_file` (`None`: don't).
+    pub fn load_custom_sources(
+        &mut self,
+        snippets: Vec<Snippet>,
+        app_state: AppState,
+        state_file: Option<PathBuf>,
+    ) {
+        self.snippets = snippets;
+        self.app_state = app_state;
+        self.state_file = state_file;
+        self.rebuild_menu();
+    }
+
+    /// The file the custom row offers first: `--file` / the current pick,
+    /// else the one remembered from a previous run.
+    fn offered_custom_file(&self) -> Option<PathBuf> {
+        self.custom_file
+            .clone()
+            .or_else(|| self.app_state.last_custom_file.as_ref().map(PathBuf::from))
+    }
+
+    /// Rebuild the menu (custom row contents changed) keeping the highlight
+    /// on the same option, or the first custom option if that one is gone.
+    fn rebuild_menu(&mut self) {
+        let selected = self
+            .menu
+            .get(self.menu_index)
+            .map(|item| (item.mode, item.custom_path.clone()));
+        let offered = self.offered_custom_file();
+        self.menu = build_menu(&self.snippets, offered.as_deref());
+        self.menu_index = selected
+            .and_then(|(mode, path)| {
+                self.menu
+                    .iter()
+                    .position(|item| item.mode == mode && item.custom_path == path)
+                    .or_else(|| {
+                        if mode == Some(Mode::Custom) {
+                            self.menu
+                                .iter()
+                                .position(|item| item.action == MenuAction::StartCustom)
+                        } else {
+                            None
+                        }
+                    })
+            })
+            .unwrap_or(self.menu_index)
+            .min(self.menu.len() - 1);
+    }
+
+    /// Make `path` the source of the next `Mode::Custom` session. Memory only:
+    /// call [`App::persist_custom_file`] once the session has started, so a
+    /// path that fails to load never replaces a working remembered one.
+    pub fn set_custom_file(&mut self, path: PathBuf) {
+        self.custom_file = Some(path);
+    }
+
+    /// Remember the current custom file in `state.json` and show it in the
+    /// menu. Call after a successful `start_game(Mode::Custom)`.
     ///
-    /// Best-effort: any disk error is swallowed. Idempotent when the path
-    /// hasn't changed since the last persist. Re-uses the snippet list
-    /// cached on `App` so keystroke-time menu rebuilds skip the disk scan.
+    /// The path is stored absolute so it still works when TypeRush is next
+    /// launched from another directory. Non-UTF-8 paths aren't stored. Disk
+    /// errors are ignored — losing this memory is never worth an error.
     pub fn persist_custom_file(&mut self) {
         let Some(path) = self.custom_file.clone() else {
             return;
         };
-        // Skip the disk write and menu rebuild when nothing changed —
-        // spares a needless JSON serialization on Ctrl+R restarts.
-        if self.app_state.last_custom_file.as_deref() == Some(path.as_str()) {
+        let absolute = if path.is_absolute() {
+            path
+        } else {
+            std::env::current_dir().map_or(path.clone(), |dir| dir.join(&path))
+        };
+        let Some(text) = absolute.to_str() else {
+            return;
+        };
+        if self.app_state.last_custom_file.as_deref() == Some(text) {
             return;
         }
-        self.app_state.last_custom_file = Some(path.clone());
-        state::save_state(&self.app_state);
-        // Preserve the highlight on whichever row the user is currently on
-        // (e.g. the snippet row they just pressed Enter on). `build_menu`
-        // produces a stable row order, so the index stays valid.
-        let previous_index = self.menu_index;
-        self.menu = build_menu(&self.snippets, self.custom_file.as_deref());
-        if previous_index < self.menu.len() {
-            self.menu_index = previous_index;
+        self.app_state.last_custom_file = Some(text.to_string());
+        self.custom_file = Some(absolute);
+        if let Some(file) = &self.state_file {
+            let _ = state::save_to_path(file, &self.app_state);
         }
+        self.rebuild_menu();
+    }
+
+    /// Menu ↑/↓: jump to the previous/next row (wrapping), keeping the same
+    /// column where the target row has one, else its last option.
+    pub fn menu_move_row(&mut self, down: bool) {
+        let row = menu_row(&self.menu, self.menu_index);
+        let column = self.menu_index - row.start;
+        let target = if down {
+            if row.end == self.menu.len() {
+                0
+            } else {
+                row.end
+            }
+        } else if row.start == 0 {
+            self.menu.len() - 1
+        } else {
+            row.start - 1
+        };
+        let target_row = menu_row(&self.menu, target);
+        self.menu_index = (target_row.start + column).min(target_row.end - 1);
+    }
+
+    /// Menu ←/→: previous/next option within the current row (wrapping).
+    pub fn menu_move_column(&mut self, right: bool) {
+        let row = menu_row(&self.menu, self.menu_index);
+        let len = row.len();
+        let column = self.menu_index - row.start;
+        let column = if right {
+            (column + 1) % len
+        } else {
+            (column + len - 1) % len
+        };
+        self.menu_index = row.start + column;
     }
 
     /// How long the user has been (or was) typing during the current session.
@@ -543,8 +625,8 @@ impl App {
         }
     }
 
-    /// In `Mode::Words` / `Mode::Symbols`, `(items_completed, items_total)`.
-    /// `None` for all other modes.
+    /// In `Mode::Words` / `Mode::Symbols`, `(completed, total)`. `None` for
+    /// all other modes.
     pub fn progress(&self) -> Option<(usize, usize)> {
         match self.mode {
             Mode::Words(target) | Mode::Symbols(target) => {
@@ -561,47 +643,34 @@ impl App {
     /// can't be initialised (e.g. `--file` was passed an empty file).
     pub fn start_game(&mut self, mode: Mode) -> anyhow::Result<()> {
         use crate::words;
-        self.mode = mode;
-        let pool = self.word_pool;
-        let decor = self.word_decor;
-        self.words = match mode {
+        let (pool, decor) = (self.word_pool, self.word_decor);
+        // Build the word list before touching any state: if a custom file
+        // fails to load, the app is left exactly as it was.
+        let text: Vec<String> = match mode {
             // Time mode just needs *enough* words that no one runs out.
-            Mode::Time(_) => words::random_words_from(300, pool, decor)
-                .into_iter()
-                .map(Word::new)
-                .collect(),
-            Mode::Words(count) => words::random_words_from(count, pool, decor)
-                .into_iter()
-                .map(Word::new)
-                .collect(),
-            Mode::Quote => words::random_quote().into_iter().map(Word::new).collect(),
-            Mode::Code(lang) => words::random_code_snippet(lang)
-                .into_iter()
-                .map(Word::new)
-                .collect(),
-            // Zen intentionally ignores decoration toggles to stay calm.
-            Mode::Zen => words::random_words_from(500, pool, WordDecor::default())
-                .into_iter()
-                .map(Word::new)
-                .collect(),
+            Mode::Time(_) => words::random_words_from(300, pool, decor),
+            Mode::Words(count) => words::random_words_from(count, pool, decor),
+            Mode::Quote => words::random_quote(),
+            Mode::Code(lang) => words::random_code_snippet(lang),
+            // Zen stays calm: the chosen pool, but never decoration.
+            Mode::Zen => words::random_words_from(500, pool, WordDecor::default()),
+            Mode::Symbols(count) => words::random_symbol_tokens(count),
             Mode::Custom => {
-                if let Some(path) = &self.custom_file {
-                    let loaded = words::words_from_file(path)?;
-                    if loaded.is_empty() {
-                        return Err(anyhow::anyhow!("custom file is empty"));
-                    }
-                    loaded.into_iter().map(Word::new).collect()
-                } else {
+                let Some(path) = &self.custom_file else {
                     return Err(anyhow::anyhow!(
-                        "no custom file. Pass --file <path> or drop a .txt in ~/.typerush/snippets/"
+                        "no custom file yet: run `typerush --file <path>`, or drop .txt files in {}",
+                        words::snippets::snippets_dir().display()
                     ));
+                };
+                let loaded = words::words_from_file(path)?;
+                if loaded.is_empty() {
+                    return Err(anyhow::anyhow!("{} is empty", path.display()));
                 }
+                loaded
             }
-            Mode::Symbols(count) => words::random_symbol_tokens(count)
-                .into_iter()
-                .map(Word::new)
-                .collect(),
         };
+        self.mode = mode;
+        self.words = text.into_iter().map(Word::new).collect();
         self.current_word = 0;
         self.started_at = None;
         self.ended_at = None;
@@ -638,39 +707,48 @@ impl App {
     /// Handle a single visible character keypress (anything that isn't a
     /// control key — letters, digits, punctuation, and the space bar).
     ///
-    /// Space is special: it submits the current word and advances.
+    /// Pure character check: the text is one stream of characters, the space
+    /// between words included. The key is compared with the character under
+    /// the cursor — match is correct, anything else is wrong — and the cursor
+    /// moves on one slot either way. Space is not special: mid-word it is just
+    /// a wrong character.
     pub fn handle_char(&mut self, typed_char: char) {
         self.ensure_timer_started();
         if self.current_word >= self.words.len() {
             return;
         }
 
-        // The space bar is the "submit this word" key.
-        if typed_char == ' ' {
-            self.submit_word();
+        let is_last_word = self.current_word + 1 >= self.words.len();
+        let active_word = &mut self.words[self.current_word];
+        let cursor_position = active_word.typed.chars().count();
+        let word_len = active_word.text.chars().count();
+        self.total_typed_chars += 1;
+
+        // Past the end of the word the cursor sits on the space after it.
+        let expected_char = active_word.text.chars().nth(cursor_position);
+        let target_char = expected_char.unwrap_or(' ');
+        let is_correct = typed_char == target_char;
+        // Per-key stats are kept for the key that *should* have been pressed.
+        let key_counts = if is_correct {
+            self.correct_chars += 1;
+            &mut self.key_hits
+        } else {
+            &mut self.key_misses
+        };
+        *key_counts.entry(target_char).or_insert(0) += 1;
+
+        if expected_char.is_none() {
+            // Cursor on the space after the word: that slot is a character too.
+            active_word.space_missed = !is_correct;
+            self.advance_word();
             return;
         }
 
-        let active_word = &mut self.words[self.current_word];
-        let target_chars: Vec<char> = active_word.text.chars().collect();
-        let cursor_position = active_word.typed.chars().count();
-
         active_word.typed.push(typed_char);
-        self.total_typed_chars += 1;
 
-        // Only chars that match the target's expected character at the cursor
-        // count as "correct". Anything else (wrong letter or typed past the
-        // end of the target word) does NOT add to correct_chars.
-        if let Some(&expected_char) = target_chars.get(cursor_position) {
-            if expected_char == typed_char {
-                self.correct_chars += 1;
-                *self.key_hits.entry(typed_char).or_insert(0) += 1;
-            } else {
-                *self.key_misses.entry(typed_char).or_insert(0) += 1;
-            }
-        } else {
-            // Extra character typed past the end of the target word.
-            *self.key_misses.entry(typed_char).or_insert(0) += 1;
+        // Last character of the last word typed: there is no trailing space.
+        if is_last_word && cursor_position + 1 == word_len {
+            self.advance_word();
         }
     }
 
@@ -678,8 +756,8 @@ impl App {
     /// erase everything typed for the current word; otherwise erase one char.
     ///
     /// If the current word is already empty and the user is not on the first
-    /// word, walks the cursor back to the previous word so they can fix a typo
-    /// in a word they've already submitted.
+    /// word, erases the space before it — the cursor walks back to the previous
+    /// word so they can fix a typo in a word they've already typed.
     pub fn handle_backspace(&mut self, delete_whole_word: bool) {
         if self.current_word >= self.words.len() {
             return;
@@ -690,7 +768,8 @@ impl App {
         if active_word.typed.is_empty() {
             if self.current_word > 0 {
                 self.current_word -= 1;
-                self.words[self.current_word].submitted = false;
+                self.words[self.current_word].space_missed = false;
+                self.backspaces += 1;
             }
             return;
         }
@@ -704,41 +783,17 @@ impl App {
         }
     }
 
-    /// Called when the user presses space — submits the current word as final
-    /// and advances `current_word`. Will also `finish_game()` if this submission
+    /// Moves the cursor to the next word. Will also `finish_game()` if this
     /// reaches the configured word/quote/code target.
-    fn submit_word(&mut self) {
-        if self.current_word >= self.words.len() {
-            return;
-        }
-        // The space itself is a typed character (it occupies a column on screen).
-        self.total_typed_chars += 1;
-
-        let active_word = &mut self.words[self.current_word];
-        active_word.submitted = true;
-
-        // A "perfectly typed" word means: typed length == target length and
-        // every character is Correct. In that case the trailing space also
-        // counts as a correct keystroke (matching how most typing trainers score).
-        let states = get_char_states(&active_word.text, &active_word.typed);
-        let typed_perfectly = !states.is_empty()
-            && states.iter().all(|(_, s)| *s == CharState::Correct)
-            && active_word.typed.chars().count() == active_word.text.chars().count();
-        if typed_perfectly {
-            self.correct_chars += 1;
-        }
-
+    fn advance_word(&mut self) {
         self.current_word += 1;
 
-        // Word-count modes: stop once the user has hit the target.
-        match self.mode {
-            Mode::Words(target) | Mode::Symbols(target) => {
-                if self.current_word >= target {
-                    self.finish_game();
-                    return;
-                }
+        // Count modes (words, symbol tokens): stop once the target is reached.
+        if let Mode::Words(target) | Mode::Symbols(target) = self.mode {
+            if self.current_word >= target {
+                self.finish_game();
+                return;
             }
-            _ => {}
         }
         // Quote / code / custom-file modes: stop when there's nothing left to type.
         if matches!(self.mode, Mode::Quote | Mode::Code(_) | Mode::Custom)
@@ -771,39 +826,81 @@ mod tests {
 
     #[test]
     fn best_menu_match_exact_time() {
-        let menu = build_menu(&[], None);
+        let menu = default_menu();
         let index = best_menu_match(&menu, DefaultMode::Time(30));
-        assert_eq!(menu[index].label, "Time · 30s");
+        assert_eq!(menu[index].label, "30s");
     }
 
     #[test]
     fn best_menu_match_exact_words() {
-        let menu = build_menu(&[], None);
+        let menu = default_menu();
         let index = best_menu_match(&menu, DefaultMode::Words(100));
-        assert_eq!(menu[index].label, "Words · 100");
+        assert_eq!(menu[index].label, "100");
     }
 
     #[test]
     fn best_menu_match_falls_back_to_first_time_row() {
         // 45 isn't one of the four standard time rows; we expect the first
         // time row ("Time · 15s") rather than something unrelated.
-        let menu = build_menu(&[], None);
+        let menu = default_menu();
         let index = best_menu_match(&menu, DefaultMode::Time(45));
-        assert_eq!(menu[index].label, "Time · 15s");
+        assert_eq!(menu[index].label, "15s");
     }
 
     #[test]
     fn best_menu_match_falls_back_to_first_words_row() {
-        let menu = build_menu(&[], None);
+        let menu = default_menu();
         let index = best_menu_match(&menu, DefaultMode::Words(7));
-        assert_eq!(menu[index].label, "Words · 10");
+        assert_eq!(menu[index].label, "10");
     }
 
     #[test]
     fn best_menu_match_picks_zen_row() {
-        let menu = build_menu(&[], None);
+        let menu = default_menu();
         let index = best_menu_match(&menu, DefaultMode::Zen);
-        assert_eq!(menu[index].label, "Zen");
+        assert_eq!(menu[index].label, "zen");
+    }
+
+    fn menu_app() -> App {
+        App::new(
+            None,
+            crate::theme::ThemePalette::default(),
+            DefaultMode::Time(30),
+        )
+    }
+
+    #[test]
+    fn menu_left_right_stays_in_row_and_wraps() {
+        let mut app = menu_app(); // time · 30s
+        app.menu_move_column(true);
+        assert_eq!(app.menu[app.menu_index].label, "60s");
+        app.menu_move_column(true);
+        app.menu_move_column(true);
+        assert_eq!(app.menu[app.menu_index].label, "15s"); // wrapped
+        app.menu_move_column(false);
+        assert_eq!(app.menu[app.menu_index].label, "120s");
+    }
+
+    #[test]
+    fn menu_up_down_keeps_column_and_clamps() {
+        let mut app = menu_app(); // time · 30s (column 1)
+        app.menu_move_row(true);
+        assert_eq!(app.menu[app.menu_index].label, "25");
+        app.menu_move_row(true);
+        assert_eq!(app.menu[app.menu_index].label, "python");
+        app.menu_move_row(true);
+        assert_eq!(app.menu[app.menu_index].label, "quote"); // clamped
+        app.menu_move_row(false);
+        assert_eq!(app.menu[app.menu_index].label, "rust");
+    }
+
+    #[test]
+    fn menu_up_down_wraps_between_first_and_last_row() {
+        let mut app = menu_app();
+        app.menu_move_row(false);
+        assert_eq!(app.menu[app.menu_index].label, "quit");
+        app.menu_move_row(true);
+        assert_eq!(app.menu[app.menu_index].group, "time");
     }
 
     // ── per-key accuracy tracking (v0.3.0) ──────────────────────────────────
@@ -813,8 +910,6 @@ mod tests {
             None,
             crate::theme::ThemePalette::default(),
             DefaultMode::Time(15),
-            Default::default(),
-            Default::default(),
         );
         app.screen = Screen::Typing;
         app.mode = Mode::Words(1);
@@ -833,20 +928,22 @@ mod tests {
     #[test]
     fn wrong_char_increments_key_misses() {
         let mut app = make_app_with_word("abc");
-        app.handle_char('z'); // expected 'a', typed 'z'
-        assert_eq!(*app.key_hits.get(&'z').unwrap_or(&0), 0);
-        assert_eq!(*app.key_misses.get(&'z').unwrap_or(&0), 1);
+        app.handle_char('z'); // expected 'a', typed 'z' — the miss belongs to 'a'
+        assert_eq!(*app.key_misses.get(&'a').unwrap_or(&0), 1);
+        assert!(!app.key_misses.contains_key(&'z'));
+        assert!(app.key_hits.is_empty());
     }
 
     #[test]
-    fn extra_char_increments_key_misses() {
-        let mut app = make_app_with_word("ab");
+    fn space_slot_tracks_hit_and_miss() {
+        let mut app = custom_app(&["ab", "cd"]);
         app.handle_char('a');
         app.handle_char('b');
-        // Now at position 2, past the end of "ab".
-        app.handle_char('x');
-        assert_eq!(*app.key_misses.get(&'x').unwrap_or(&0), 1);
-        assert_eq!(*app.key_hits.get(&'x').unwrap_or(&0), 0);
+        app.handle_char('x'); // wrong key where the space belongs
+        assert_eq!(*app.key_misses.get(&' ').unwrap_or(&0), 1);
+        app.handle_backspace(false);
+        app.handle_char(' '); // correct space
+        assert_eq!(*app.key_hits.get(&' ').unwrap_or(&0), 1);
     }
 
     #[test]
@@ -854,9 +951,9 @@ mod tests {
         let mut app = make_app_with_word("aaa");
         app.handle_char('a'); // hit
         app.handle_char('a'); // hit
-        app.handle_char('b'); // miss (expected 'a', typed 'b')
+        app.handle_char('b'); // miss on 'a' (expected 'a', typed 'b')
         assert_eq!(*app.key_hits.get(&'a').unwrap_or(&0), 2);
-        assert_eq!(*app.key_misses.get(&'b').unwrap_or(&0), 1);
+        assert_eq!(*app.key_misses.get(&'a').unwrap_or(&0), 1);
     }
 
     #[test]
@@ -876,380 +973,361 @@ mod tests {
     #[test]
     fn custom_mode_finishes_after_last_word() {
         let palette = crate::theme::ThemePalette::default();
-        let mut app = App::new(
-            None,
-            palette,
-            DefaultMode::Time(15),
-            Default::default(),
-            Default::default(),
-        );
+        let mut app = App::new(None, palette, DefaultMode::Time(15));
         app.mode = Mode::Custom;
         app.words = vec![Word::new("hi".into()), Word::new("bye".into())];
         app.screen = Screen::Typing;
 
-        // Type "hi" + space + "bye" + space.
-        for ch in "hi bye ".chars() {
+        // Type "hi" + space + "bye" — the last character ends the run.
+        for ch in "hi bye".chars() {
             app.handle_char(ch);
         }
 
         assert_eq!(app.screen, Screen::Results);
         assert!(app.ended_at.is_some());
+        // Every slot right, the space included.
+        assert_eq!(app.correct_chars, 6);
+        assert_eq!(app.total_typed_chars, 6);
     }
 
-    // ── v0.4.0 ─────────────────────────────────────────────────────────────
-
-    /// Symbols mode behaves like Words mode: it finishes after the user
-    /// submits the configured number of tokens.
+    /// Words mode also ends on the last character, with no trailing space.
     #[test]
-    fn symbols_mode_finishes_after_target_tokens() {
-        let palette = crate::theme::ThemePalette::default();
-        let mut app = App::new(
-            None,
-            palette,
-            DefaultMode::Time(15),
-            Default::default(),
-            Default::default(),
-        );
-        app.mode = Mode::Symbols(3);
-        app.words = vec![
-            Word::new("()".into()),
-            Word::new("=>".into()),
-            Word::new("{}".into()),
-        ];
-        app.screen = Screen::Typing;
+    fn words_mode_finishes_on_last_char() {
+        let mut app = custom_app(&["hi", "bye"]);
+        app.mode = Mode::Words(2);
 
-        for ch in "() => {} ".chars() {
+        for ch in "hi by".chars() {
             app.handle_char(ch);
         }
+        assert_eq!(app.screen, Screen::Typing);
+
+        app.handle_char('e');
         assert_eq!(app.screen, Screen::Results);
     }
 
-    /// `Mode::Symbols` exposes progress() like `Mode::Words` so the gauge
-    /// works.
-    #[test]
-    fn symbols_mode_reports_progress() {
+    fn custom_app(words: &[&str]) -> App {
         let palette = crate::theme::ThemePalette::default();
-        let mut app = App::new(
-            None,
-            palette,
-            DefaultMode::Time(15),
-            Default::default(),
-            Default::default(),
-        );
-        app.mode = Mode::Symbols(10);
-        app.current_word = 3;
-        assert_eq!(app.progress(), Some((3, 10)));
+        let mut app = App::new(None, palette, DefaultMode::Time(15));
+        app.mode = Mode::Custom;
+        app.words = words.iter().map(|w| Word::new((*w).into())).collect();
+        app.screen = Screen::Typing;
+        app
     }
 
-    /// Per-mode label for Symbols mode is "symbols-N" so per-mode PB tracking
-    /// keys by token count.
+    /// Regression (#8): a letter typed where the space belongs used to pile up
+    /// as extras on the current word. The space is a character like any other:
+    /// a wrong key there is a wrong character and the cursor moves on one slot.
     #[test]
-    fn symbols_mode_label_includes_count() {
-        assert_eq!(Mode::Symbols(25).label(), "symbols-25");
-        assert_eq!(Mode::Symbols(50).label(), "symbols-50");
+    fn wrong_key_on_space_is_wrong_char() {
+        let mut app = custom_app(&["hi", "bye"]);
+
+        for ch in "hix".chars() {
+            app.handle_char(ch);
+        }
+        assert_eq!(app.words[0].typed, "hi");
+        assert!(app.words[0].space_missed);
+        assert_eq!(app.current_word, 1);
+        assert_eq!(app.words[1].typed, "");
+
+        // Next word lines up; the last char ends the run (no trailing space).
+        for ch in "bye".chars() {
+            app.handle_char(ch);
+        }
+        assert_eq!(app.correct_chars, 5);
+        assert_eq!(app.total_typed_chars, 6);
+        assert_eq!(app.screen, Screen::Results);
     }
 
-    /// Code mode labels stay backwards-compatible: `code-javascript` for the
-    /// JS variant (not the slug "js"), and lowercase for new variants.
+    /// Space mid-word is just a wrong character — it must not jump words.
     #[test]
-    fn code_mode_labels_are_stable_for_pb_lookup() {
+    fn space_mid_word_is_wrong_char() {
+        let mut app = custom_app(&["hi", "bye"]);
+
+        for ch in "h ".chars() {
+            app.handle_char(ch);
+        }
+        assert_eq!(app.words[0].typed, "h ");
+        assert_eq!(app.current_word, 0);
+        assert_eq!(app.correct_chars, 1);
+        assert_eq!(app.total_typed_chars, 2);
+
+        // Cursor is on the space now; the stray 'i' is wrong there too.
+        app.handle_char('i');
+        assert!(app.words[0].space_missed);
+        assert_eq!(app.current_word, 1);
+    }
+
+    /// Backspace from the start of a word erases the space before it.
+    #[test]
+    fn backspace_erases_wrong_space() {
+        let mut app = custom_app(&["hi", "bye"]);
+
+        for ch in "hix".chars() {
+            app.handle_char(ch);
+        }
+        app.handle_backspace(false);
+
+        assert_eq!(app.current_word, 0);
+        assert_eq!(app.words[0].typed, "hi");
+        assert!(!app.words[0].space_missed);
+    }
+
+    // ── v0.4.0 ──────────────────────────────────────────────────────────────
+
+    fn snippet(name: &str, path: &str) -> Snippet {
+        Snippet {
+            name: name.into(),
+            path: PathBuf::from(path),
+        }
+    }
+
+    fn custom_options(menu: &[MenuItem]) -> Vec<(&str, Option<&Path>)> {
+        menu.iter()
+            .filter(|m| m.action == MenuAction::StartCustom)
+            .map(|m| (m.label.as_str(), m.custom_path.as_deref()))
+            .collect()
+    }
+
+    #[test]
+    fn mode_labels_for_v04_modes_are_stable() {
         use crate::words::CodeLang;
-        assert_eq!(Mode::Code(CodeLang::Rust).label(), "code-rust");
-        assert_eq!(Mode::Code(CodeLang::Python).label(), "code-python");
-        assert_eq!(Mode::Code(CodeLang::JavaScript).label(), "code-javascript");
+        assert_eq!(Mode::Symbols(25).label(), "symbols-25");
         assert_eq!(Mode::Code(CodeLang::Go).label(), "code-go");
         assert_eq!(Mode::Code(CodeLang::Java).label(), "code-java");
         assert_eq!(Mode::Code(CodeLang::Sql).label(), "code-sql");
         assert_eq!(Mode::Code(CodeLang::Shell).label(), "code-shell");
+        // Unchanged since v0.1 — saved PBs are keyed on it.
+        assert_eq!(Mode::Code(CodeLang::JavaScript).label(), "code-javascript");
     }
 
-    /// The menu must include exactly one row per built-in mode plus
-    /// separator rows for visual grouping. Separator rows are decorative;
-    /// only one row should match the default-mode pre-selection.
     #[test]
-    fn menu_contains_all_new_v04_modes() {
-        let menu = build_menu(&[], None);
-        let labels: Vec<&str> = menu.iter().map(|m| m.label.as_str()).collect();
-
-        assert!(labels.iter().any(|l| l.contains("Symbols · 25")));
-        assert!(labels.iter().any(|l| l.contains("Symbols · 50")));
-        assert!(labels.iter().any(|l| l.contains("Code · Go")));
-        assert!(labels.iter().any(|l| l.contains("Code · Java")));
-        assert!(labels.iter().any(|l| l.contains("Code · SQL")));
-        assert!(labels.iter().any(|l| l.contains("Code · Shell")));
-        assert!(labels.iter().any(|l| l.starts_with("Custom")));
+    fn menu_offers_new_languages_and_symbols() {
+        let menu = default_menu();
+        let row = |group: &str| -> Vec<&str> {
+            menu.iter()
+                .filter(|m| m.group == group)
+                .map(|m| m.label.as_str())
+                .collect()
+        };
+        assert_eq!(
+            row("code"),
+            ["rust", "python", "javascript", "go", "java", "sql", "shell"]
+        );
+        assert_eq!(row("symbols"), ["25", "50"]);
+        // The new rows sit after zen, so the v0.3 rows keep their order.
+        let groups: Vec<&str> = menu.iter().map(|m| m.group).collect();
+        let zen = groups.iter().position(|g| *g == "zen").unwrap();
+        assert_eq!(groups[zen + 1], "symbols");
+        assert_eq!(&groups[groups.len() - 2..], ["stats", "quit"]);
     }
 
-    /// Visual separators are present in the menu and clearly distinguishable
-    /// from start rows by their `MenuAction::Separator` action.
     #[test]
-    fn menu_has_visual_section_separators() {
-        let menu = build_menu(&[], None);
-        let separator_count = menu
-            .iter()
-            .filter(|m| matches!(m.action, MenuAction::Separator))
-            .count();
-        // Time, Words, Quote, Code, Symbols, Zen, Custom, More → 8 sections.
-        assert!(
-            separator_count >= 7,
-            "expected ≥7 separators, got {separator_count}"
+    fn best_menu_match_picks_symbols_row() {
+        let menu = default_menu();
+        assert_eq!(
+            menu[best_menu_match(&menu, DefaultMode::Symbols(50))].mode,
+            Some(Mode::Symbols(50))
+        );
+        // A non-standard count falls back to the first symbols option.
+        assert_eq!(
+            menu[best_menu_match(&menu, DefaultMode::Symbols(7))].mode,
+            Some(Mode::Symbols(25))
         );
     }
 
-    /// The custom row labels with the truncated path when one is provided.
     #[test]
-    fn custom_row_shows_last_path_when_known() {
-        let menu = build_menu(&[], Some("/tmp/my-typing-fodder.txt"));
-        let custom = menu
-            .iter()
-            .find(|m| matches!(m.action, MenuAction::StartCustom))
-            .expect("custom row missing");
-        assert!(custom.label.contains("Custom"));
-        assert!(custom.label.contains(".txt"));
+    fn custom_row_placeholder_when_nothing_to_offer() {
+        assert_eq!(custom_options(&default_menu()), [("custom", None)]);
     }
 
-    /// Long paths are truncated in the middle so the file name remains visible.
     #[test]
-    fn truncate_for_menu_collapses_long_paths() {
-        let long = "/very/deeply/nested/and/long/directory/structure/somewhere/finally/file.txt";
-        let truncated = truncate_for_menu(long, 30);
-        // Character count — not byte count — since `…` is a 3-byte char.
-        let char_count = truncated.chars().count();
-        assert!(
-            char_count <= 30,
-            "got {} chars: {:?}",
-            char_count,
-            truncated
-        );
-        assert!(truncated.contains('…'));
-        assert!(truncated.ends_with("file.txt"));
-    }
-
-    /// Short paths are passed through unchanged.
-    #[test]
-    fn truncate_for_menu_passes_short_paths_through() {
-        let short = "/tmp/x.txt";
-        assert_eq!(truncate_for_menu(short, 30), short);
-    }
-
-    /// Snippet rows are appended to the menu under the Custom section.
-    #[test]
-    fn snippets_appear_as_their_own_rows() {
-        use crate::words::snippets::Snippet;
-        let snippets = vec![
-            Snippet {
-                name: "alpha".into(),
-                path: std::path::PathBuf::from("/tmp/alpha.txt"),
-            },
-            Snippet {
-                name: "beta".into(),
-                path: std::path::PathBuf::from("/tmp/beta.txt"),
-            },
+    fn custom_row_lists_last_file_then_snippets() {
+        let snippets = [
+            snippet("alpha", "/s/alpha.txt"),
+            snippet("beta", "/s/beta.txt"),
         ];
-        let menu = build_menu(&snippets, None);
-        let snippet_rows: Vec<&MenuItem> = menu
-            .iter()
-            .filter(|m| {
-                matches!(m.action, MenuAction::StartCustom) && m.label.starts_with("Snippet ·")
-            })
-            .collect();
-        assert_eq!(snippet_rows.len(), 2);
-        assert!(snippet_rows[0].label.contains("alpha"));
-        assert!(snippet_rows[1].label.contains("beta"));
+        let menu = build_menu(&snippets, Some(Path::new("/home/me/notes.txt")));
         assert_eq!(
-            snippet_rows[0].custom_path.as_deref(),
-            Some("/tmp/alpha.txt")
+            custom_options(&menu),
+            [
+                ("notes.txt", Some(Path::new("/home/me/notes.txt"))),
+                ("alpha", Some(Path::new("/s/alpha.txt"))),
+                ("beta", Some(Path::new("/s/beta.txt"))),
+            ]
         );
     }
 
-    /// Guard that redirects `state::state_path()` at the start and clears
-    /// the override on drop. Ensures `persist_custom_file` writes to a
-    /// tempdir instead of the real `~/.typerush/state.json`.
-    struct StateSandbox {
-        _dir: tempfile::TempDir,
-    }
-
-    impl StateSandbox {
-        fn enter() -> Self {
-            let dir = tempfile::tempdir().unwrap();
-            crate::state::set_test_state_path(Some(dir.path().join("state.json")));
-            Self { _dir: dir }
-        }
-    }
-
-    impl Drop for StateSandbox {
-        fn drop(&mut self) {
-            crate::state::set_test_state_path(None);
-        }
-    }
-
-    /// Isolated App builder for menu/state tests: skips reading the real
-    /// `~/.typerush/state.json` and `~/.typerush/snippets/`, so tests don't
-    /// see or clobber whatever the user (or another test) left behind.
-    /// Any field added to `App` in the future must be reflected here.
-    fn make_isolated_app(snippets: Vec<Snippet>) -> App {
-        let palette = crate::theme::ThemePalette::default();
-        let app_state = AppState::default();
-        let menu = build_menu(&snippets, None);
-        App {
-            screen: Screen::Menu,
-            previous_screen: Screen::Menu,
-            menu,
-            menu_index: 0,
-            mode: mode_for(DefaultMode::Time(15)),
-            words: vec![],
-            current_word: 0,
-            started_at: None,
-            ended_at: None,
-            correct_chars: 0,
-            total_typed_chars: 0,
-            backspaces: 0,
-            custom_file: None,
-            should_quit: false,
-            error_message: None,
-            tick_count: 0,
-            theme: palette,
-            word_pool: WordPool::Common,
-            word_decor: WordDecor::default(),
-            app_state,
-            snippets,
-            key_hits: HashMap::new(),
-            key_misses: HashMap::new(),
-            stats_cache: None,
-            session_just_saved: false,
-            aggregate: AggregateStats::default(),
-        }
-    }
-
-    /// `set_custom_file` stages a path in memory only; `persist_custom_file`
-    /// writes it and rebuilds the menu.
+    /// The remembered file is often one of the snippets — don't list it twice.
     #[test]
-    fn set_then_persist_custom_file_updates_menu_and_state() {
-        let _sandbox = StateSandbox::enter();
-        let mut app = make_isolated_app(vec![]);
-        let original_index = app.menu_index;
-
-        app.set_custom_file("/tmp/abc.txt");
-        // set alone stages the in-memory path but doesn't persist.
-        assert_eq!(app.custom_file.as_deref(), Some("/tmp/abc.txt"));
-        assert_eq!(app.app_state.last_custom_file.as_deref(), None);
-
-        app.persist_custom_file();
+    fn last_file_that_is_a_snippet_is_not_duplicated() {
+        let snippets = [snippet("alpha", "/s/alpha.txt")];
+        let menu = build_menu(&snippets, Some(Path::new("/s/alpha.txt")));
         assert_eq!(
-            app.app_state.last_custom_file.as_deref(),
-            Some("/tmp/abc.txt")
-        );
-        // Menu index is preserved (build_menu produces a stable row order).
-        assert_eq!(app.menu_index, original_index);
-        // The custom row reflects the new path.
-        let custom_row = app
-            .menu
-            .iter()
-            .find(|m| matches!(m.action, MenuAction::StartCustom) && m.custom_path.is_none())
-            .expect("custom row missing");
-        assert!(custom_row.label.contains("abc.txt"));
-
-        // Second call rotates to a different path without going stale.
-        app.set_custom_file("/tmp/xyz.txt");
-        app.persist_custom_file();
-        let custom_row = app
-            .menu
-            .iter()
-            .find(|m| matches!(m.action, MenuAction::StartCustom) && m.custom_path.is_none())
-            .expect("custom row missing");
-        assert!(custom_row.label.contains("xyz.txt"));
-        assert!(!custom_row.label.contains("abc.txt"));
-    }
-
-    /// Regression: `set_custom_file` alone must not persist state.json. This
-    /// guards the "don't strand the user with a broken remembered path"
-    /// behavior — if `start_game` fails, we never call persist and the
-    /// previous good path stays intact.
-    #[test]
-    fn set_custom_file_alone_does_not_persist() {
-        let _sandbox = StateSandbox::enter();
-        let mut app = make_isolated_app(vec![]);
-        app.set_custom_file("/tmp/broken.txt");
-        assert_eq!(app.custom_file.as_deref(), Some("/tmp/broken.txt"));
-        // Persisted state is untouched.
-        assert!(app.app_state.last_custom_file.is_none());
-    }
-
-    /// `persist_custom_file` is idempotent when nothing changed.
-    #[test]
-    fn persist_custom_file_is_idempotent() {
-        let _sandbox = StateSandbox::enter();
-        let mut app = make_isolated_app(vec![]);
-        app.set_custom_file("/tmp/same.txt");
-        app.persist_custom_file();
-        let menu_len_after_first = app.menu.len();
-        // Second call with the same path should short-circuit.
-        app.persist_custom_file();
-        assert_eq!(app.menu.len(), menu_len_after_first);
-        assert_eq!(
-            app.app_state.last_custom_file.as_deref(),
-            Some("/tmp/same.txt")
+            custom_options(&menu),
+            [("alpha", Some(Path::new("/s/alpha.txt")))]
         );
     }
 
-    /// Starting a session uses the configured word pool. With the extended
-    /// pool the words list comes from the larger dictionary; the test just
-    /// confirms `start_game` doesn't crash with either setting.
     #[test]
-    fn start_game_with_extended_pool() {
-        let palette = crate::theme::ThemePalette::default();
-        let mut app = App::new(
-            None,
-            palette,
-            DefaultMode::Words(10),
-            WordPool::Extended,
-            Default::default(),
-        );
-        assert_eq!(app.word_pool, WordPool::Extended);
-        app.start_game(Mode::Words(10)).unwrap();
-        assert_eq!(app.words.len(), 10);
+    fn symbols_mode_ends_after_its_token_count() {
+        let mut app = custom_app(&["()", "=>", "{}"]);
+        app.mode = Mode::Symbols(2);
+        assert_eq!(app.progress(), Some((0, 2)));
+        for ch in "() =>".chars() {
+            app.handle_char(ch);
+        }
+        assert_eq!(app.screen, Screen::Typing, "one token left");
+        app.handle_char(' ');
+        assert_eq!(app.screen, Screen::Results);
+        assert_eq!(app.progress(), Some((2, 2)));
     }
 
-    /// Punctuation decoration produces words that contain non-alphabetic
-    /// characters at least some of the time. With a 25% chance per slot,
-    /// 200 words is virtually guaranteed.
     #[test]
-    fn start_game_with_punctuation_decor_adds_punctuation() {
-        let palette = crate::theme::ThemePalette::default();
-        let decor = WordDecor {
-            punctuation: true,
-            numbers: false,
-        };
-        let mut app = App::new(
-            None,
-            palette,
-            DefaultMode::Words(200),
-            WordPool::Common,
-            decor,
-        );
-        app.start_game(Mode::Words(200)).unwrap();
-        let any_punct = app.words.iter().any(|w| {
-            w.text
-                .chars()
-                .any(|c| !c.is_ascii_alphanumeric() && !c.is_whitespace())
-        });
-        assert!(any_punct, "expected at least one punctuated word");
-    }
-
-    /// Zen mode ignores decoration toggles to keep the screen calm.
-    #[test]
-    fn zen_mode_ignores_punctuation_toggle() {
-        let palette = crate::theme::ThemePalette::default();
-        let decor = WordDecor {
-            punctuation: true,
-            numbers: true,
-        };
-        let mut app = App::new(None, palette, DefaultMode::Zen, WordPool::Common, decor);
-        app.start_game(Mode::Zen).unwrap();
-        let plain = app
+    fn start_game_symbols_builds_requested_tokens() {
+        let mut app = menu_app();
+        app.start_game(Mode::Symbols(25)).unwrap();
+        assert_eq!(app.words.len(), 25);
+        assert!(app
             .words
             .iter()
-            .all(|w| w.text.chars().all(|c| c.is_ascii_alphabetic()));
-        assert!(plain, "zen-mode words were decorated: {:?}", app.words);
+            .all(|w| !w.text.contains(char::is_whitespace)));
+    }
+
+    #[test]
+    fn word_source_settings_apply_but_zen_stays_plain() {
+        let mut app = menu_app();
+        app.set_word_source(
+            WordPool::Extended,
+            WordDecor {
+                punctuation: true,
+                numbers: true,
+            },
+        );
+        app.start_game(Mode::Words(400)).unwrap();
+        assert!(app
+            .words
+            .iter()
+            .any(|w| w.text.chars().any(|c| !c.is_ascii_alphabetic())));
+        app.start_game(Mode::Zen).unwrap();
+        assert!(app
+            .words
+            .iter()
+            .all(|w| w.text.chars().all(|c| c.is_ascii_alphabetic())));
+    }
+
+    /// A custom file that fails to load leaves the app exactly as it was:
+    /// same screen, same mode, same words.
+    #[test]
+    fn failed_custom_start_changes_nothing() {
+        let mut app = menu_app();
+        let mode_before = app.mode;
+        app.set_custom_file(PathBuf::from("/definitely/not/here.txt"));
+        let err = app.start_game(Mode::Custom).unwrap_err();
+        assert!(format!("{err:#}").contains("/definitely/not/here.txt"));
+        assert_eq!(app.screen, Screen::Menu);
+        assert_eq!(app.mode, mode_before);
+        assert!(app.words.is_empty());
+    }
+
+    #[test]
+    fn custom_without_file_explains_how_to_add_one() {
+        let mut app = menu_app();
+        let err = app.start_game(Mode::Custom).unwrap_err().to_string();
+        assert!(err.contains("--file"), "{err}");
+        assert!(err.contains("snippets"), "{err}");
+    }
+
+    #[test]
+    fn empty_custom_file_names_the_file() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("blank.txt");
+        std::fs::write(&path, "  \n\t ").unwrap();
+        let mut app = menu_app();
+        app.set_custom_file(path);
+        let err = app.start_game(Mode::Custom).unwrap_err().to_string();
+        assert!(err.contains("blank.txt") && err.contains("empty"), "{err}");
+    }
+
+    /// Staging a file never writes anything; persisting writes the absolute
+    /// path, offers it in the menu, and is a no-op the second time.
+    #[test]
+    fn set_custom_file_stages_and_persist_saves() {
+        let dir = tempfile::tempdir().unwrap();
+        let state_file = dir.path().join("state.json");
+        let mut app = menu_app();
+        app.load_custom_sources(Vec::new(), AppState::default(), Some(state_file.clone()));
+
+        let file = dir.path().join("notes.txt");
+        app.set_custom_file(file.clone());
+        assert!(!state_file.exists(), "staging must not touch disk");
+        assert!(app.app_state.last_custom_file.is_none());
+
+        app.persist_custom_file();
+        let saved = state::load_from_path(&state_file);
+        assert_eq!(saved.last_custom_file.as_deref(), file.to_str());
+        assert_eq!(
+            custom_options(&app.menu),
+            [("notes.txt", Some(file.as_path()))]
+        );
+
+        // Unchanged path: no rewrite.
+        std::fs::remove_file(&state_file).unwrap();
+        app.persist_custom_file();
+        assert!(!state_file.exists());
+    }
+
+    /// A relative `--file` path is remembered as absolute, so it still works
+    /// when TypeRush is next started from another directory.
+    #[test]
+    fn persist_stores_relative_path_as_absolute() {
+        let mut app = menu_app();
+        app.set_custom_file(PathBuf::from("relative-notes.txt"));
+        app.persist_custom_file();
+        let stored = PathBuf::from(app.app_state.last_custom_file.clone().unwrap());
+        assert!(stored.is_absolute());
+        assert!(stored.ends_with("relative-notes.txt"));
+    }
+
+    /// Startup: the remembered file shows up, and the highlighted default
+    /// mode stays highlighted after the menu is rebuilt.
+    #[test]
+    fn load_custom_sources_offers_remembered_file_and_keeps_selection() {
+        let mut app = menu_app(); // highlights time · 30s
+        app.load_custom_sources(
+            vec![snippet("alpha", "/s/alpha.txt")],
+            AppState {
+                last_custom_file: Some("/home/me/notes.txt".into()),
+            },
+            None,
+        );
+        assert_eq!(app.menu[app.menu_index].label, "30s");
+        assert_eq!(
+            custom_options(&app.menu),
+            [
+                ("notes.txt", Some(Path::new("/home/me/notes.txt"))),
+                ("alpha", Some(Path::new("/s/alpha.txt"))),
+            ]
+        );
+    }
+
+    /// `--file` wins over the remembered file in the custom row.
+    #[test]
+    fn cli_file_is_offered_instead_of_remembered_one() {
+        let mut app = App::new(
+            Some(PathBuf::from("/cli/given.txt")),
+            crate::theme::ThemePalette::default(),
+            DefaultMode::Time(15),
+        );
+        app.load_custom_sources(
+            Vec::new(),
+            AppState {
+                last_custom_file: Some("/old/remembered.txt".into()),
+            },
+            None,
+        );
+        assert_eq!(
+            custom_options(&app.menu),
+            [("given.txt", Some(Path::new("/cli/given.txt")))]
+        );
     }
 }

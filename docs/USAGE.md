@@ -18,26 +18,41 @@ Or skip the menu and start a session directly:
 typerush --time 30            # 30-second timed test (15 / 30 / 60 / 120)
 typerush --words 50           # type exactly N words
 typerush --quote              # one programming quote
-typerush --code rust          # code-typing: rust | python | js | go | java | sql | shell
+typerush --code rust          # code: rust | python | js | go | java | sql | shell
 typerush --zen                # zen mode (no timer, no stats)
-typerush --symbols 25         # symbols drill (N tokens; standard rows: 25 / 50)
+typerush --symbols 25         # programming-symbols drill of N tokens
 typerush --file <path>        # type any text file you have
-typerush --big                # use the larger 10,000-word English pool
-typerush --punctuation        # mix punctuation marks into random words
-typerush --numbers            # mix random number tokens into random words
 typerush --theme monokai      # one-shot theme override
 typerush --list-themes        # print available theme names and exit
-typerush --list-snippets      # print every snippet found in ~/.typerush/snippets/
+typerush --list-snippets      # print your snippets (name<TAB>path) and exit
 ```
 
-You can pass `--file <path>` alone to use the file inside the menu's "Custom"
-entry. TypeRush remembers the last path you typed against in
-`~/.typerush/state.json`, so the "Custom" menu row stays useful even after the
-flag is gone.
+Counts given to `--time`, `--words` and `--symbols` must be at least 1.
 
-To build a personal snippet library, drop `.txt` files into
-`~/.typerush/snippets/`. Each file appears as a `Snippet · <name>` row in the
-main menu and is loaded as the typing source when selected.
+These switches make random words harder, and combine with any of the above
+(they apply to time and words modes; zen always stays plain):
+
+```bash
+typerush --big                # 10,000-word pool instead of the ~430 common words
+typerush --punctuation        # commas, periods, quotes, brackets on ~1 word in 4
+typerush --numbers            # mix in 1–4 digit numbers (~1 word in 8)
+```
+
+`--code` also accepts `rs`, `py`, `javascript`, `golang`, `sh` and `bash`.
+
+### Your own text: `--file`, snippets, and the custom row
+
+- `typerush --file notes.txt` starts typing that file straight away.
+- Drop `.txt` files in `~/.typerush/snippets/` (on Windows,
+  `%USERPROFILE%\.typerush\snippets\`) and each becomes an option in the
+  menu's **custom** row, named after the file.
+- The file you typed last — from `--file` or a snippet — is offered first in
+  the custom row next time, so you don't need `--file` again. It is remembered
+  in `~/.typerush/state.json` as an absolute path, and only once it has loaded.
+- With no file and no snippets yet, the custom row shows `custom`; picking it
+  explains how to add one.
+
+Text is split on whitespace, so a file's line breaks become plain spaces.
 
 ---
 
@@ -49,9 +64,9 @@ main menu and is loaded as the typing source when selected.
 | Words   | Type a fixed number of random words (10 / 25 / 50 / 100)              | you complete the last word       |
 | Quote   | A randomly chosen famous programming quote                            | you complete the last word       |
 | Code    | A real short code snippet (Rust, Python, JavaScript, Go, Java, SQL, Shell) | you complete the last word  |
-| Symbols | Programming punctuation drill — type N short tokens like `=>` `(){};` | you complete the last token      |
 | Zen     | Soft, monochrome UI. No timer, no WPM, no score saved.                | you press `Esc`                  |
-| Custom  | Any whitespace-separated text file passed via `--file` or picked from `~/.typerush/snippets/` | you complete the last word |
+| Symbols | Programming punctuation: `=>`, `(){};`, `&&`, `?.`, `<T>` … (25 / 50 tokens) | you complete the last token |
+| Custom  | A text file: `--file`, a snippet, or the file you typed last          | you complete the last word       |
 
 ---
 
@@ -59,35 +74,81 @@ main menu and is loaded as the typing source when selected.
 
 ### Everywhere
 
-| Key      | Action                          |
-| -------- | ------------------------------- |
-| `?`      | Toggle keybindings overlay      |
-| `Ctrl+C` | Quit immediately                |
+| Key          | Action                                                  |
+| ------------ | ------------------------------------------------------- |
+| `?` / `F1`   | Toggle keybindings overlay (not while typing)           |
+| `Ctrl+C`     | Quit immediately                                        |
+
+### Mouse
+
+Everything the mouse can do, the keyboard can do too (WCAG 2.1.1), and vice
+versa where it makes sense:
+
+- **Click a menu option** to start it (or open stats / quit).
+- **Click a footer hint** (`Enter start`, `s stats`, `esc finish`, …) to do
+  what its key does. Navigation hints like `↑/↓ category` are not clickable.
+- **Scroll wheel** on the menu moves between categories.
+- **Click anywhere** to close the help overlay or an error message.
+
+A click acts when the button is pressed *and* released on the same target:
+press on the wrong option, slide off (or onto another option), and nothing
+happens (WCAG 2.5.2).
+
+Because TypeRush captures the mouse, selecting text in the terminal usually
+needs `Shift` held while dragging.
 
 ### Main menu
 
-| Key                | Action                                                          |
-| ------------------ | --------------------------------------------------------------- |
-| `↑ / ↓` or `j / k` | Move highlight (decorative section headers are skipped)         |
-| `Enter`            | Start the selected mode / open the selected snippet             |
-| `Tab`              | Jump to the historical stats view                               |
-| `q`                | Quit                                                            |
+Modes are grouped by category. `time`, `words`, `code`, `symbols` and
+`custom` show a heading with their options on the line below (a row too wide
+for the menu continues on the next line); `quote`, `zen`, `stats` and `quit`
+are single options:
 
-The menu is grouped into visual sections — Time, Words, Quote, Code, Symbols,
-Zen, Custom, More — separated by muted `── Section ──` headers. Arrow-key
-navigation hops over headers so you always land on a selectable row.
+```mermaid
+flowchart TD
+    subgraph time
+        direction LR
+        t15[15s] ~~~ t30[30s] ~~~ t60[60s] ~~~ t120[120s]
+    end
+    subgraph words
+        direction LR
+        w10[10] ~~~ w25[25] ~~~ w50[50] ~~~ w100[100]
+    end
+    subgraph code
+        direction LR
+        rust ~~~ python ~~~ javascript ~~~ go ~~~ java ~~~ sql ~~~ shell
+    end
+    subgraph symbols
+        direction LR
+        s25[25] ~~~ s50[50]
+    end
+    subgraph custom
+        direction LR
+        last["last file"] ~~~ snip["each snippet"]
+    end
+    time ~~~ words ~~~ code ~~~ quote ~~~ zen ~~~ symbols ~~~ custom ~~~ stats ~~~ quit
+```
+
+
+| Key                | Action                                         |
+| ------------------ | ---------------------------------------------- |
+| `↑ / ↓` or `j / k` | Previous / next category (keeps the column)    |
+| `← / →` or `h / l` | Previous / next option in the category         |
+| `Enter` / `Space`  | Start the selected mode                        |
+| `Tab` / `s`        | Jump to the historical stats view              |
+| `q`                | Quit                                           |
 
 ### While typing
 
 | Key              | Action                                          |
 | ---------------- | ----------------------------------------------- |
 | any printable    | Type that character                             |
-| `Space`          | Submit the current word, advance to the next    |
+| `Space`          | Type a space — correct only where the text has one |
 | `Backspace`      | Delete the previous character                   |
 | `Ctrl+Backspace` | Delete the entire current word                  |
 | `Ctrl+W`         | Same — delete the entire current word            |
 | `Ctrl+H`         | Same — most terminals send this when you press `Ctrl+Backspace` |
-| `Ctrl+R`         | Restart the same mode with a new word list      |
+| `Ctrl+R` / `F5`  | Restart the same mode with a new word list      |
 | `Esc`            | End the session and go to the results screen    |
 
 ### Results screen
@@ -118,8 +179,13 @@ accuracy = (correct_chars / total_typed_chars) * 100
 ```
 
 Only characters you typed **at the correct position** count as `correct_chars`.
-Typing extra characters past the end of a word counts toward total typed (so it
-hurts accuracy) but never toward correct chars.
+Every character is checked on its own, and the space between words is a
+character like any other. The key you press is compared with the character
+under the cursor: a match is correct, anything else is wrong, and the cursor
+moves on one slot either way. So a letter typed where a space belongs is a wrong
+character (shown as a red underlined space), and a space typed mid-word is a
+wrong character too — it does not jump to the next word. The run ends when the
+last character is typed.
 
 ---
 
@@ -128,22 +194,18 @@ hurts accuracy) but never toward correct chars.
 `~/.typerush/stats.json` — a plain JSON array. Back it up if you care about your
 history; delete it if you want a fresh start.
 
-`~/.typerush/aggregate.json` — a small running tally of per-key accuracy totals,
-used to render the key-accuracy heatmap quickly without rescanning your whole
-history. It's derived data: delete it and TypeRush rebuilds it from
-`stats.json` on the next launch.
-
 Zen-mode sessions are intentionally **not** saved.
 
-Alongside the stats file, TypeRush keeps:
+Everything TypeRush keeps lives in `~/.typerush/`:
 
-| File                            | Purpose                                                  |
-| ------------------------------- | -------------------------------------------------------- |
-| `~/.typerush/stats.json`        | One JSON record per completed session.                   |
-| `~/.typerush/aggregate.json`    | Pre-computed per-key hit/miss totals — O(1) Stats reads. |
-| `~/.typerush/state.json`        | Tiny UI state: the last `--file` path you typed against. |
-| `~/.typerush/config.toml`       | Optional user configuration (themes, defaults, words).   |
-| `~/.typerush/snippets/*.txt`    | Personal snippet library (each `.txt` is one menu row).  |
+| File / folder     | What it is                                                  |
+| ----------------- | ----------------------------------------------------------- |
+| `stats.json`      | Your session history                                        |
+| `config.toml`     | Optional settings (see below)                               |
+| `state.json`      | The custom file you typed last, so the menu can offer it again |
+| `snippets/*.txt`  | Your snippet library — one menu option per file             |
+
+Each file is written atomically, so a crash mid-save never leaves a broken file.
 
 ### What the Stats screen shows (v0.3.0+)
 
@@ -159,7 +221,7 @@ Open the Stats screen from the menu (`Tab`) or results screen (`s`).
 ### Per-mode personal bests
 
 On the **Results screen**, the "best" line now shows your personal best
-specifically for the mode you just finished (e.g. `time-30s best: 78.4 wpm`).
+specifically for the mode you just finished (a `mode best` row under the `mode` row).
 A `★ new best!` badge appears when you beat your previous record for that mode.
 
 ---
@@ -204,6 +266,8 @@ correct = "green"       # or ANSI name
 The 10 slots: `accent`, `secondary`, `correct`, `incorrect`, `pending`,
 `extra`, `mode_tag`, `error`, `neutral`, `background`. Each maps to a
 specific UI element — see `config.example.toml` for inline documentation.
+`extra` is currently unused (typing can no longer run past the end of a word)
+and is kept only so existing configs keep loading.
 
 > **Background.** The `dark` theme uses `Color::Reset` for `background` so it
 > picks up whatever your terminal's native background is — same look as v0.1.
@@ -222,36 +286,27 @@ mode = "time"            # time | words | quote | code | zen | symbols
 time_seconds = 15        # 15 / 30 / 60 / 120 (matches menu rows)
 word_count = 25          # 10 / 25 / 50 / 100
 code_lang = "rust"       # rust | python | js | go | java | sql | shell
-symbol_count = 25        # 25 / 50 (matches Symbols menu rows)
+symbol_count = 25        # 25 / 50
 ```
 
-### Words section (v0.4.0+)
+### Words
 
-Tune the word source for Time / Words / Zen modes:
+Make random words harder (time and words modes; zen always stays plain):
 
 ```toml
 [words]
-pool = "common"          # "common" (≈1k, default) | "extended" (10k)
-punctuation = false      # attach commas, periods, quotes to ~25% of words
-numbers = false          # replace ~12% of slots with random 1–4 digit numbers
+pool = "extended"        # "common" (default, ~430 frequent words) | "extended" (10,000)
+punctuation = true       # commas, periods, quotes, brackets on ~1 word in 4
+numbers = true           # 1–4 digit numbers mixed in (~1 word in 8)
 ```
 
-The `--big`, `--punctuation`, and `--numbers` CLI flags override these
-per-launch. The decoration toggles never apply in Zen mode (the screen stays
-calm by design).
-
-### Snippets library (v0.4.0+)
-
-Drop `.txt` files into `~/.typerush/snippets/` to build your own typing
-library. Each file appears as a `Snippet · <name>` row in the main menu and is
-sourced as the typing target when selected. Files are discovered in
-alphabetical order so menu positions are stable across launches. Use
-`typerush --list-snippets` to print every snippet TypeRush has found.
+`--big`, `--punctuation` and `--numbers` turn these on for one run.
 
 ### Precedence
 
-```
-CLI flag (--theme, --time, --big, …) > config.toml > built-in default
+```mermaid
+flowchart LR
+    cli["CLI flag (--theme, --time, --big, …)"] -- "wins over" --> file["config.toml"] -- "wins over" --> default["built-in default"]
 ```
 
 A malformed config file does not crash TypeRush — it falls back to defaults

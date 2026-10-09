@@ -17,7 +17,7 @@
 //! symbol_count = 25             # default token count for symbols mode (v0.4.0)
 //!
 //! [words]                       # v0.4.0 — English pool + decoration toggles
-//! pool = "common"               # "common" (≈1k words, default) | "extended" (10k)
+//! pool = "common"               # "common" (default, ~430 frequent words) | "extended" (10k)
 //! punctuation = false           # sprinkle commas/periods/quotes on ~25% of words
 //! numbers = false               # replace ~12% of slots with random 1–4 digit numbers
 //!
@@ -72,7 +72,7 @@ pub struct Defaults {
 #[derive(Debug, Default, Deserialize, PartialEq)]
 #[serde(deny_unknown_fields)]
 pub struct Words {
-    /// Pool name: `common` (default, ≈1k words) | `extended` (10k words).
+    /// Pool name: `common` (default, ~430 frequent words) | `extended` (10,000).
     pub pool: Option<String>,
     /// When true, randomly attach punctuation marks (`,.;:?!"'` etc.) to
     /// roughly a quarter of words and occasionally wrap a word in paired

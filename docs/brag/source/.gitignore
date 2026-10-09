@@ -1,0 +1,10 @@
+stills/
+*.mp4
+*.wav
+*.png
+data.js
+keys.json
+menu.json
+typing.json
+stats.json
+theme-*.json
