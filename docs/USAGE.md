@@ -70,8 +70,17 @@ needs `Shift` held while dragging.
 
 ### Main menu
 
-Modes are grouped one category per row — `time`, `words`, `code`, then
-`quote`, `zen`, `stats`, `quit`:
+Modes are grouped by category. `time`, `words` and `code` show a heading with
+their options on the line below; `quote`, `zen`, `stats` and `quit` follow:
+
+```
+time
+15s   30s   60s   120s
+
+words
+10    25    50    100
+```
+
 
 | Key                | Action                                         |
 | ------------------ | ---------------------------------------------- |

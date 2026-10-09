@@ -111,7 +111,7 @@ pub enum ClickAction {
 }
 
 /// One selectable option in the main menu. Consecutive items that share a
-/// `group` are drawn on one row ("time  15s  30s  60s  120s").
+/// `group` are drawn under one heading, side by side ("15s  30s  60s  120s").
 pub struct MenuItem {
     /// Category the option belongs to — the row's heading.
     pub group: &'static str,

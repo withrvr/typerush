@@ -1,5 +1,5 @@
-//! Main menu screen — ASCII banner up top, the modes grouped one category
-//! per row in the middle (↑/↓ picks a row, ←/→ an option), and a one-line hint
+//! Main menu screen — ASCII banner up top, the modes grouped by category in
+//! the middle (heading line, options on the line below) (↑/↓ picks a row, ←/→ an option), and a one-line hint
 //! footer at the bottom.
 
 use ratatui::{
@@ -15,14 +15,15 @@ use crate::app::{menu_row, App, ClickAction};
 /// Render the menu screen. `app.menu_index` highlights the active option.
 pub fn render(f: &mut Frame, app: &App) {
     let area = f.area();
-    // Layout: a small breathing-room strip, then the banner, then the
-    // mode list, then a small bottom margin, then the footer. The top
-    // padding stops the banner from hugging the terminal's title-bar.
+    // Layout: a breathing-room row, then the banner, then the mode list, then
+    // the footer. The top padding stops the banner from hugging the terminal's
+    // title-bar. Padding and footer are one row each so the list (16 rows with
+    // its border) still fits a standard 80×24 terminal.
     let layout = Layout::vertical([
-        Constraint::Length(2), // top padding
+        Constraint::Length(1), // top padding
         Constraint::Length(5), // banner
         Constraint::Min(8),    // mode list
-        Constraint::Length(3), // footer
+        Constraint::Length(1), // footer
     ])
     .split(area);
 
@@ -91,10 +92,30 @@ pub fn render(f: &mut Frame, app: &App) {
             lines.push(Line::raw(""));
         }
 
-        let mut spans = vec![Span::styled(
+        let marker = Span::styled(
             if is_selected_row { " ➤ " } else { "   " },
             Style::default().fg(theme.accent),
-        )];
+        );
+        if row.len() > 1 {
+            // Multi-option category: heading on its own line, options below.
+            let heading_style = if is_selected_row {
+                Style::default()
+                    .fg(theme.secondary)
+                    .add_modifier(Modifier::BOLD)
+            } else {
+                Style::default().fg(theme.pending)
+            };
+            lines.push(Line::from(vec![
+                marker.clone(),
+                Span::styled(format!(" {}", group), heading_style),
+            ]));
+        }
+
+        let mut spans = vec![if row.len() > 1 {
+            Span::raw("   ")
+        } else {
+            marker
+        }];
         // Inside the border: one column of border + the text so far.
         let line_y = inner.y + 1 + lines.len() as u16;
         let mut chip = |spans: &mut Vec<Span<'static>>, index: usize, text: &str| {
@@ -116,14 +137,6 @@ pub fn render(f: &mut Frame, app: &App) {
             // Single-option row: the category name is the option itself.
             chip(&mut spans, start, group);
         } else {
-            let heading_style = if is_selected_row {
-                Style::default()
-                    .fg(theme.secondary)
-                    .add_modifier(Modifier::BOLD)
-            } else {
-                Style::default().fg(theme.pending)
-            };
-            spans.push(Span::styled(format!(" {:<8}", group), heading_style));
             for index in row.clone() {
                 chip(&mut spans, index, app.menu[index].label);
                 spans.push(Span::raw(" "));

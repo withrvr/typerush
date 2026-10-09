@@ -56,10 +56,10 @@ _No unreleased changes yet._
 
 ### Changed
 
-- **Main menu grouped by category.** Each category sits on its own row —
-  `time  15s 30s 60s 120s`, `words  10 25 50 100`, `code  rust python
-  javascript`, then `quote`, `zen`, `stats`, `quit` — with spacing between
-  groups. `↑/↓` (`j/k`) moves between categories, `←/→` (`h/l`) between the
+- **Main menu grouped by category.** `time`, `words` and `code` each get a
+  heading with their options on the line below (`15s 30s 60s 120s`,
+  `10 25 50 100`, `rust python javascript`), then `quote`, `zen`, `stats`,
+  `quit`, with spacing between groups. `↑/↓` (`j/k`) moves between categories, `←/→` (`h/l`) between the
   options in a category.
 - **Stats screen layout redesigned.** The summary card and the new key-accuracy
   heatmap sit side by side in a two-column top row, followed by the WPM
