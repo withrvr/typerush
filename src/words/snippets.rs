@@ -19,9 +19,8 @@ pub struct Snippet {
     pub name: String,
     /// Path to the `.txt` file.
     pub path: PathBuf,
-    /// `path` canonicalized once at discovery (`None` if that failed), so the
-    /// menu can match it against the remembered file without touching disk
-    /// on every rebuild.
+    /// `path` canonicalized once at discovery (`None` if that failed), so a
+    /// menu rebuild only canonicalizes the remembered file, not every snippet.
     pub canonical_path: Option<PathBuf>,
 }
 
@@ -79,10 +78,14 @@ pub fn discover_in(dir: &Path) -> Vec<Snippet> {
 
     // `notes.txt` and `notes.TXT` can both exist on a case-sensitive
     // filesystem: label those with their full file names so the two options
-    // can be told apart.
-    let clashes: Vec<bool> = found
-        .iter()
-        .map(|s| found.iter().filter(|other| other.name == s.name).count() > 1)
+    // can be told apart. Sorted, so equal names are neighbours.
+    let clashes: Vec<bool> = (0..found.len())
+        .map(|i| {
+            (i > 0 && found[i - 1].name == found[i].name)
+                || found
+                    .get(i + 1)
+                    .is_some_and(|next| next.name == found[i].name)
+        })
         .collect();
     for (snippet, clash) in found.iter_mut().zip(clashes) {
         if clash {

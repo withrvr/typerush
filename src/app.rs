@@ -283,6 +283,17 @@ pub fn build_menu(snippets: &[Snippet], last_custom_file: Option<&Path>) -> Vec<
     if menu.len() == custom_start {
         menu.push(custom("custom".to_string(), None));
     }
+    // Every custom option must be tell-apart-able: the remembered file can
+    // share a name with a snippet, and snippet names can clash in ways the
+    // file-name fallback doesn't cover. Number any repeats: "notes (2)".
+    let mut seen: HashMap<String, usize> = HashMap::new();
+    for item in &mut menu[custom_start..] {
+        let count = seen.entry(item.label.clone()).or_insert(0);
+        *count += 1;
+        if *count > 1 {
+            item.label = format!("{} ({})", item.label, count);
+        }
+    }
 
     menu.push(other("stats", MenuAction::ShowStats));
     menu.push(other("quit", MenuAction::Quit));
@@ -1380,6 +1391,23 @@ mod tests {
                 .last_custom_file
                 .as_deref(),
             file.to_str()
+        );
+    }
+
+    /// No two custom options ever share a label — not the remembered file
+    /// and a snippet, nor snippets whose fallback names collide.
+    #[test]
+    fn custom_option_labels_are_unique() {
+        let snippets = [
+            snippet("notes.txt", "/s/notes.txt"),
+            snippet("notes.TXT", "/s/notes.TXT"),
+            snippet("notes.txt", "/s/notes.txt.txt"),
+        ];
+        let menu = build_menu(&snippets, Some(Path::new("/home/me/notes.txt")));
+        let labels: Vec<&str> = custom_options(&menu).iter().map(|(l, _)| *l).collect();
+        assert_eq!(
+            labels,
+            ["notes.txt", "notes.txt (2)", "notes.TXT", "notes.txt (3)"]
         );
     }
 

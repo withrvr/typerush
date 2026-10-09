@@ -208,9 +208,11 @@ pub fn render(f: &mut Frame, app: &App) {
     );
 }
 
-/// Widest option text shown in full, in terminal cells; longer snippet or
-/// file names are cut with an ellipsis so one name can't take over the row.
-/// Measured in display width, not characters: a CJK character is two cells.
+/// Widest option text shown in full, in terminal cells. Longer snippet or
+/// file names are shortened in the middle — `quarterly-r…nal-draft-q1` — so one
+/// name can't take over the row, and the end (which usually tells similar
+/// names apart, or carries a " (2)") stays visible. Measured in display
+/// width, not characters: a CJK character is two cells.
 const MAX_CHIP_WIDTH: usize = 24;
 
 /// Option text as drawn: `label`, shortened to `MAX_CHIP_WIDTH` cells.
@@ -219,19 +221,31 @@ fn chip_text(label: &str) -> std::borrow::Cow<'_, str> {
     if label.width() <= MAX_CHIP_WIDTH {
         return label.into();
     }
-    let mut text = String::new();
-    let mut width = 0;
+    let cell = |c: &char| c.width().unwrap_or(0);
+    // One cell for the ellipsis; the rest split between start and end.
+    let head_budget = (MAX_CHIP_WIDTH - 1) / 2;
+    let mut head = String::new();
+    let mut used = 0;
     for c in label.chars() {
-        let char_width = c.width().unwrap_or(0);
-        // Leave one cell for the ellipsis.
-        if width + char_width > MAX_CHIP_WIDTH - 1 {
+        if used + cell(&c) > head_budget {
             break;
         }
-        width += char_width;
-        text.push(c);
+        used += cell(&c);
+        head.push(c);
     }
-    text.push('…');
-    text.into()
+    let tail_budget = MAX_CHIP_WIDTH - 1 - used;
+    let mut tail: Vec<char> = Vec::new();
+    let mut tail_used = 0;
+    for c in label.chars().rev() {
+        if tail_used + cell(&c) > tail_budget {
+            break;
+        }
+        tail_used += cell(&c);
+        tail.push(c);
+    }
+    head.push('…');
+    head.extend(tail.into_iter().rev());
+    head.into()
 }
 
 fn centered_rect(percent_x: u16, percent_y: u16, r: Rect) -> Rect {
@@ -261,11 +275,19 @@ mod tests {
         assert_eq!(chip_text(&exactly), exactly);
     }
 
+    /// Long names keep their start and end: the end is what usually tells
+    /// similar files apart (and where a " (2)" lives).
     #[test]
-    fn long_labels_are_cut_to_the_width_limit() {
-        let text = chip_text("rust-borrow-checker-error-messages");
-        assert!(text.ends_with('…'));
+    fn long_labels_are_shortened_in_the_middle() {
+        let text = chip_text("rust-borrow-checker-error-messages (2)");
         assert_eq!(text.width(), MAX_CHIP_WIDTH);
+        assert!(text.starts_with("rust-borrow"), "{text}");
+        assert!(text.ends_with("messages (2)"), "{text}");
+        assert!(text.contains('…'));
+        assert_ne!(
+            chip_text("quarterly-report-final-draft-q1"),
+            chip_text("quarterly-report-final-draft-q2")
+        );
     }
 
     /// Wide characters count two cells each: 20 CJK characters are 40 cells,
@@ -274,7 +296,7 @@ mod tests {
     fn wide_characters_are_measured_in_cells() {
         let label = "漢".repeat(20);
         let text = chip_text(&label);
-        assert!(text.ends_with('…'));
+        assert!(text.contains('…'));
         assert!(text.width() <= MAX_CHIP_WIDTH);
     }
 }
