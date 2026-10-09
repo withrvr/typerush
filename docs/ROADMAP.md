@@ -56,6 +56,17 @@ KEY:  ✅ done    🚧 in progress    🔲 planned    💡 idea
 - ✅ Built-in themes: `dark`, `light`, `monokai`, `dracula`
 - ✅ Per-slot color overrides on top of any built-in theme
 - ✅ `--theme <name>` CLI override + `--list-themes` discovery flag
+- ✅ `Ctrl+Backspace` deletes the current word (terminals that send `^H`, plus `Ctrl+W`)
+
+---
+
+## ✅ Shipped (v0.2.1 — Pure character checking)
+
+- ✅ Typing is one stream of characters; the space between words is a character like any other
+- ✅ A wrong key where a space belongs is one wrong character (shown as a red, underlined space) instead of piling up letters on the word ([#8](https://github.com/withrvr/typerush/issues/8))
+- ✅ A space typed mid-word is a wrong character — it no longer jumps to the next word
+- ✅ The run ends on the last character (no trailing space needed)
+- ✅ Backspace walks back over spaces one character at a time
 
 ---
 

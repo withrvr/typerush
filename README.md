@@ -29,6 +29,8 @@ with a quote — TypeRush meets you where you already work: the command line.
 ## ✨ Why TypeRush
 
 - 🚀 **Instant feedback** — see your WPM and accuracy climb keystroke by keystroke
+- 🎯 **Honest scoring** — every character counts, the space between words included
+- 🖱 **Keyboard or mouse** — arrow-key menu, or click any option and footer hint
 - 🎨 **Themes built-in** — `dark`, `light`, `monokai`, `dracula`, or roll your own colors
 - ⏱ **Six built-in modes** — Time, Words, Quote, Code, Zen, and Custom-file
 - 💾 **Tracks your progress** — every session saved locally, with charts and a personal best

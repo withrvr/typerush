@@ -74,12 +74,21 @@ needs `Shift` held while dragging.
 Modes are grouped by category. `time`, `words` and `code` show a heading with
 their options on the line below; `quote`, `zen`, `stats` and `quit` follow:
 
-```
-time
-15s   30s   60s   120s
-
-words
-10    25    50    100
+```mermaid
+flowchart TD
+    subgraph time
+        direction LR
+        t15[15s] ~~~ t30[30s] ~~~ t60[60s] ~~~ t120[120s]
+    end
+    subgraph words
+        direction LR
+        w10[10] ~~~ w25[25] ~~~ w50[50] ~~~ w100[100]
+    end
+    subgraph code
+        direction LR
+        rust ~~~ python ~~~ javascript
+    end
+    time ~~~ words ~~~ code ~~~ quote ~~~ zen ~~~ stats ~~~ quit
 ```
 
 
@@ -232,8 +241,9 @@ code_lang = "rust"       # rust | python | js
 
 ### Precedence
 
-```
-CLI flag (--theme, --time, …) > config.toml > built-in default
+```mermaid
+flowchart LR
+    cli["CLI flag (--theme, --time, …)"] -- "wins over" --> file["config.toml"] -- "wins over" --> default["built-in default"]
 ```
 
 A malformed config file does not crash TypeRush — it falls back to defaults

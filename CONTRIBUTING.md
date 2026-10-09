@@ -116,6 +116,14 @@ cargo build --release && ./target/release/typerush
 - File I/O in the stats path is best-effort: losing a stat row is fine; never
   crash the typing app.
 
+### Docs (`.md` files)
+- Diagrams — flows, state machines, trees, layouts — are ` ```mermaid `
+  blocks (GitHub renders them), not ASCII art in plain code blocks.
+- Plain code blocks are only for things you type or paste: shell commands,
+  TOML, Rust, commit-message templates, formulas.
+- `README.md` is also shown on crates.io, which doesn't render mermaid — keep
+  diagrams out of it (link to `docs/` instead).
+
 ---
 
 ## Commits
