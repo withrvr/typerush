@@ -15,6 +15,10 @@ _No unreleased changes yet._
 
 ## [0.3.0] — 2026-10-09 — smarter stats
 
+Planned as a stats release. Two additions came in beyond that plan: the
+**grouped main menu** (pulled forward from v0.4) and **mouse support with
+keyboard alternates** for accessibility.
+
 ### Added
 
 - **Per-key accuracy heatmap.** TypeRush now tracks, for every character you

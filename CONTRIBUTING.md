@@ -96,6 +96,17 @@ cargo build --release && ./target/release/typerush
 - Unit tests live in the same file as the code they cover, inside `#[cfg(test)] mod tests`.
 - Prefer cheap deterministic tests (the matcher in `game.rs` is a good
   example).
+- Tests must not read or write the real `~/.typerush` — pass a temp path
+  (see [DEVELOPMENT.md](docs/DEVELOPMENT.md#running-tests)).
+- UI changes: also drive the release binary once (keyboard *and* mouse) —
+  see [end-to-end testing in tmux](docs/DEVELOPMENT.md#end-to-end-testing-in-tmux).
+
+### Input & accessibility
+- Every action must be reachable from the keyboard. Anything clickable maps to
+  an existing key (`ClickAction` in `app.rs`), never to mouse-only behaviour.
+- Mouse actions fire on button release, so sliding off a target cancels them.
+- Don't add a key hint that can't work on that screen (e.g. `?` while typing —
+  it's a character there).
 
 ### Error handling
 - Use `anyhow::Result` for fallible operations that bubble up to `main`.

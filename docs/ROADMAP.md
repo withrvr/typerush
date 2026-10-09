@@ -65,8 +65,17 @@ KEY:  ✅ done    🚧 in progress    🔲 planned    💡 idea
 - ✅ Per-mode personal bests (separate PB for time-30s vs words-50)
 - ✅ Daily streak counter
 - ✅ Average WPM over the last 7 / 30 days
-- ✅ Crash-safe (atomic) stats writes
+- ✅ Crash-safe (atomic, fsynced) stats writes; a corrupt `stats.json` is backed up, never wiped
 - ✅ Stats screens never read `stats.json` per frame (in-memory session cache)
+
+**Added to v0.3 beyond the original plan:**
+
+- ✅ Main menu grouped by category (heading, options on the line below) with
+  2-D arrow navigation — pulled forward from v0.4's "visual section gaps"
+- ✅ Mouse support (click menu options and footer hints, wheel scrolls the
+  menu) with every action also on the keyboard (WCAG 2.1.1) and
+  release-to-activate clicks (WCAG 2.5.2)
+- ✅ Alternate keys: `F1` help, `F5` restart, `Space` start, `s` stats
 
 ---
 
@@ -86,7 +95,6 @@ KEY:  ✅ done    🚧 in progress    🔲 planned    💡 idea
 - 🔲 Punctuation / numbers toggle
 - 🔲 Custom snippet library: drop `.txt` files in `~/.typerush/snippets/`
 - 🔲 "Custom" menu row + last-picked-file memory in `~/.typerush/state.json`
-- 🔲 Visual section gaps in the main menu (Time / Words / Quote / Code / Zen groups)
 
 ### v0.5 — Quality of life
 - 🔲 Pause / resume mid-session
