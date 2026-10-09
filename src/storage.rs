@@ -71,15 +71,24 @@ pub fn stats_path() -> PathBuf {
 /// sure the new data is on disk first — without it, a power loss right after
 /// the rename can leave a zero-length file on filesystems with delayed
 /// allocation (XFS, btrfs, some ext4 setups).
+///
+/// A symlinked target is followed, so the link survives and the file it points
+/// at is replaced; the existing file's permissions are kept. The temp name
+/// includes the process id so two TypeRush windows saving at once never write
+/// into the same temp file.
 fn write_atomic(path: &Path, contents: &str) -> std::io::Result<()> {
+    let path = fs::canonicalize(path).unwrap_or_else(|_| path.to_path_buf());
     let mut tmp = path.as_os_str().to_owned();
-    tmp.push(".tmp");
+    tmp.push(format!(".{}.tmp", std::process::id()));
     let tmp = PathBuf::from(tmp);
     let mut file = fs::File::create(&tmp)?;
+    if let Ok(metadata) = fs::metadata(&path) {
+        file.set_permissions(metadata.permissions())?;
+    }
     file.write_all(contents.as_bytes())?;
     file.sync_all()?;
     drop(file);
-    fs::rename(&tmp, path)?;
+    fs::rename(&tmp, &path)?;
     // Make the rename itself durable. Best-effort, Unix only: Windows can't
     // open a directory as a file.
     #[cfg(unix)]
@@ -238,12 +247,12 @@ pub fn key_accuracy(sessions: &[SessionRecord], min_presses: u64) -> Vec<KeyAccu
 
     for session in sessions {
         for (k, &v) in &session.key_hits {
-            if let Some(c) = k.chars().next() {
+            if let Some(c) = single_char(k) {
                 *hits.entry(c).or_insert(0) += v;
             }
         }
         for (k, &v) in &session.key_misses {
-            if let Some(c) = k.chars().next() {
+            if let Some(c) = single_char(k) {
                 *misses.entry(c).or_insert(0) += v;
             }
         }
@@ -282,6 +291,16 @@ pub fn key_accuracy(sessions: &[SessionRecord], min_presses: u64) -> Vec<KeyAccu
     stats
 }
 
+/// The key's character if `key` is exactly one character. Anything else (a
+/// hand-edited or damaged entry) is skipped rather than read as its first char.
+fn single_char(key: &str) -> Option<char> {
+    let mut chars = key.chars();
+    match (chars.next(), chars.next()) {
+        (Some(c), None) => Some(c),
+        _ => None,
+    }
+}
+
 /// Accuracy statistics for a single key, used by the key-accuracy heatmap.
 #[derive(Debug, Clone)]
 pub struct KeyAccuracyStat {
@@ -293,6 +312,30 @@ pub struct KeyAccuracyStat {
     pub hits: u64,
     /// Accuracy as a percentage, 0–100.
     pub accuracy: f64,
+}
+
+/// What the Results screen compares the just-finished session against,
+/// computed once when the screen opens instead of on every frame.
+#[derive(Debug, Clone, Copy, Default, PartialEq)]
+pub struct ResultsComparison {
+    /// WPM of the session before this one (any mode).
+    pub last_wpm: Option<f64>,
+    /// Best WPM in this mode *before* this session.
+    pub previous_mode_best: Option<f64>,
+}
+
+impl ResultsComparison {
+    /// `sessions` is the full history; `includes_current` says whether the
+    /// last entry is the session being shown (it was saved) and must be left
+    /// out. Unsaved sessions (Zen, < 1 s, zero keystrokes) aren't in history.
+    pub fn new(sessions: &[SessionRecord], includes_current: bool, mode_label: &str) -> Self {
+        let previous =
+            &sessions[..sessions.len() - usize::from(includes_current).min(sessions.len())];
+        Self {
+            last_wpm: previous.last().map(|s| s.wpm),
+            previous_mode_best: personal_best_for_mode(previous, mode_label),
+        }
+    }
 }
 
 /// Everything the Stats screen's summary card and key-accuracy panel show,
@@ -330,15 +373,19 @@ impl StatsSummary {
 mod tests {
     use super::*;
 
-    /// Local noon `days_ago` calendar days before today. Stepping by calendar
-    /// day (not by 24 h) keeps day-based tests correct across DST changes,
-    /// and noon always exists in local time.
+    /// `hour:minute` local time, `days_ago` calendar days before today.
+    /// Stepping by calendar day (not by 24 h) keeps day-based tests correct
+    /// across DST changes. If that time falls in a DST gap (e.g. 00:01 where
+    /// clocks jump at midnight), the first moment after the gap is used.
     fn days_ago_at(days_ago: i64, hour: u32, minute: u32) -> DateTime<Local> {
         let date = Local::now().date_naive() - chrono::Days::new(days_ago as u64);
-        date.and_hms_opt(hour, minute, 0)
-            .unwrap()
-            .and_local_timezone(Local)
-            .earliest()
+        let time = date.and_hms_opt(hour, minute, 0).unwrap();
+        (0..=2)
+            .find_map(|h| {
+                (time + chrono::Duration::hours(h))
+                    .and_local_timezone(Local)
+                    .earliest()
+            })
             .unwrap()
     }
 
@@ -1150,6 +1197,58 @@ mod tests {
         assert_eq!(std::fs::read_to_string(&first[0]).unwrap(), "[{\"wpm\": 1");
     }
 
+    #[test]
+    fn results_comparison_leaves_out_the_saved_session() {
+        let sessions = vec![
+            make_record(70.0, "words-10", 1),
+            make_record(40.0, "time-30s", 0),
+            make_record(90.0, "words-10", 0), // the session just saved
+        ];
+        let saved = ResultsComparison::new(&sessions, true, "words-10");
+        assert_eq!(saved.last_wpm, Some(40.0));
+        assert_eq!(saved.previous_mode_best, Some(70.0));
+        // Not saved: the last entry is a previous session.
+        let unsaved = ResultsComparison::new(&sessions, false, "words-10");
+        assert_eq!(unsaved.last_wpm, Some(90.0));
+        assert_eq!(unsaved.previous_mode_best, Some(90.0));
+        assert_eq!(
+            ResultsComparison::new(&[], true, "zen"),
+            ResultsComparison::default()
+        );
+    }
+
+    #[test]
+    fn key_accuracy_skips_multi_char_keys() {
+        let s = make_record_with_keys(50.0, "time-30s", 0, &[("ab", 9), ("a", 3)], &[]);
+        let stats = key_accuracy(&[s], 1);
+        assert_eq!(stats.len(), 1);
+        assert_eq!((stats[0].key, stats[0].hits), ('a', 3));
+    }
+
+    /// A symlinked stats.json (e.g. into a dotfiles folder) stays a symlink,
+    /// and the file's permissions survive a save.
+    #[cfg(unix)]
+    #[test]
+    fn save_keeps_symlink_and_permissions() {
+        use std::os::unix::fs::PermissionsExt;
+        let dir = tempfile::tempdir().unwrap();
+        let real = dir.path().join("real.json");
+        let link = dir.path().join("stats.json");
+        save_session_to_path(&real, &make_record(50.0, "time-30s", 0)).unwrap();
+        std::fs::set_permissions(&real, std::fs::Permissions::from_mode(0o600)).unwrap();
+        std::os::unix::fs::symlink(&real, &link).unwrap();
+
+        save_session_to_path(&link, &make_record(60.0, "time-30s", 0)).unwrap();
+
+        assert!(std::fs::symlink_metadata(&link)
+            .unwrap()
+            .file_type()
+            .is_symlink());
+        assert_eq!(load_sessions_from_path(&real).unwrap().len(), 2);
+        let mode = std::fs::metadata(&real).unwrap().permissions().mode();
+        assert_eq!(mode & 0o777, 0o600);
+    }
+
     // ── Atomic writes — crash mid-write must never corrupt history ─────────
 
     #[test]
@@ -1161,7 +1260,17 @@ mod tests {
             save_session_to_path(&path, &r).unwrap();
         }
         // The temp file must be gone after every successful save.
-        assert!(!dir.path().join("stats.json.tmp").exists());
+        let leftovers = std::fs::read_dir(dir.path())
+            .unwrap()
+            .filter(|e| {
+                e.as_ref()
+                    .unwrap()
+                    .path()
+                    .to_string_lossy()
+                    .ends_with(".tmp")
+            })
+            .count();
+        assert_eq!(leftovers, 0);
         // And the target must be complete, valid JSON with all 5 records.
         let loaded = load_sessions_from_path(&path).unwrap();
         assert_eq!(loaded.len(), 5);

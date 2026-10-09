@@ -1,9 +1,10 @@
 //! Results screen — shown immediately after a session ends.
 //!
 //! Displays final WPM, accuracy, elapsed time, character counts, the chosen
-//! mode, the user's all-time best, and (v0.3.0) the per-mode personal best.
-//! Includes a +/- delta against the previous session and a mini sparkline of
-//! recent WPM scores.
+//! mode, and (since v0.3.0) the personal best for that mode — which replaced
+//! the all-time best across all modes; the all-time best is on the Stats
+//! screen. Includes a +/- delta against the previous session and a mini
+//! sparkline of recent WPM scores.
 
 use ratatui::{
     prelude::*,
@@ -42,17 +43,14 @@ pub fn render(f: &mut Frame, app: &App) {
     let mode_label = app.mode.label();
 
     let sessions: &[storage::SessionRecord] = app.stats_cache.as_deref().unwrap_or(&[]);
-
-    // If this session was written to stats.json, the last history entry IS
-    // this session — leave it out when comparing against "previous" sessions.
-    // Unsaved sessions (Zen, <1s, zero keystrokes) don't appear in history,
-    // so every entry is already a previous session.
-    let previous =
-        &sessions[..sessions.len() - usize::from(app.session_just_saved).min(sessions.len())];
+    // Normally computed once on screen entry (main loop); computed here only
+    // if something renders Results without going through it (e.g. tests).
+    let comparison = app.results_comparison.unwrap_or_else(|| {
+        storage::ResultsComparison::new(sessions, app.session_just_saved, &mode_label)
+    });
 
     // Delta vs the previous any-mode session.
-    let last_wpm = previous.last().map(|s| s.wpm);
-    let delta = match last_wpm {
+    let delta = match comparison.last_wpm {
         Some(prev) => {
             let diff = wpm - prev;
             let sign = if diff >= 0.0 { "+" } else { "" };
@@ -78,7 +76,7 @@ pub fn render(f: &mut Frame, app: &App) {
     // same mode to detect a new mode PB. Only a session that was actually
     // recorded can claim a new best — otherwise a 0.9-second sprint could
     // flash "new best!" for a record that was never kept.
-    let prev_mode_pb = storage::personal_best_for_mode(previous, &mode_label);
+    let prev_mode_pb = comparison.previous_mode_best;
 
     let is_new_mode_pb = app.session_just_saved
         && match prev_mode_pb {
@@ -88,13 +86,16 @@ pub fn render(f: &mut Frame, app: &App) {
 
     let pb_line = if is_zen {
         Line::from(vec![
-            Span::styled("  best ever  ", Style::default().fg(theme.pending)),
+            Span::styled("  mode best  ", Style::default().fg(theme.pending)),
             Span::styled("  — (zen not saved)", Style::default().fg(theme.pending)),
         ])
     } else {
-        // No recorded session for this mode yet (e.g. this one was too short
-        // to save) → there is no best to show.
-        let mode_pb_now = storage::personal_best_for_mode(sessions, &mode_label);
+        // Best including this session if it was recorded. No recorded session
+        // for this mode yet (e.g. this one was too short to save) → `—`.
+        let mode_pb_now = match (app.session_just_saved, prev_mode_pb) {
+            (true, previous) => Some(previous.map_or(wpm, |best| best.max(wpm))),
+            (false, previous) => previous,
+        };
         let pb_value = Span::styled(
             mode_pb_now.map_or("     — wpm".to_string(), |pb| format!("{:>6.1} wpm", pb)),
             Style::default()

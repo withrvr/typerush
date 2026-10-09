@@ -281,9 +281,10 @@ fn toggle_help(app: &mut App) {
 /// Mouse support. Every click maps onto an existing keyboard action (see
 /// `ClickAction`), so mouse and keyboard reach exactly the same things.
 ///
-/// Actions fire on button *release* over the target, so pressing on the wrong
-/// item and sliding off cancels it (WCAG 2.5.2 pointer cancellation). Pressing
-/// on a menu option only highlights it.
+/// Actions fire on button *release*, and only when the release lands on the
+/// same target the press started on — pressing on the wrong item and sliding
+/// off cancels it (WCAG 2.5.2 pointer cancellation). Pressing on a menu option
+/// only highlights it.
 fn handle_mouse(app: &mut App, mouse: MouseEvent) {
     let released = mouse.kind == MouseEventKind::Up(MouseButton::Left);
     // Modal error / help overlay: a click anywhere closes it, like any key.
@@ -308,18 +309,30 @@ fn handle_mouse(app: &mut App, mouse: MouseEvent) {
         .find(|(area, _)| area.contains(position))
         .map(|(_, action)| *action);
 
-    match (mouse.kind, target) {
-        (MouseEventKind::ScrollUp, _) if app.screen == Screen::Menu => app.menu_move_row(false),
-        (MouseEventKind::ScrollDown, _) if app.screen == Screen::Menu => app.menu_move_row(true),
-        (MouseEventKind::Down(MouseButton::Left), Some(ClickAction::Menu(index))) => {
-            app.menu_index = index;
+    match mouse.kind {
+        MouseEventKind::ScrollUp if app.screen == Screen::Menu => app.menu_move_row(false),
+        MouseEventKind::ScrollDown if app.screen == Screen::Menu => app.menu_move_row(true),
+        MouseEventKind::Down(MouseButton::Left) => {
+            app.pressed_target = target;
+            if let Some(ClickAction::Menu(index)) = target {
+                app.menu_index = index;
+            }
         }
-        (MouseEventKind::Up(MouseButton::Left), Some(ClickAction::Menu(index))) => {
-            app.menu_index = index;
-            handle_key(app, KeyCode::Enter, KeyModifiers::NONE);
-        }
-        (MouseEventKind::Up(MouseButton::Left), Some(ClickAction::Key(code, mods))) => {
-            handle_key(app, code, mods);
+        MouseEventKind::Up(MouseButton::Left) => {
+            // Only a press and release on the same target is a click: dragging
+            // from one option to another, or a stray release, does nothing.
+            let pressed = app.pressed_target.take();
+            if target.is_none() || pressed != target {
+                return;
+            }
+            match target {
+                Some(ClickAction::Menu(index)) => {
+                    app.menu_index = index;
+                    handle_key(app, KeyCode::Enter, KeyModifiers::NONE);
+                }
+                Some(ClickAction::Key(code, mods)) => handle_key(app, code, mods),
+                None => {}
+            }
         }
         _ => {}
     }
@@ -443,8 +456,16 @@ fn after_input(app: &mut App, last_screen: Screen, session_saved: &mut bool, sta
     if matches!(app.screen, Screen::Stats | Screen::Results) && app.stats_cache.is_none() {
         app.stats_cache = Some(storage::load_sessions_from_path(stats_file).unwrap_or_default());
     }
-    // The Stats summary (streak, averages, key heatmap) is computed once per
-    // visit instead of on every frame.
+    // Results comparisons and the Stats summary (streak, averages, key
+    // heatmap) are computed once per visit instead of on every frame.
+    if app.screen == Screen::Results && last_screen != Screen::Results {
+        let sessions = app.stats_cache.as_deref().unwrap_or(&[]);
+        app.results_comparison = Some(storage::ResultsComparison::new(
+            sessions,
+            app.session_just_saved,
+            &app.mode.label(),
+        ));
+    }
     if app.screen == Screen::Stats && last_screen != Screen::Stats {
         let sessions = app.stats_cache.as_deref().unwrap_or(&[]);
         app.stats_summary = Some(storage::StatsSummary::new(sessions));
@@ -639,6 +660,29 @@ mod tests {
         assert_eq!(app.menu_index, 5);
     }
 
+    /// Press on one option, release on another: nothing starts. A release
+    /// with no press (some terminals send them) does nothing either.
+    #[test]
+    fn drag_between_targets_or_stray_release_does_nothing() {
+        let mut app = App::new(None, ThemePalette::default(), DefaultMode::Time(15));
+        draw(&app);
+        let from = target_cell(&app, ClickAction::Menu(0));
+        let to = target_cell(&app, ClickAction::Menu(3));
+        handle_mouse(
+            &mut app,
+            mouse(MouseEventKind::Down(MouseButton::Left), from),
+        );
+        handle_mouse(&mut app, mouse(MouseEventKind::Up(MouseButton::Left), to));
+        assert_eq!(app.screen, Screen::Menu);
+
+        let quit = target_cell(
+            &app,
+            ClickAction::Key(KeyCode::Char('q'), KeyModifiers::NONE),
+        );
+        handle_mouse(&mut app, mouse(MouseEventKind::Up(MouseButton::Left), quit));
+        assert!(!app.should_quit);
+    }
+
     #[test]
     fn clicking_a_footer_hint_acts_like_its_key() {
         let mut app = App::new(None, ThemePalette::default(), DefaultMode::Time(15));
@@ -654,6 +698,28 @@ mod tests {
         let cell = target_cell(&app, menu);
         click(&mut app, cell);
         assert_eq!(app.screen, Screen::Menu);
+    }
+
+    /// Short terminal: the menu scrolls so the selected row stays visible
+    /// and clickable (the old List widget did this; a Paragraph doesn't).
+    #[test]
+    fn menu_scrolls_to_selection_on_short_terminal() {
+        let mut app = App::new(None, ThemePalette::default(), DefaultMode::Time(15));
+        app.menu_move_row(false); // wraps to "quit", the last row
+        let quit = app.menu_index;
+        let mut terminal = Terminal::new(ratatui::backend::TestBackend::new(80, 18)).unwrap();
+        terminal.draw(|f| ui::render(f, &app)).unwrap();
+        let rows: Vec<String> = terminal
+            .backend()
+            .buffer()
+            .content()
+            .chunks(80)
+            .map(|row| row.iter().map(|cell| cell.symbol()).collect())
+            .collect();
+        // Selected last row is on screen, directly under "stats" (no gap).
+        let quit_row = rows.iter().position(|r| r.contains("➤  quit")).unwrap();
+        assert!(rows[quit_row - 1].contains("    stats"));
+        target_cell(&app, ClickAction::Menu(quit)); // panics if not clickable
     }
 
     #[test]

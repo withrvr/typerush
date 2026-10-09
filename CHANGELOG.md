@@ -53,8 +53,9 @@ keyboard alternates** for accessibility.
   (`Enter start`, `s stats`, `esc finish`, `? help`, …) to do what its key
   does, scroll the wheel to move through the menu, and click anywhere to close
   the help overlay or an error message. Every mouse action maps to an existing
-  key (WCAG 2.1.1), and clicks fire on release so sliding off a target cancels
-  them (WCAG 2.5.2).
+  key (WCAG 2.1.1). A click only fires when the button is pressed and released
+  on the same target, so sliding off — or dragging onto another option —
+  cancels it (WCAG 2.5.2).
 - **Alternate keys.** `F1` opens help (next to `?`), `F5` restarts while
   typing (next to `Ctrl+R`), `Space` starts the selected menu mode (next to
   `Enter`), and `s` opens stats from the menu (next to `Tab`).
@@ -72,6 +73,10 @@ keyboard alternates** for accessibility.
   (5 rows instead of 7) and the footer takes one row, so the recent-sessions
   table still shows 5 sessions in a 24-row terminal. The mode column is wide
   enough for `code-javascript`.
+- **Short terminals.** The menu scrolls to keep the selected option visible
+  (and clickable), and the help overlay's close hint sits in its bottom border
+  so it shows even when the box is cut short. Error messages get a box tall
+  enough for the whole message.
 - **Footers.** The typing footer now reads `esc finish` (Esc ends the session
   and shows results; it never went straight to the menu) and drops `? help`,
   since `?` is typed as a character there. The help overlay is sized to its
@@ -94,8 +99,10 @@ keyboard alternates** for accessibility.
   longer swap positions and flicker between renders.
 - **Crash-safe stats writes.** `stats.json` is now written atomically (temp
   file flushed to disk, then renamed over the old one), so a crash or power
-  loss mid-save can't leave a half-written or empty file. Works on Linux,
-  macOS, and Windows.
+  loss mid-save can't leave a half-written or empty file. A symlinked
+  `stats.json` (e.g. into a dotfiles folder) stays a symlink, its permissions
+  are kept, and two TypeRush windows saving at once never share a temp file.
+  Works on Linux, macOS, and Windows.
 - **A corrupt `stats.json` is no longer silently wiped.** If the file can't be
   parsed when a session is saved, it is copied to a timestamped
   `stats.json.corrupt-YYYYMMDD-HHMMSS.mmm` before a fresh history is started,

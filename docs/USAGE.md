@@ -62,8 +62,9 @@ versa where it makes sense:
 - **Scroll wheel** on the menu moves between categories.
 - **Click anywhere** to close the help overlay or an error message.
 
-Clicks act when the button is *released* over the target: press on the wrong
-option, slide off, and nothing happens (WCAG 2.5.2).
+A click acts when the button is pressed *and* released on the same target:
+press on the wrong option, slide off (or onto another option), and nothing
+happens (WCAG 2.5.2).
 
 Because TypeRush captures the mouse, selecting text in the terminal usually
 needs `Shift` held while dragging.

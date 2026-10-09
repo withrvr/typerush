@@ -10,7 +10,7 @@ use ratatui::{
 use crossterm::event::KeyCode;
 
 use super::{key, render_footer};
-use crate::app::{menu_row, App, ClickAction};
+use crate::app::{menu_row, App, ClickAction, MenuAction};
 
 /// Render the menu screen. `app.menu_index` highlights the active option.
 pub fn render(f: &mut Frame, app: &App) {
@@ -80,16 +80,25 @@ pub fn render(f: &mut Frame, app: &App) {
         inner.width.saturating_sub(2),
         inner.height.saturating_sub(2),
     );
-    let mut targets = app.click_targets.borrow_mut();
     let mut lines = Vec::new();
+    // Clickable options as (line, x offset, width, menu index); turned into
+    // screen rects once the scroll offset is known.
+    let mut chips: Vec<(usize, u16, u16, usize)> = Vec::new();
+    let mut selected_line = 0;
+    let mut previous_row: Option<std::ops::Range<usize>> = None;
     let mut start = 0;
     while start < app.menu.len() {
         let row = menu_row(&app.menu, start);
         let is_selected_row = row == selected_row;
         let group = app.menu[start].group;
-        // Breathing room between categories; quote/zen and stats/quit pair up.
-        if start > 0 && !matches!(group, "zen" | "quit") {
-            lines.push(Line::raw(""));
+        // Breathing room between groups. Consecutive single-option rows of the
+        // same kind (quote/zen start a game, stats/quit don't) stay together.
+        if let Some(previous) = &previous_row {
+            let starts_game = |index: usize| app.menu[index].action == MenuAction::Start;
+            let same_kind = starts_game(previous.start) == starts_game(start);
+            if !(previous.len() == 1 && row.len() == 1 && same_kind) {
+                lines.push(Line::raw(""));
+            }
         }
 
         let marker = Span::styled(
@@ -116,8 +125,10 @@ pub fn render(f: &mut Frame, app: &App) {
         } else {
             marker
         }];
-        // Inside the border: one column of border + the text so far.
-        let line_y = inner.y + 1 + lines.len() as u16;
+        let line = lines.len();
+        if is_selected_row {
+            selected_line = line;
+        }
         let mut chip = |spans: &mut Vec<Span<'static>>, index: usize, text: &str| {
             let style = if index == app.menu_index {
                 selected_style
@@ -126,11 +137,8 @@ pub fn render(f: &mut Frame, app: &App) {
             };
             // Pad to 4 so the time and words options line up in columns.
             let span = Span::styled(format!(" {:<4} ", text), style);
-            let x = inner.x + 1 + spans.iter().map(Span::width).sum::<usize>() as u16;
-            let area = Rect::new(x, line_y, span.width() as u16, 1).intersection(menu_area);
-            if !area.is_empty() {
-                targets.push((area, ClickAction::Menu(index)));
-            }
+            let x = spans.iter().map(Span::width).sum::<usize>() as u16;
+            chips.push((line, x, span.width() as u16, index));
             spans.push(span);
         };
         if row.len() == 1 {
@@ -144,9 +152,27 @@ pub fn render(f: &mut Frame, app: &App) {
         }
         lines.push(Line::from(spans));
         start = row.end;
+        previous_row = Some(row);
     }
 
-    let menu = Paragraph::new(lines).block(
+    // Short terminal: scroll so the selected row (and its heading, just above
+    // it) stays visible, like the old List widget did.
+    let visible = menu_area.height as usize;
+    let scroll = (selected_line + 1).saturating_sub(visible);
+    let mut targets = app.click_targets.borrow_mut();
+    for (line, x, width, index) in chips {
+        if line < scroll || line - scroll >= visible {
+            continue;
+        }
+        let y = menu_area.y + (line - scroll) as u16;
+        let area = Rect::new(menu_area.x + x, y, width, 1).intersection(menu_area);
+        if !area.is_empty() {
+            targets.push((area, ClickAction::Menu(index)));
+        }
+    }
+    drop(targets);
+
+    let menu = Paragraph::new(lines).scroll((scroll as u16, 0)).block(
         Block::default()
             .borders(Borders::ALL)
             .border_style(Style::default().fg(theme.neutral))
@@ -158,7 +184,6 @@ pub fn render(f: &mut Frame, app: &App) {
             )),
     );
     f.render_widget(menu, inner);
-    drop(targets);
 
     render_footer(
         f,

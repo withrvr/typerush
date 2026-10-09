@@ -21,7 +21,7 @@ use crossterm::event::{KeyCode, KeyModifiers};
 use ratatui::layout::Rect;
 
 use crate::config::load::{CodeLangKind, DefaultMode};
-use crate::storage::{SessionRecord, StatsSummary};
+use crate::storage::{ResultsComparison, SessionRecord, StatsSummary};
 use crate::theme::ThemePalette;
 
 /// One of the high-level screens the user can be looking at. The current
@@ -123,7 +123,7 @@ pub struct MenuItem {
 }
 
 /// What pressing Enter on a menu item should do.
-#[derive(Clone, Copy)]
+#[derive(Clone, Copy, PartialEq, Eq)]
 pub enum MenuAction {
     /// Start the game in `MenuItem::mode`.
     Start,
@@ -284,6 +284,9 @@ pub struct App {
     /// Summary figures for the Stats screen, computed from `stats_cache`
     /// each time that screen is entered. `None` until the first Stats visit.
     pub stats_summary: Option<StatsSummary>,
+    /// What the Results screen compares against, computed when that screen
+    /// is entered (after the session is saved).
+    pub results_comparison: Option<ResultsComparison>,
     /// Whether the session currently shown on the Results screen was actually
     /// written to stats.json. False for Zen, sub-1-second, and zero-keystroke
     /// sessions (and on disk failure) — the Results screen uses this to know
@@ -295,6 +298,9 @@ pub struct App {
     /// every frame (hence the `RefCell`: rendering only gets `&App`) and
     /// read by the mouse handler in `main.rs`.
     pub click_targets: RefCell<Vec<(Rect, ClickAction)>>,
+    /// Target under the pointer when the left button went down; a release
+    /// only acts if it lands on this same target.
+    pub pressed_target: Option<ClickAction>,
 }
 
 impl App {
@@ -333,8 +339,10 @@ impl App {
             key_misses: HashMap::new(),
             stats_cache: None,
             stats_summary: None,
+            results_comparison: None,
             session_just_saved: false,
             click_targets: RefCell::new(Vec::new()),
+            pressed_target: None,
         }
     }
 

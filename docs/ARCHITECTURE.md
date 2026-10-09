@@ -84,8 +84,9 @@ back to main loop ──► next frame is drawn from the new state
 Mouse events take a short detour into the same path. While drawing, the UI
 registers clickable regions in `App::click_targets` (menu options and footer
 hints, rebuilt every frame). `main.rs::handle_mouse` looks up the region
-under the pointer and turns a left-button *release* into the equivalent
-`ClickAction`: a footer hint calls `handle_key` with its key, a menu option
+under the pointer. A left-button press remembers that target
+(`App::pressed_target`); the release fires its `ClickAction` only if it lands
+on the same target: a footer hint calls `handle_key` with its key, a menu option
 selects that option and presses Enter. Nothing is reachable by mouse that
 isn't reachable by keyboard.
 

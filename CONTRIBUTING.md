@@ -104,7 +104,8 @@ cargo build --release && ./target/release/typerush
 ### Input & accessibility
 - Every action must be reachable from the keyboard. Anything clickable maps to
   an existing key (`ClickAction` in `app.rs`), never to mouse-only behaviour.
-- Mouse actions fire on button release, so sliding off a target cancels them.
+- Mouse actions fire on button release over the target the press started on,
+  so sliding off a target cancels them.
 - Don't add a key hint that can't work on that screen (e.g. `?` while typing —
   it's a character there).
 

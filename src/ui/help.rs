@@ -10,8 +10,10 @@ use ratatui::{
 
 use crate::{app::App, theme::ThemePalette};
 
-/// Render the keybindings overlay. Sized to its content (clamped to the
-/// terminal) so it fits a standard 80×24 window without clipping.
+/// Render the keybindings overlay. Sized to its content (20 rows, so it fits
+/// an 80×24 window whole). On a smaller terminal the box shrinks and the
+/// bottom of the list is cut, but the close hint lives in the bottom border
+/// and is always visible.
 pub fn render(f: &mut Frame, app: &App) {
     let theme = &app.theme;
     let heading = |text| {
@@ -43,8 +45,6 @@ pub fn render(f: &mut Frame, app: &App) {
         dim("  Zen sessions are not saved"),
         dim("  Stats   ~/.typerush/stats.json"),
         dim("  Config  ~/.typerush/config.toml"),
-        Line::raw(""),
-        dim("  Esc / ? / F1 / click to close"),
     ];
 
     const WIDTH: u16 = 50;
@@ -70,7 +70,11 @@ pub fn render(f: &mut Frame, app: &App) {
             Block::default()
                 .borders(Borders::ALL)
                 .border_style(Style::default().fg(theme.accent))
-                .title(" help "),
+                .title(" help ")
+                .title_bottom(Span::styled(
+                    " Esc / ? / F1 / click to close ",
+                    Style::default().fg(theme.pending),
+                )),
         );
     f.render_widget(p, area);
 }
@@ -86,9 +90,15 @@ fn centered(r: Rect, width: u16, height: u16) -> Rect {
     area
 }
 
-/// Render the transient error modal. Dismissed by any keypress from the main loop.
+/// Render the transient error modal. Dismissed by any keypress or click from
+/// the main loop. Tall enough for the wrapped message plus the hint line.
 pub fn render_error(f: &mut Frame, theme: &ThemePalette, message: &str) {
-    let area = centered_rect(50, 20, f.area());
+    const WIDTH: u16 = 60;
+    let text_width = WIDTH.min(f.area().width).saturating_sub(4).max(1) as usize;
+    // Rough wrapped-line count; slightly over is fine, the box just has a gap.
+    let message_lines = (message.chars().count() + 2).div_ceil(text_width);
+    let height = message_lines as u16 + 4; // + blank + hint + borders
+    let area = centered(f.area(), WIDTH, height);
     f.render_widget(Clear, area);
     let p = Paragraph::new(format!("  {}\n\n  press any key or click", message))
         .wrap(Wrap { trim: false })
@@ -99,19 +109,4 @@ pub fn render_error(f: &mut Frame, theme: &ThemePalette, message: &str) {
                 .title(" error "),
         );
     f.render_widget(p, area);
-}
-
-fn centered_rect(percent_x: u16, percent_y: u16, r: Rect) -> Rect {
-    let popup_layout = Layout::vertical([
-        Constraint::Percentage((100 - percent_y) / 2),
-        Constraint::Percentage(percent_y),
-        Constraint::Percentage((100 - percent_y) / 2),
-    ])
-    .split(r);
-    Layout::horizontal([
-        Constraint::Percentage((100 - percent_x) / 2),
-        Constraint::Percentage(percent_x),
-        Constraint::Percentage((100 - percent_x) / 2),
-    ])
-    .split(popup_layout[1])[1]
 }

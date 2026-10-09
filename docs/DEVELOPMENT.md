@@ -133,6 +133,9 @@ is press, `m` is release — TypeRush acts on release):
 tmux send-keys -t tr -l $'\e[<0;46;9M'; tmux send-keys -t tr -l $'\e[<0;46;9m'
 ```
 
+Send `Escape` in its own `send-keys` call (with a short sleep after it):
+tmux merges `Escape Down` into an Alt+Down sequence, so the arrow is lost.
+
 Sessions shorter than 1 s aren't saved, so pause (`sleep 1.1`) mid-typing when
 you need a saved session. Check `/tmp/tr-e2e/.typerush/stats.json` afterwards.
 
