@@ -13,6 +13,27 @@ _No unreleased changes yet._
 
 ---
 
+## [0.2.1] — pure character checking
+
+### Changed
+- **Pure character checking.** Typing is now one stream of characters, and
+  the space between words is a character like any other. Each key is
+  compared with the character under the cursor — match is correct, anything
+  else is wrong — and the cursor moves on one slot either way. A space typed
+  mid-word is a wrong character and no longer jumps to the next word. The run
+  ends when the last character is typed; no trailing space is needed.
+  Backspace walks back over spaces one character at a time.
+- The `extra` color slot is now unused (typing can no longer run past the end
+  of a word). It is still accepted in config files so existing configs load.
+
+### Fixed
+- **Wrong key on a space no longer piles up letters** ([#8]). Typing a letter
+  where a space belongs used to append surplus characters to the word and
+  leave the cursor stuck until space was pressed. It now counts as a wrong
+  character: the space is shown red and underlined and the cursor moves on.
+
+---
+
 ## [0.2.0] — customization
 
 ### Added
@@ -110,6 +131,8 @@ _No unreleased changes yet._
   dedicated docs.
 - Demo GIF uses absolute GitHub raw URL for correct display on crates.io.
 
-[Unreleased]: https://github.com/withrvr/typerush/compare/v0.2.0...HEAD
+[Unreleased]: https://github.com/withrvr/typerush/compare/v0.2.1...HEAD
+[0.2.1]: https://github.com/withrvr/typerush/compare/v0.2.0...v0.2.1
 [0.2.0]: https://github.com/withrvr/typerush/compare/v0.1.1...v0.2.0
 [0.1.1]: https://github.com/withrvr/typerush/releases/tag/v0.1.1
+[#8]: https://github.com/withrvr/typerush/issues/8
