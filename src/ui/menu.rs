@@ -216,36 +216,52 @@ pub fn render(f: &mut Frame, app: &App) {
 const MAX_CHIP_WIDTH: usize = 24;
 
 /// Option text as drawn: `label`, shortened to `MAX_CHIP_WIDTH` cells.
+///
+/// Control characters (a Linux file name may contain ESC) are shown as `?`
+/// so a file name can never send escape sequences to the terminal. Cuts fall
+/// on grapheme boundaries, so an accent never loses its letter — macOS often
+/// stores names decomposed, as `e` + U+0301.
 fn chip_text(label: &str) -> std::borrow::Cow<'_, str> {
-    use unicode_width::{UnicodeWidthChar, UnicodeWidthStr};
-    if label.width() <= MAX_CHIP_WIDTH {
-        return label.into();
+    use std::borrow::Cow;
+    use unicode_segmentation::UnicodeSegmentation;
+    use unicode_width::UnicodeWidthStr;
+
+    let clean: Cow<str> = if label.contains(char::is_control) {
+        Cow::Owned(
+            label
+                .chars()
+                .map(|c| if c.is_control() { '?' } else { c })
+                .collect(),
+        )
+    } else {
+        Cow::Borrowed(label)
+    };
+    if clean.width() <= MAX_CHIP_WIDTH {
+        return clean;
     }
-    let cell = |c: &char| c.width().unwrap_or(0);
+    let text: &str = &clean;
     // One cell for the ellipsis; the rest split between start and end.
     let head_budget = (MAX_CHIP_WIDTH - 1) / 2;
-    let mut head = String::new();
-    let mut used = 0;
-    for c in label.chars() {
-        if used + cell(&c) > head_budget {
+    let (mut head_end, mut head_width) = (0, 0);
+    for (index, grapheme) in text.grapheme_indices(true) {
+        let width = grapheme.width();
+        if head_width + width > head_budget {
             break;
         }
-        used += cell(&c);
-        head.push(c);
+        head_width += width;
+        head_end = index + grapheme.len();
     }
-    let tail_budget = MAX_CHIP_WIDTH - 1 - used;
-    let mut tail: Vec<char> = Vec::new();
-    let mut tail_used = 0;
-    for c in label.chars().rev() {
-        if tail_used + cell(&c) > tail_budget {
+    let tail_budget = MAX_CHIP_WIDTH - 1 - head_width;
+    let (mut tail_start, mut tail_width) = (text.len(), 0);
+    for (index, grapheme) in text.grapheme_indices(true).rev() {
+        let width = grapheme.width();
+        if tail_width + width > tail_budget || index < head_end {
             break;
         }
-        tail_used += cell(&c);
-        tail.push(c);
+        tail_width += width;
+        tail_start = index;
     }
-    head.push('…');
-    head.extend(tail.into_iter().rev());
-    head.into()
+    Cow::Owned(format!("{}…{}", &text[..head_end], &text[tail_start..]))
 }
 
 fn centered_rect(percent_x: u16, percent_y: u16, r: Rect) -> Rect {
@@ -288,6 +304,27 @@ mod tests {
             chip_text("quarterly-report-final-draft-q1"),
             chip_text("quarterly-report-final-draft-q2")
         );
+    }
+
+    /// A decomposed accent (`e` + U+0301) is never split from its letter.
+    #[test]
+    fn cuts_fall_on_grapheme_boundaries() {
+        let label = "e\u{301}".repeat(30); // 30 cells of "é", decomposed
+        let text = chip_text(&label);
+        assert!(text.width() <= MAX_CHIP_WIDTH);
+        let (head, tail) = text.split_once('…').unwrap();
+        for part in [head, tail] {
+            assert!(!part.starts_with('\u{301}'), "orphaned accent in {part:?}");
+            assert_eq!(part.matches('e').count(), part.matches('\u{301}').count());
+        }
+    }
+
+    /// Control characters are never passed through to the terminal.
+    #[test]
+    fn control_characters_are_replaced() {
+        assert_eq!(chip_text("evil\u{1b}[2Jname"), "evil?[2Jname");
+        let long = format!("{}\u{7}{}", "a".repeat(20), "b".repeat(20));
+        assert!(!chip_text(&long).contains(char::is_control));
     }
 
     /// Wide characters count two cells each: 20 CJK characters are 40 cells,

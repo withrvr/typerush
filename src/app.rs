@@ -260,44 +260,79 @@ pub fn build_menu(snippets: &[Snippet], last_custom_file: Option<&Path>) -> Vec<
         start("symbols", "50", Mode::Symbols(50)),
     ];
 
-    let custom_start = menu.len();
-    if let Some(last) = last_custom_file {
-        // Compare canonical forms too, so `./notes.txt` or a symlink still
-        // matches its snippet. Paths that can't be canonicalized (missing)
-        // only match when literally equal.
-        let last_canonical = std::fs::canonicalize(last).ok();
-        let is_snippet = snippets.iter().any(|s| {
-            s.path == last || (last_canonical.is_some() && s.canonical_path == last_canonical)
-        });
-        if !is_snippet {
-            let name = last.file_name().map_or_else(
-                || last.display().to_string(),
-                |n| n.to_string_lossy().into_owned(),
-            );
-            menu.push(custom(name, Some(last.to_path_buf())));
-        }
+    let (snippet_labels, last_label) = custom_labels(snippets, last_custom_file);
+    if let (Some(last), Some(label)) = (last_custom_file, last_label) {
+        menu.push(custom(label, Some(last.to_path_buf())));
     }
-    for snippet in snippets {
-        menu.push(custom(snippet.name.clone(), Some(snippet.path.clone())));
+    for (snippet, label) in snippets.iter().zip(snippet_labels) {
+        menu.push(custom(label, Some(snippet.path.clone())));
     }
-    if menu.len() == custom_start {
+    if menu.last().is_some_and(|item| item.group != "custom") {
         menu.push(custom("custom".to_string(), None));
-    }
-    // Every custom option must be tell-apart-able: the remembered file can
-    // share a name with a snippet, and snippet names can clash in ways the
-    // file-name fallback doesn't cover. Number any repeats: "notes (2)".
-    let mut seen: HashMap<String, usize> = HashMap::new();
-    for item in &mut menu[custom_start..] {
-        let count = seen.entry(item.label.clone()).or_insert(0);
-        *count += 1;
-        if *count > 1 {
-            item.label = format!("{} ({})", item.label, count);
-        }
     }
 
     menu.push(other("stats", MenuAction::ShowStats));
     menu.push(other("quit", MenuAction::Quit));
     menu
+}
+
+/// Labels for the custom row: one per snippet, plus one for the remembered
+/// file unless it is one of the snippets (`None` then). All labels differ, so
+/// every option can be told apart.
+///
+/// Snippets are labelled from the snippet set alone — their name, or their
+/// full file name when two share a name (`notes.txt` / `notes.TXT`) — so a
+/// snippet's label never changes because a different file is remembered.
+/// The remembered file is labelled with its file name. Anything still
+/// repeated gets the first free " (2)", " (3)", … suffix.
+fn custom_labels(snippets: &[Snippet], last: Option<&Path>) -> (Vec<String>, Option<String>) {
+    use std::collections::HashSet;
+    let file_name = |path: &Path| {
+        path.file_name().map_or_else(
+            || path.display().to_string(),
+            |name| name.to_string_lossy().into_owned(),
+        )
+    };
+    let mut used: HashSet<String> = HashSet::new();
+    let mut claim = |base: String| {
+        let mut label = base.clone();
+        let mut n = 2;
+        while used.contains(&label) {
+            label = format!("{base} ({n})");
+            n += 1;
+        }
+        used.insert(label.clone());
+        label
+    };
+
+    let mut name_count: HashMap<&str, usize> = HashMap::new();
+    for snippet in snippets {
+        *name_count.entry(snippet.name.as_str()).or_insert(0) += 1;
+    }
+    let snippet_labels = snippets
+        .iter()
+        .map(|snippet| {
+            claim(if name_count[snippet.name.as_str()] > 1 {
+                file_name(&snippet.path)
+            } else {
+                snippet.name.clone()
+            })
+        })
+        .collect();
+
+    let last_label = last
+        .filter(|last| {
+            // Compare canonical forms too, so `./notes.txt` or a symlink
+            // still matches its snippet. Paths that can't be canonicalized
+            // (missing) only match when literally equal.
+            let canonical = std::fs::canonicalize(last).ok();
+            !snippets
+                .iter()
+                .any(|s| s.path == *last || (canonical.is_some() && s.canonical_path == canonical))
+        })
+        .map(|last| claim(file_name(last)));
+
+    (snippet_labels, last_label)
 }
 
 /// `path` made absolute against the current directory, so a remembered file
@@ -1394,21 +1429,53 @@ mod tests {
         );
     }
 
-    /// No two custom options ever share a label — not the remembered file
-    /// and a snippet, nor snippets whose fallback names collide.
+    /// No two custom options ever share a label, even when file managers'
+    /// copy names ("notes (2)") collide with the numbering.
     #[test]
     fn custom_option_labels_are_unique() {
         let snippets = [
-            snippet("notes.txt", "/s/notes.txt"),
-            snippet("notes.TXT", "/s/notes.TXT"),
+            snippet("notes", "/s/notes.txt"),
+            snippet("notes (2)", "/s/notes (2).txt"),
+            snippet("notes", "/s/notes.TXT"),
             snippet("notes.txt", "/s/notes.txt.txt"),
         ];
         let menu = build_menu(&snippets, Some(Path::new("/home/me/notes.txt")));
         let labels: Vec<&str> = custom_options(&menu).iter().map(|(l, _)| *l).collect();
         assert_eq!(
             labels,
-            ["notes.txt", "notes.txt (2)", "notes.TXT", "notes.txt (3)"]
+            [
+                "notes.txt (3)", // the remembered file, numbered last
+                "notes.txt",
+                "notes (2)",
+                "notes.TXT",
+                "notes.txt (2)",
+            ]
         );
+        let unique: std::collections::HashSet<_> = labels.iter().collect();
+        assert_eq!(unique.len(), labels.len());
+    }
+
+    /// Which file is remembered never changes a snippet's label.
+    #[test]
+    fn snippet_labels_do_not_depend_on_the_remembered_file() {
+        let snippets = [
+            snippet("notes", "/s/notes.txt"),
+            snippet("todo", "/s/todo.txt"),
+        ];
+        let labels = |last: Option<&str>| -> Vec<String> {
+            build_menu(&snippets, last.map(Path::new))
+                .into_iter()
+                .filter(|m| {
+                    m.custom_path
+                        .as_deref()
+                        .is_some_and(|p| p.starts_with("/s"))
+                })
+                .map(|m| m.label)
+                .collect()
+        };
+        assert_eq!(labels(None), ["notes", "todo"]);
+        assert_eq!(labels(Some("/home/me/notes")), ["notes", "todo"]);
+        assert_eq!(labels(Some("/home/me/todo")), ["notes", "todo"]);
     }
 
     /// A single snippet named `custom.txt` still gets the `custom` heading

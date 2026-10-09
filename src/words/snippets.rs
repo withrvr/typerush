@@ -14,8 +14,8 @@ use crate::storage;
 /// One discovered user snippet.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Snippet {
-    /// Menu label: the file name without `.txt`, or the full file name when
-    /// two snippets would otherwise share a label.
+    /// The file name without `.txt`. The menu label starts from this (see
+    /// `app::build_menu`, which keeps every label distinct).
     pub name: String,
     /// Path to the `.txt` file.
     pub path: PathBuf,
@@ -76,24 +76,6 @@ pub fn discover_in(dir: &Path) -> Vec<Snippet> {
             .then_with(|| a.path.cmp(&b.path))
     });
 
-    // `notes.txt` and `notes.TXT` can both exist on a case-sensitive
-    // filesystem: label those with their full file names so the two options
-    // can be told apart. Sorted, so equal names are neighbours.
-    let clashes: Vec<bool> = (0..found.len())
-        .map(|i| {
-            (i > 0 && found[i - 1].name == found[i].name)
-                || found
-                    .get(i + 1)
-                    .is_some_and(|next| next.name == found[i].name)
-        })
-        .collect();
-    for (snippet, clash) in found.iter_mut().zip(clashes) {
-        if clash {
-            if let Some(file_name) = snippet.path.file_name() {
-                snippet.name = file_name.to_string_lossy().into_owned();
-            }
-        }
-    }
     found
 }
 
@@ -163,19 +145,18 @@ mod tests {
     }
 
     /// Two files that differ only in the case of `.txt` can coexist on a
-    /// case-sensitive filesystem (Linux); their labels must differ.
+    /// case-sensitive filesystem (Linux): both are found, in a stable order.
+    /// (The menu gives them distinct labels.)
     #[cfg(target_os = "linux")]
     #[test]
-    fn same_name_different_extension_case_gets_full_names() {
+    fn same_name_different_extension_case_both_found() {
         let dir = tempfile::tempdir().unwrap();
         fs::write(dir.path().join("notes.txt"), "a").unwrap();
         fs::write(dir.path().join("notes.TXT"), "b").unwrap();
-        fs::write(dir.path().join("other.txt"), "c").unwrap();
-        let names: Vec<String> = discover_in(dir.path())
-            .into_iter()
-            .map(|s| s.name)
-            .collect();
-        assert_eq!(names, ["notes.TXT", "notes.txt", "other"]);
+        let found = discover_in(dir.path());
+        let files: Vec<_> = found.iter().map(|s| s.path.file_name().unwrap()).collect();
+        assert_eq!(files, ["notes.TXT", "notes.txt"]);
+        assert!(found.iter().all(|s| s.name == "notes"));
     }
 
     #[test]

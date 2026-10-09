@@ -154,9 +154,21 @@ fn print_snippets_and_exit() -> ! {
         );
     }
     for snippet in snippets {
-        println!("{}\t{}", snippet.name, snippet.path.display());
+        println!(
+            "{}\t{}",
+            printable(&snippet.name),
+            printable(&snippet.path.display().to_string())
+        );
     }
     std::process::exit(0);
+}
+
+/// `text` with control characters shown as `?`: a file name (Linux allows
+/// ESC in one) must never send escape sequences to the user's terminal.
+fn printable(text: &str) -> String {
+    text.chars()
+        .map(|c| if c.is_control() { '?' } else { c })
+        .collect()
 }
 
 /// Type alias to keep function signatures readable.
@@ -861,6 +873,12 @@ mod tests {
         }
         let err = code_lang_from_cli("cobol").unwrap_err().to_string();
         assert!(err.contains("cobol"), "{err}");
+    }
+
+    #[test]
+    fn printable_replaces_control_characters() {
+        assert_eq!(printable("a\u{1b}[31mb\tc"), "a?[31mb?c");
+        assert_eq!(printable("plain name"), "plain name");
     }
 
     /// Index of the menu option with this group and label.
