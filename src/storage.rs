@@ -53,9 +53,14 @@ pub struct SessionRecord {
 }
 
 /// Directory we write to: `$HOME/.typerush`. Falls back to the current
-/// directory if `$HOME` can't be resolved.
+/// directory if no home directory can be found. An empty or relative
+/// `$HOME` (some cron and sandbox setups) counts as none — with it, a
+/// relative path would silently change meaning with every working directory.
+/// (The old `dirs` crate also looked up the passwd entry when `$HOME` was
+/// empty; for an interactive terminal app that case isn't worth a crate.)
 pub fn data_dir() -> PathBuf {
-    dirs::home_dir()
+    std::env::home_dir()
+        .filter(|home| home.is_absolute())
         .unwrap_or_else(|| PathBuf::from("."))
         .join(".typerush")
 }
@@ -148,18 +153,23 @@ pub fn load_sessions_from_path(path: &Path) -> Result<Vec<SessionRecord>> {
     Ok(serde_json::from_str(&raw).unwrap_or_default())
 }
 
-/// All-time best WPM across every saved session.
-pub fn personal_best(sessions: &[SessionRecord]) -> Option<f64> {
-    sessions.iter().map(|s| s.wpm).reduce(f64::max)
+/// The summary helpers below take any collection of sessions — the whole
+/// history (`&Vec`, a slice) or one category's sessions (an iterator of
+/// references) — so a category never has to be copied out of the history.
+///
+/// Best WPM across `sessions`.
+pub fn personal_best<'a>(sessions: impl IntoIterator<Item = &'a SessionRecord>) -> Option<f64> {
+    sessions.into_iter().map(|s| s.wpm).reduce(f64::max)
 }
 
-/// Mean accuracy across every saved session, 0–100. `None` if no sessions.
-pub fn average_accuracy(sessions: &[SessionRecord]) -> Option<f64> {
-    if sessions.is_empty() {
-        return None;
-    }
-    let total: f64 = sessions.iter().map(|s| s.accuracy).sum();
-    Some(total / sessions.len() as f64)
+/// Mean accuracy across `sessions`, 0–100. `None` if there are none.
+pub fn average_accuracy<'a>(sessions: impl IntoIterator<Item = &'a SessionRecord>) -> Option<f64> {
+    let (count, total) = sessions
+        .into_iter()
+        .fold((0usize, 0.0), |(count, total), s| {
+            (count + 1, total + s.accuracy)
+        });
+    (count > 0).then(|| total / count as f64)
 }
 
 /// Best WPM ever achieved for the given mode label (e.g. `"time-30s"`).
@@ -180,16 +190,14 @@ pub fn personal_best_for_mode(sessions: &[SessionRecord], mode_label: &str) -> O
 /// - Sessions yesterday only → 1 (streak still active until tomorrow)
 /// - Sessions today + yesterday → 2
 /// - Last session 2 days ago → 0 (streak broken)
-pub fn streak(sessions: &[SessionRecord]) -> u32 {
+pub fn streak<'a>(sessions: impl IntoIterator<Item = &'a SessionRecord>) -> u32 {
     use chrono::Duration;
     use std::collections::BTreeSet;
 
-    if sessions.is_empty() {
-        return 0;
-    }
-
-    let days_with_sessions: BTreeSet<chrono::NaiveDate> =
-        sessions.iter().map(|s| s.timestamp.date_naive()).collect();
+    let days_with_sessions: BTreeSet<chrono::NaiveDate> = sessions
+        .into_iter()
+        .map(|s| s.timestamp.date_naive())
+        .collect();
 
     let today = Local::now().date_naive();
     let yesterday = today - Duration::days(1);
@@ -226,10 +234,13 @@ pub fn streak(sessions: &[SessionRecord]) -> u32 {
 /// Mean WPM across all sessions from the last `days` calendar days in local
 /// time, today included (so `7` = today and the 6 days before it) — the same
 /// day boundaries `streak` uses. Returns `None` when no sessions qualify.
-pub fn avg_wpm_last_n_days(sessions: &[SessionRecord], days: u32) -> Option<f64> {
+pub fn avg_wpm_last_n_days<'a>(
+    sessions: impl IntoIterator<Item = &'a SessionRecord>,
+    days: u32,
+) -> Option<f64> {
     let first_day = Local::now().date_naive() - chrono::Days::new(days.saturating_sub(1) as u64);
     let relevant: Vec<f64> = sessions
-        .iter()
+        .into_iter()
         .filter(|s| s.timestamp.date_naive() >= first_day)
         .map(|s| s.wpm)
         .collect();
@@ -243,7 +254,10 @@ pub fn avg_wpm_last_n_days(sessions: &[SessionRecord], days: u32) -> Option<f64>
 /// Aggregated per-key accuracy across all sessions, sorted by accuracy
 /// ascending (worst keys first). Only keys with at least `min_presses`
 /// total keystrokes (hits + misses) are included.
-pub fn key_accuracy(sessions: &[SessionRecord], min_presses: u64) -> Vec<KeyAccuracyStat> {
+pub fn key_accuracy<'a>(
+    sessions: impl IntoIterator<Item = &'a SessionRecord>,
+    min_presses: u64,
+) -> Vec<KeyAccuracyStat> {
     let mut hits: HashMap<char, u64> = HashMap::new();
     let mut misses: HashMap<char, u64> = HashMap::new();
 
@@ -340,9 +354,9 @@ impl ResultsComparison {
     }
 }
 
-/// Everything the Stats screen's summary card and key-accuracy panel show,
-/// computed in one pass over the history. Built once each time the Stats
-/// screen is opened instead of on every frame.
+/// Everything the Stats screen's summary card and key-accuracy panel show for
+/// one category (or the whole history). Built when the screen opens or the
+/// category changes, never per frame.
 #[derive(Debug, Clone, Default)]
 pub struct StatsSummary {
     pub personal_best: Option<f64>,
@@ -352,22 +366,181 @@ pub struct StatsSummary {
     pub streak: u32,
     pub avg_wpm_7_days: Option<f64>,
     pub avg_wpm_30_days: Option<f64>,
+    /// Total time spent typing, in seconds.
+    pub time_typed_secs: f64,
     /// Keys with at least 3 occurrences, worst first.
     pub worst_keys: Vec<KeyAccuracyStat>,
 }
 
 impl StatsSummary {
-    pub fn new(sessions: &[SessionRecord]) -> Self {
+    /// `sessions` is walked once per figure, so it must be cheap to clone
+    /// (a slice iterator, or a category's indices mapped into the history).
+    pub fn new<'a>(sessions: impl Iterator<Item = &'a SessionRecord> + Clone) -> Self {
+        let all = || sessions.clone();
         Self {
-            personal_best: personal_best(sessions),
-            average_accuracy: average_accuracy(sessions),
-            sessions: sessions.len(),
-            last_wpm: sessions.last().map(|s| s.wpm),
-            streak: streak(sessions),
-            avg_wpm_7_days: avg_wpm_last_n_days(sessions, 7),
-            avg_wpm_30_days: avg_wpm_last_n_days(sessions, 30),
-            worst_keys: key_accuracy(sessions, 3),
+            personal_best: personal_best(all()),
+            average_accuracy: average_accuracy(all()),
+            sessions: all().count(),
+            last_wpm: all().last().map(|s| s.wpm),
+            streak: streak(all()),
+            avg_wpm_7_days: avg_wpm_last_n_days(all(), 7),
+            avg_wpm_30_days: avg_wpm_last_n_days(all(), 30),
+            time_typed_secs: all().map(|s| s.duration_secs.max(0.0)).sum(),
+            worst_keys: key_accuracy(all(), 3),
         }
+    }
+}
+
+/// One mode's record: its best session, how often it was played, its
+/// average. Drives the Stats screen's bests table, its categories and its ★.
+#[derive(Debug, Clone, PartialEq)]
+pub struct ModeBest {
+    /// The mode label (`time-30s`, `words-50+p`, `custom-notes`, …).
+    pub mode: String,
+    /// History index of the session holding the best — the first to reach it.
+    pub best_index: usize,
+    pub sessions: usize,
+    pub avg_wpm: f64,
+}
+
+/// Every mode in `sessions` with its best, in menu order: time, words,
+/// code, quote, symbols, custom, then anything else; numbers in numeric
+/// order within a family (`time-15s` before `time-120s`).
+pub fn bests_by_mode(sessions: &[SessionRecord]) -> Vec<ModeBest> {
+    let mut by_mode: HashMap<&str, ModeBest> = HashMap::new();
+    for (index, session) in sessions.iter().enumerate() {
+        let best = by_mode.entry(&session.mode).or_insert_with(|| ModeBest {
+            mode: session.mode.clone(),
+            best_index: index,
+            sessions: 0,
+            avg_wpm: 0.0,
+        });
+        if session.wpm > sessions[best.best_index].wpm {
+            best.best_index = index;
+        }
+        best.sessions += 1;
+        best.avg_wpm += session.wpm; // a sum until divided below
+    }
+    let mut bests: Vec<ModeBest> = by_mode
+        .into_values()
+        .map(|mut best| {
+            best.avg_wpm /= best.sessions as f64;
+            best
+        })
+        .collect();
+    bests.sort_by_cached_key(|best| mode_sort_key(&best.mode));
+    bests
+}
+
+/// Sort key for a mode label: menu family first, then the label's first
+/// number as a number, then the text around it.
+fn mode_sort_key(mode: &str) -> (usize, String, u64, String) {
+    const FAMILIES: [&str; 6] = ["time-", "words-", "code-", "quote", "symbols-", "custom"];
+    let family = FAMILIES
+        .iter()
+        .position(|family| mode.starts_with(family))
+        .unwrap_or(FAMILIES.len());
+    let start = mode
+        .find(|c: char| c.is_ascii_digit())
+        .unwrap_or(mode.len());
+    let end = mode[start..]
+        .find(|c: char| !c.is_ascii_digit())
+        .map_or(mode.len(), |i| start + i);
+    (
+        family,
+        mode[..start].to_string(),
+        mode[start..end].parse().unwrap_or(0),
+        mode[end..].to_string(),
+    )
+}
+
+/// What the Stats screen is showing: a category, its sessions and summary,
+/// and every mode's best.
+#[derive(Debug, Default)]
+pub struct StatsView {
+    /// Every mode's best, in display order. Also the list of categories.
+    pub bests: Vec<ModeBest>,
+    /// 0 = every session, 1 = the bests table, `2 + i` = `bests[i].mode` only.
+    pub category: usize,
+    /// History indices of the category's sessions, oldest first.
+    pub indices: Vec<usize>,
+    /// Summary of the category's sessions.
+    pub summary: StatsSummary,
+    /// History indices of the sessions holding a mode's best (marked ★).
+    pub best_indices: std::collections::HashSet<usize>,
+    /// Sessions table: rows scrolled past, newest first. A `Cell` so drawing
+    /// can clamp it to the rows that fit.
+    pub scroll: std::cell::Cell<usize>,
+}
+
+impl StatsView {
+    /// The view of `history`, on the category named `category` if there
+    /// still is one (`"all"`, `"bests"` or a mode label), else on all.
+    pub fn new(history: &[SessionRecord], category: Option<&str>) -> Self {
+        let bests = bests_by_mode(history);
+        let best_indices = bests.iter().map(|best| best.best_index).collect();
+        let mut view = Self {
+            bests,
+            best_indices,
+            ..Self::default()
+        };
+        let index = (0..view.category_count())
+            .find(|&i| Some(view.category_name_at(i)) == category)
+            .unwrap_or(0);
+        view.select(history, index);
+        view
+    }
+
+    /// Number of categories: all, bests, then one per mode.
+    pub fn category_count(&self) -> usize {
+        2 + self.bests.len()
+    }
+
+    fn category_name_at(&self, index: usize) -> &str {
+        match index {
+            0 => "all",
+            1 => "bests",
+            i => &self.bests[i - 2].mode,
+        }
+    }
+
+    /// The current category's name: `all`, `bests` or a mode label.
+    pub fn category_name(&self) -> &str {
+        self.category_name_at(self.category)
+    }
+
+    /// Whether the bests table is showing instead of a sessions list.
+    pub fn showing_bests(&self) -> bool {
+        self.category == 1
+    }
+
+    /// Switch to category `index` (wrapping), recomputing its summary.
+    pub fn select(&mut self, history: &[SessionRecord], index: usize) {
+        self.category = index % self.category_count();
+        let mode = (self.category >= 2).then(|| self.bests[self.category - 2].mode.as_str());
+        self.indices = (0..history.len())
+            .filter(|&i| mode.is_none_or(|mode| history[i].mode == mode))
+            .collect();
+        self.summary = StatsSummary::new(self.indices.iter().map(|&i| &history[i]));
+        self.scroll.set(0);
+    }
+
+    /// Next (or previous) category, wrapping around.
+    pub fn cycle(&mut self, history: &[SessionRecord], forward: bool) {
+        let count = self.category_count();
+        let index = if forward {
+            self.category + 1
+        } else {
+            self.category + count - 1
+        };
+        self.select(history, index);
+    }
+
+    /// Scroll the sessions table by `rows` (negative: towards the newest).
+    pub fn scroll_by(&self, rows: isize) {
+        let last = self.indices.len().saturating_sub(1);
+        self.scroll
+            .set(self.scroll.get().saturating_add_signed(rows).min(last));
     }
 }
 
@@ -1276,5 +1449,86 @@ mod tests {
         // And the target must be complete, valid JSON with all 5 records.
         let loaded = load_sessions_from_path(&path).unwrap();
         assert_eq!(loaded.len(), 5);
+    }
+
+    // ── categories and bests (v0.4.1) ───────────────────────────────────────
+
+    /// Modes come out in menu order with numbers in numeric order, each with
+    /// its run count, average and the first session to reach its best.
+    #[test]
+    fn bests_by_mode_orders_and_keeps_first_best() {
+        let sessions = vec![
+            make_record(50.0, "words-10", 3),
+            make_record(70.0, "time-120s", 3),
+            make_record(60.0, "time-15s", 2),
+            make_record(90.0, "custom-notes", 2),
+            make_record(60.0, "time-15s", 1), // ties the best: not the holder
+            make_record(40.0, "time-15s", 0),
+            make_record(30.0, "code-go", 0),
+        ];
+        let bests = bests_by_mode(&sessions);
+        let modes: Vec<&str> = bests.iter().map(|b| b.mode.as_str()).collect();
+        assert_eq!(
+            modes,
+            [
+                "time-15s",
+                "time-120s",
+                "words-10",
+                "code-go",
+                "custom-notes"
+            ]
+        );
+        let fifteen = &bests[0];
+        assert_eq!((fifteen.best_index, fifteen.sessions), (2, 3));
+        assert!((fifteen.avg_wpm - 160.0 / 3.0).abs() < 1e-9);
+    }
+
+    /// Categories are all, bests, then one per mode; a mode's category holds
+    /// only its sessions and summary, and the view stays on a category by
+    /// name when rebuilt (falling back to all when it is gone).
+    #[test]
+    fn stats_view_filters_by_category() {
+        let mut sessions = vec![
+            make_record(50.0, "time-30s", 1),
+            make_record(80.0, "words-25", 0),
+            make_record(60.0, "time-30s", 0),
+        ];
+        sessions[0].duration_secs = 30.0;
+        sessions[2].duration_secs = 30.5;
+        let mut view = StatsView::new(&sessions, None);
+        assert_eq!(view.category_count(), 4);
+        assert_eq!((view.category_name(), view.indices.len()), ("all", 3));
+        assert_eq!(view.summary.personal_best, Some(80.0));
+
+        view.cycle(&sessions, true);
+        assert!(view.showing_bests());
+        view.cycle(&sessions, true);
+        assert_eq!(view.category_name(), "time-30s");
+        assert_eq!(view.indices, [0, 2]);
+        assert_eq!(view.summary.personal_best, Some(60.0));
+        assert_eq!(view.summary.sessions, 2);
+        assert!((view.summary.time_typed_secs - 60.5).abs() < 1e-9);
+        assert_eq!(view.best_indices, [1, 2].into());
+
+        view.cycle(&sessions, false);
+        view.cycle(&sessions, false);
+        view.cycle(&sessions, false);
+        assert_eq!(view.category_name(), "words-25"); // wrapped
+
+        let again = StatsView::new(&sessions, Some("time-30s"));
+        assert_eq!(again.category_name(), "time-30s");
+        let gone = StatsView::new(&sessions, Some("zen"));
+        assert_eq!(gone.category_name(), "all");
+    }
+
+    /// An empty history still has the two fixed categories.
+    #[test]
+    fn stats_view_of_empty_history() {
+        let mut view = StatsView::new(&[], Some("bests"));
+        assert!(view.showing_bests());
+        view.cycle(&[], true);
+        assert_eq!(view.category_name(), "all");
+        view.scroll_by(5);
+        assert_eq!(view.scroll.get(), 0);
     }
 }

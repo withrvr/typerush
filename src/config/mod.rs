@@ -93,6 +93,7 @@ pub struct Colors {
     pub correct: Option<String>,
     pub incorrect: Option<String>,
     pub pending: Option<String>,
+    /// Accepted so older configs still load; not drawn anywhere.
     pub extra: Option<String>,
     pub mode_tag: Option<String>,
     pub error: Option<String>,

@@ -1,7 +1,8 @@
 [package]
 name = "typerush"
-version = "0.4.0"
+version = "0.4.1"
 edition = "2021"
+rust-version = "1.88"
 description = "In your terminal — a fast, cross-platform WPM typing trainer built with Rust"
 license = "MIT"
 repository = "https://github.com/withrvr/typerush"
@@ -12,6 +13,7 @@ readme = "README.md"
 exclude = [
     "assets/",
     "docs/",
+    ".claude/",
     ".github/",
     "*.mp4",
     "*.gif",
@@ -19,17 +21,15 @@ exclude = [
 ]
 
 [dependencies]
-ratatui = "0.29"
-crossterm = "0.28"
+ratatui = { version = "0.30", default-features = false, features = ["crossterm", "layout-cache", "underline-color"] }
 clap = { version = "4", features = ["derive"] }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
-rand = "0.8"
+rand = "0.10"
 chrono = { version = "0.4", features = ["serde"] }
 anyhow = "1"
-dirs = "5"
-toml = "0.8"
-unicode-segmentation = "1.10"
+toml = "1"
+unicode-segmentation = "1.13"
 unicode-width = "0.2"
 
 [dev-dependencies]

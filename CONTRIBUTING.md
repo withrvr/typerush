@@ -116,7 +116,7 @@ cargo build --release && ./target/release/typerush
 
 ### Error handling
 - Use `anyhow::Result` for fallible operations that bubble up to `main`.
-- For things that "should never fail" (e.g. dirs::home_dir), fall back to a
+- For things that "should never fail" (e.g. std::env::home_dir), fall back to a
   sensible default — never panic in user-facing code.
 - File I/O in the stats path is best-effort: losing a stat row is fine; never
   crash the typing app.
@@ -128,6 +128,13 @@ cargo build --release && ./target/release/typerush
   TOML, Rust, commit-message templates, formulas.
 - `README.md` is also shown on crates.io, which doesn't render mermaid — keep
   diagrams out of it (link to `docs/` instead).
+- Don't name other products or companies anywhere in the repo: describe a
+  feature in our own words.
+- After fixing a bug or shipping a feature, add an entry to
+  [`docs/LEARNINGS.md`](docs/LEARNINGS.md): symptom → cause → fix → the test
+  that guards it. Read it before you start — most bugs are a sibling of an
+  old one. AI assistants get the same workflow from
+  [`.claude/skills/typerush-dev/SKILL.md`](.claude/skills/typerush-dev/SKILL.md).
 
 ---
 

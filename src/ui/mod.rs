@@ -24,7 +24,7 @@ pub mod results;
 pub mod stats;
 pub mod typing;
 
-use crossterm::event::{KeyCode, KeyModifiers};
+use ratatui::crossterm::event::{KeyCode, KeyModifiers};
 use ratatui::{prelude::*, widgets::Paragraph, Frame};
 
 use crate::app::{App, ClickAction, Screen};
@@ -34,24 +34,45 @@ pub fn render(frame: &mut Frame, app: &App) {
     // 0. Click targets are rebuilt from scratch by whatever draws this frame.
     app.click_targets.borrow_mut().clear();
 
-    // 1. Paint every cell in the frame with the theme background.
+    // 1. Paint every cell in the frame with the theme background. Themes
+    //    that paint their own background also get their foreground, so any
+    //    text drawn without a color (a box title) is never the terminal's
+    //    own default — light-on-white on the light theme in a dark terminal.
     let area = frame.area();
-    frame
-        .buffer_mut()
-        .set_style(area, Style::default().bg(app.theme.background));
-
-    // 2. Render the active screen on top of the painted background.
-    match app.screen {
-        Screen::Menu => menu::render(frame, app),
-        Screen::Typing => typing::render(frame, app),
-        Screen::Results => results::render(frame, app),
-        Screen::Stats => stats::render(frame, app),
-        Screen::Help => help::render(frame, app),
+    let mut base = Style::default().bg(app.theme.background);
+    if app.theme.background != Color::Reset {
+        base = base.fg(app.theme.neutral);
     }
+    frame.buffer_mut().set_style(area, base);
+
+    // 2. Render the active screen above the footer row, then the footer:
+    //    every screen's key hints sit on the last row, in the same place.
+    let [body, footer] = Layout::vertical([Constraint::Min(0), Constraint::Length(1)]).areas(area);
+    let hints = match app.screen {
+        Screen::Menu => menu::render(frame, app, body),
+        Screen::Typing => typing::render(frame, app, body),
+        Screen::Results => results::render(frame, app, body),
+        Screen::Stats => stats::render(frame, app, body),
+        Screen::Help => help::render(frame, app, body),
+    };
+    render_footer(frame, app, footer, hints);
     // 3. Error overlay sits on top of everything else when present.
     if let Some(message) = &app.error_message {
         help::render_error(frame, &app.theme, message);
     }
+}
+
+/// Width of the label column inside boxes ("accuracy", "time typed", …).
+/// Labels are padded to it on every screen, so values line up in one column.
+pub const LABEL_WIDTH: usize = 12;
+
+/// A muted label padded to [`LABEL_WIDTH`], two cells in from the box border
+/// like all text inside a box: `"  accuracy    "`.
+pub fn label(app: &App, text: &str) -> Span<'static> {
+    Span::styled(
+        format!("  {text:<LABEL_WIDTH$}"),
+        Style::default().fg(app.theme.pending),
+    )
 }
 
 /// A footer hint: its text and, when clicking it should do something, the key
@@ -63,10 +84,11 @@ pub const fn key(code: KeyCode) -> Option<(KeyCode, KeyModifiers)> {
     Some((code, KeyModifiers::NONE))
 }
 
-/// Draw a one-line key-hint footer ("Enter start  ·  q quit") and register
-/// each actionable hint as a click target, so every footer action works with
-/// the keyboard *and* the mouse.
-pub fn render_footer(frame: &mut Frame, app: &App, area: Rect, hints: &[Hint]) {
+/// Draw the one-line key-hint footer ("Enter start  ·  q quit") on the last
+/// row and register each actionable hint as a click target, so every footer
+/// action works with the keyboard *and* the mouse. Each screen's `render`
+/// returns its hints; this is the only place they are drawn.
+fn render_footer(frame: &mut Frame, app: &App, area: Rect, hints: &[Hint]) {
     let style = Style::default().fg(app.theme.pending);
     let mut spans = vec![Span::raw("  ")];
     let mut x = area.x + 2;
@@ -93,7 +115,7 @@ pub fn render_footer(frame: &mut Frame, app: &App, area: Rect, hints: &[Hint]) {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::config::load::DefaultMode;
+    use crate::app::Mode;
     use crate::theme::builtin;
     use ratatui::backend::TestBackend;
     use ratatui::Terminal;
@@ -102,7 +124,7 @@ mod tests {
     /// `(x, y)`. Far-corner cells aren't touched by any widget on the menu
     /// screen, so they reflect the theme's background paint directly.
     fn render_and_sample(palette: crate::theme::ThemePalette, x: u16, y: u16) -> (Color, Color) {
-        let app = App::new(None, palette, DefaultMode::Time(15));
+        let app = App::new(None, palette, Mode::Time(15));
         let backend = TestBackend::new(80, 24);
         let mut terminal = Terminal::new(backend).unwrap();
         terminal.draw(|f| render(f, &app)).unwrap();
@@ -146,7 +168,7 @@ mod tests {
     #[test]
     fn wrong_space_renders_red_underlined() {
         let palette = builtin::DARK;
-        let mut app = App::new(None, palette, DefaultMode::Time(15));
+        let mut app = App::new(None, palette, Mode::Time(15));
         app.mode = crate::app::Mode::Custom;
         app.words = vec![
             crate::app::Word::new("hi".into()),
@@ -175,7 +197,7 @@ mod tests {
     /// dismiss hint, and an escape character in it doesn't reach the terminal.
     #[test]
     fn error_modal_keeps_lines_and_hides_control_characters() {
-        let mut app = App::new(None, builtin::DARK, DefaultMode::Time(15));
+        let mut app = App::new(None, builtin::DARK, Mode::Time(15));
         app.error_message = Some(
             "TOML parse error at line 3, column 5\n  |\n3 | foo =\x1b[2J\n  |     ^\nexpected value"
                 .to_string(),
@@ -205,7 +227,7 @@ mod tests {
     /// Symbols mode shows a token-count gauge like words mode does.
     #[test]
     fn symbols_mode_shows_token_progress() {
-        let mut app = App::new(None, builtin::DARK, DefaultMode::Time(15));
+        let mut app = App::new(None, builtin::DARK, Mode::Time(15));
         app.start_game(crate::app::Mode::Symbols(2)).unwrap();
         let mut terminal = Terminal::new(TestBackend::new(80, 24)).unwrap();
         terminal.draw(|f| render(f, &app)).unwrap();
@@ -225,7 +247,7 @@ mod tests {
     /// to the column instead of being cut off.
     #[test]
     fn stats_table_mode_labels_are_safe_and_shortened() {
-        let mut app = App::new(None, builtin::DARK, DefaultMode::Time(15));
+        let mut app = App::new(None, builtin::DARK, Mode::Time(15));
         app.stats_cache = Some(vec![crate::storage::SessionRecord {
             wpm: 80.0,
             accuracy: 97.0,
@@ -250,5 +272,307 @@ mod tests {
             .collect();
         assert!(!text.contains('\x1b'));
         assert!(text.contains("custom-?…nal-draft "), "{text}");
+    }
+
+    /// Draw the Stats screen for `sessions` at 80×24 and return its rows.
+    fn stats_rows(app: &App) -> Vec<String> {
+        let mut terminal = Terminal::new(TestBackend::new(80, 24)).unwrap();
+        terminal.draw(|f| render(f, app)).unwrap();
+        terminal
+            .backend()
+            .buffer()
+            .content()
+            .chunks(80)
+            .map(|row| row.iter().map(|c| c.symbol()).collect())
+            .collect()
+    }
+
+    fn record(wpm: f64, mode: &str) -> crate::storage::SessionRecord {
+        crate::storage::SessionRecord {
+            wpm,
+            accuracy: 97.0,
+            mode: mode.into(),
+            word_count: 10,
+            correct_chars: 50,
+            total_chars: 52,
+            duration_secs: 30.0,
+            timestamp: chrono::Local::now(),
+            key_hits: Default::default(),
+            key_misses: Default::default(),
+        }
+    }
+
+    /// The session holding a mode's best is starred in the sessions list,
+    /// the list scrolls (clamped to a full last page), and the bests
+    /// category lists one row per mode.
+    #[test]
+    fn stats_screen_stars_bests_scrolls_and_lists_bests() {
+        let mut app = App::new(None, builtin::DARK, Mode::Time(15));
+        let mut history: Vec<_> = (0..12)
+            .map(|i| record(40.0 + f64::from(i), "time-30s"))
+            .collect();
+        history.push(record(55.0, "words-25"));
+        app.stats_cache = Some(history);
+        app.screen = crate::app::Screen::Stats;
+        let sessions = app.stats_cache.as_deref().unwrap();
+        app.stats_view = Some(crate::storage::StatsView::new(sessions, None));
+
+        let rows = stats_rows(&app);
+        let dump = rows.join("\n");
+        assert!(
+            rows.iter()
+                .any(|r| r.contains("★") && r.contains("words-25")),
+            "{dump}"
+        );
+        assert!(
+            rows.iter().any(|r| r.contains("★") && r.contains("51.0")),
+            "{dump}"
+        );
+        assert!(dump.contains("sessions · 1–"), "{dump}");
+        assert!(dump.contains("[all]   ‹ ›   01/04   all"), "{dump}");
+
+        // Scrolling far past the end shows the last page, oldest at the bottom.
+        app.stats_view.as_ref().unwrap().scroll_by(1000);
+        let dump = stats_rows(&app).join("\n");
+        assert!(dump.contains("of 13 "), "{dump}");
+        assert!(dump.contains("40.0"), "{dump}");
+        let first = app.stats_view.as_ref().unwrap().scroll.get();
+        assert!(first > 0 && first < 12, "clamped scroll {first}");
+
+        let sessions = app.stats_cache.as_deref().unwrap();
+        app.stats_view.as_mut().unwrap().cycle(sessions, true);
+        let dump = stats_rows(&app).join("\n");
+        assert!(dump.contains("bests per mode"), "{dump}");
+        assert!(dump.contains("★ 51.0"), "{dump}");
+        assert!(dump.contains("★ 55.0"), "{dump}");
+    }
+
+    /// A window too short for any table row (three rows tall: the table's
+    /// minimum gives way only there) says how many sessions there are instead
+    /// of an impossible range, and keeps the scroll.
+    #[test]
+    fn stats_table_too_short_for_rows() {
+        let mut app = App::new(None, builtin::DARK, Mode::Time(15));
+        app.stats_cache = Some((0..13).map(|_| record(50.0, "time-30s")).collect());
+        app.screen = crate::app::Screen::Stats;
+        let view = crate::storage::StatsView::new(app.stats_cache.as_deref().unwrap(), None);
+        view.scroll.set(3);
+        app.stats_view = Some(view);
+        let mut terminal = Terminal::new(TestBackend::new(80, 3)).unwrap();
+        terminal.draw(|f| render(f, &app)).unwrap();
+        let text: String = terminal
+            .backend()
+            .buffer()
+            .content()
+            .iter()
+            .map(|c| c.symbol())
+            .collect();
+        assert!(text.contains("sessions · 13 "), "{text}");
+        assert_eq!(app.stats_view.as_ref().unwrap().scroll.get(), 3);
+    }
+
+    /// Every screen's key hints are on the last row, starting in the same
+    /// column, so they never jump around when the screen changes.
+    #[test]
+    fn footer_is_on_the_last_row_of_every_screen() {
+        use crate::app::Screen;
+        for (height, screen, first_hint) in [
+            (24, Screen::Menu, "↑/↓ category"),
+            (24, Screen::Typing, "Ctrl+R / F5 restart"),
+            (24, Screen::Results, "Enter / F5 restart"),
+            (24, Screen::Stats, "←/→ category"),
+            (24, Screen::Help, "Esc / F1 close"),
+            (40, Screen::Results, "Enter / F5 restart"),
+        ] {
+            let mut app = App::new(None, builtin::DARK, Mode::Time(15));
+            app.start_game(Mode::Words(5)).unwrap();
+            app.stats_cache = Some(Vec::new());
+            app.screen = screen;
+            let mut terminal = Terminal::new(TestBackend::new(80, height)).unwrap();
+            terminal.draw(|f| render(f, &app)).unwrap();
+            let last: String = (0..80)
+                .map(|x| {
+                    terminal.backend().buffer()[(x, height - 1)]
+                        .symbol()
+                        .to_string()
+                })
+                .collect();
+            assert!(
+                last.starts_with(&format!("  {first_hint}")),
+                "{screen:?}: {last:?}"
+            );
+        }
+    }
+
+    /// One grid on every screen: the title starts at column 2 of the first
+    /// row, and inside boxes every value starts in the same column (border,
+    /// two cells, the shared label width) — on Results and in the Stats
+    /// summary alike.
+    #[test]
+    fn titles_and_values_line_up_across_screens() {
+        use crate::app::Screen;
+        let value_column = 1 + 2 + LABEL_WIDTH;
+        let rows_of = |app: &App| -> Vec<Vec<String>> {
+            let mut terminal = Terminal::new(TestBackend::new(80, 24)).unwrap();
+            terminal.draw(|f| render(f, app)).unwrap();
+            let buffer = terminal.backend().buffer();
+            (0..24)
+                .map(|y| {
+                    (0..80)
+                        .map(|x| buffer[(x, y)].symbol().to_string())
+                        .collect()
+                })
+                .collect()
+        };
+        // Column of the first visible cell after `label` on its row.
+        let value_after = |rows: &[Vec<String>], label: &str| -> usize {
+            let row = rows
+                .iter()
+                .find(|row| row.concat().contains(&format!("  {label}  ")))
+                .unwrap_or_else(|| panic!("{label:?} not shown"));
+            let text: Vec<&str> = row.iter().map(String::as_str).collect();
+            let start = (0..text.len())
+                .find(|&x| text[x..].concat().starts_with(&format!("  {label}")))
+                .unwrap();
+            (start + 2 + label.chars().count()..text.len())
+                .find(|&x| text[x].trim() != "")
+                .unwrap()
+        };
+
+        let mut app = App::new(None, builtin::DARK, Mode::Time(15));
+        app.start_game(Mode::Words(2)).unwrap();
+        app.stats_cache = Some(vec![record(61.5, "words-2")]);
+        for screen in [Screen::Menu, Screen::Typing, Screen::Results, Screen::Stats] {
+            app.screen = screen;
+            let rows = rows_of(&app);
+            let first = rows[0].iter().position(|cell| cell.trim() != "").unwrap();
+            assert_eq!(first, 2, "{screen:?} title column");
+            let labels: &[&str] = match screen {
+                Screen::Results => &["wpm", "accuracy", "time", "chars", "mode", "mode best"],
+                Screen::Stats => &[
+                    "best wpm",
+                    "sessions",
+                    "streak",
+                    "7-day avg",
+                    "30-day avg",
+                    "time typed",
+                ],
+                _ => &[],
+            };
+            for label in labels {
+                assert_eq!(
+                    value_after(&rows, label),
+                    value_column,
+                    "{screen:?} {label:?}"
+                );
+            }
+            if screen == Screen::Menu {
+                // The menu box is full width like the others; the list is one
+                // block centered in it (equal room either side of its widest
+                // row), with headings and options in one column inside it.
+                let column_of = |text: &str| {
+                    let row = rows.iter().find(|row| row.concat().contains(text)).unwrap();
+                    assert_eq!(row[0], "│", "menu box starts at column 0");
+                    (0..80)
+                        .find(|&x| row[x..].concat().starts_with(text))
+                        .unwrap()
+                };
+                let code = rows
+                    .iter()
+                    .find(|row| row.concat().contains("javascript"))
+                    .unwrap();
+                let first = (1..79).find(|&x| code[x].trim() != "").unwrap();
+                let last = (1..79).rev().find(|&x| code[x].trim() != "").unwrap();
+                let (left, right) = (first - 1, 78 - last);
+                assert!(
+                    left.abs_diff(right) <= 1,
+                    "list not centered: {left} vs {right}"
+                );
+                assert_eq!(column_of("words"), column_of("rust"), "heading and options");
+                assert_eq!(column_of("time"), column_of("15s"), "heading and options");
+            }
+        }
+    }
+
+    /// The Stats title keeps [all], ‹ › and the zero-padded counter in the
+    /// same columns whatever the category's name is; only the name, last on
+    /// the row, changes.
+    #[test]
+    fn stats_title_buttons_never_move() {
+        let mut app = App::new(None, builtin::DARK, Mode::Time(15));
+        app.stats_cache = Some(vec![
+            record(50.0, "time-30s"),
+            record(60.0, "custom-a-very-long-file-name"),
+        ]);
+        app.screen = crate::app::Screen::Stats;
+        let sessions = app.stats_cache.as_deref().unwrap();
+        app.stats_view = Some(crate::storage::StatsView::new(sessions, None));
+        let mut columns = Vec::new();
+        for _ in 0..app.stats_view.as_ref().unwrap().category_count() {
+            let rows = stats_rows(&app);
+            let title = &rows[0];
+            let at = |text: &str| {
+                title
+                    .find(text)
+                    .unwrap_or_else(|| panic!("{text:?} in {title:?}"))
+            };
+            columns.push((at("[all]"), at("‹ ›"), at("/04")));
+            assert!(
+                title.contains(&format!("{:02}/04", columns.len())),
+                "{title}"
+            );
+            let sessions = app.stats_cache.as_deref().unwrap();
+            app.stats_view.as_mut().unwrap().cycle(sessions, true);
+        }
+        assert!(
+            columns.windows(2).all(|pair| pair[0] == pair[1]),
+            "{columns:?}"
+        );
+    }
+
+    /// Review fixes: a box title on the light theme is drawn in a theme
+    /// color, never the terminal's own (light-on-white in a dark terminal); a box too narrow for the compact banner shows none
+    /// rather than a clipped one; the typing gauge starts at column 2, in
+    /// line with the title.
+    #[test]
+    fn titles_readable_banner_never_clipped_gauge_in_line() {
+        use crate::app::Screen;
+        let render_to = |app: &App, width: u16, height: u16| {
+            let mut terminal = Terminal::new(TestBackend::new(width, height)).unwrap();
+            terminal.draw(|f| render(f, app)).unwrap();
+            terminal.backend().buffer().clone()
+        };
+
+        let app = App::new(None, builtin::LIGHT, Mode::Time(15));
+        let buffer = render_to(&app, 80, 24);
+        let row: String = (0..80)
+            .map(|x| buffer[(x, 2)].symbol().to_string())
+            .collect();
+        let x = row.find("modes").unwrap() as u16;
+        assert_ne!(
+            buffer[(x, 2)].fg,
+            Color::Reset,
+            "title in the terminal's own color"
+        );
+
+        let app = App::new(None, builtin::DARK, Mode::Time(15));
+        let buffer = render_to(&app, 30, 24);
+        let all: String = buffer.content().iter().map(|c| c.symbol()).collect();
+        assert!(!all.contains('▀') && !all.contains('▄'), "clipped banner");
+
+        let mut app = App::new(None, builtin::DARK, Mode::Time(15));
+        app.start_game(Mode::Words(10)).unwrap();
+        app.screen = Screen::Typing;
+        let buffer = render_to(&app, 80, 24);
+        let gauge: Vec<_> = (0..80)
+            .map(|x| buffer[(x, 2)].symbol().to_string())
+            .collect();
+        let first = gauge.iter().position(|c| c.trim() != "");
+        let label = (0..80).find(|&x| gauge[x..].concat().starts_with("0 / 10"));
+        assert!(label.is_some(), "gauge label missing: {gauge:?}");
+        assert!(
+            first.is_some_and(|x| x >= 2),
+            "gauge starts left of column 2"
+        );
     }
 }

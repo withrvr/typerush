@@ -13,6 +13,103 @@ _No unreleased changes yet._
 
 ---
 
+## [0.4.1] — polish, speed and stats by category
+
+A faster, safer, easier-to-read TypeRush, and stats you can look at one
+mode at a time.
+
+### Added
+
+- **Stats by category.** On the Stats screen, `←` / `→` moves between
+  **all** sessions, a **bests** table (one row per mode: best WPM with that
+  run's accuracy and date, average WPM, number of runs) and one category per
+  mode you have played. A mode's category shows its own summary, key
+  accuracy, WPM trend and every one of its sessions.
+- **★ on record runs.** In the sessions list, the session holding its
+  mode's best is marked with a star.
+- **Stats opens on the run you just finished:** `Tab` on Results shows that
+  mode's category. `[all]` in the title (or `a`) jumps back to every
+  session; from the menu, Stats stays on the category you last looked at.
+- **A steady Stats title:** `◆ stats   [all]   ‹ ›   01/05   time-30s` —
+  the buttons and the zero-padded counter come before the category name, so
+  nothing moves when the name's length changes. `[all]`, `‹` and `›` are
+  clickable.
+- **The sessions list scrolls** with `↑` / `↓` (`k` / `j`), `PgUp` /
+  `PgDn`, `Home` / `End` or the mouse wheel, and its title says which rows
+  are showing (`1–5 of 42`). It used to show only the last 10 sessions.
+- **Time typed** in the Stats summary.
+- The Stats screen remembers its category when you come back to it.
+
+### Fixed
+
+- **Keys typed after the run ends no longer skip the results.** A fast
+  typist is still typing when the last word is done, and a stray `r`, `m`,
+  `s` or `q` used to restart, leave or quit before the results could be
+  read. On the Results screen only keys you never press while typing act now:
+  `Enter` / `F5` / `Ctrl+R` restart, `Esc` menu, `Tab` stats, `F1` help,
+  `Ctrl+C` quit.
+- **The cursor no longer runs off the bottom of the typing box.** In a long
+  run, after about one screenful of words (≈180 at 80×24) you were typing
+  blind. The box now scrolls so the cursor's line stays second from the top.
+  Lines are measured in terminal cells, so wide (CJK) characters and words
+  longer than the box (a URL in a custom file) can't push it off either.
+- **Time and zen runs never run out of words.** A fast typist used to reach
+  the end of the 300 (time) or 500 (zen) generated words, after which every
+  key was ignored. Words are now added as you go.
+- **Readable colors in every theme.** Untyped text on `monokai` and
+  `dracula` was about 3:1 against the background; every text color of
+  `light`, `monokai` and `dracula` is now at least 4.5:1 (WCAG AA, checked
+  by a test) with untyped text still dimmer than typed text. On `dark`,
+  wrong characters and the mode tag use the brighter red and magenta.
+- **The progress-bar label is readable.** It was yellow on the cyan fill
+  (about 1.1:1) on `monokai`, `dracula` and `dark`; it now sits on the
+  theme background.
+- **`--file` only reads regular files, up to 1 MiB.** `--file /dev/zero`
+  or a named pipe used to hang, and a huge file was read into memory whole.
+- **`--words` and `--symbols` go up to 10,000, `--time` up to 3600.** A huge
+  count used to try to build billions of words before the first frame.
+  `word_count`, `time_seconds` and `symbol_count` in the config follow the
+  same rule (out of range: a warning and the default).
+- A custom file that isn't UTF-8 now says so ("is not UTF-8 text") instead
+  of a generic read error.
+
+### Changed
+
+- **Key hints always sit on the bottom row,** in the same place on every
+  screen (they were three rows up while typing, two on Results), worded
+  the same way everywhere (`Enter`, `Esc`, `Tab`, `F1`, `Ctrl+C`; quit
+  last).
+- **One alignment grid for every screen:** the title on the first row, a
+  blank row, then the content; text inside every box starts two cells in;
+  every value on Results and in the Stats summary starts in the same
+  column. The Results box fits its six lines (no empty rows), the Stats
+  summary's two columns have room between them, the typing header lines up
+  with the other titles, and the menu leaves a blank line above the word
+  settings.
+- **The main menu follows the same layout:** a `◆ select mode` title row,
+  then one full-width box with the TypeRush banner inside at the top and
+  the modes centered below it as one block (headings and options still
+  lined up with each other). When the blank lines between categories don't all fit (80×24),
+  none are drawn, instead of dense rows at the top and spaced ones below.
+- **Dependencies upgraded:** ratatui 0.30 (crossterm 0.29 through its
+  re-export, only the features TypeRush uses), rand 0.10, toml 1. The
+  `dirs` crate is gone (the standard library's `home_dir` is used). The
+  previous lockfile had four security advisories (anyhow, lru ×2, paste);
+  the new one has none.
+- **Faster redraws.** The typing screen styles only the lines on screen, so
+  a keystroke costs the same at word 10 and word 1000.
+- **Leaner code:** duplicate config enums, dead counters and an unused
+  theme slot removed (about 150 fewer lines). The `[colors] extra` key is
+  still accepted (and a bad value still warned about) so old configs load.
+- **CI:** a weekly and on-change `cargo audit`, Dependabot for crates and
+  Actions, read-only workflow tokens, `--locked` builds and a Rust 1.88
+  (MSRV, now declared in `Cargo.toml`) check.
+- **Docs:** `docs/LEARNINGS.md` (every bug so far: symptom, cause, fix and
+  the test that guards it) and a contributor skill file; the roadmap lists
+  the profile and practice features planned for v0.6 and v0.7.
+
+---
+
 ## [0.4.0] — more content
 
 More to type: a bigger word pool, a programming-symbols drill, four more

@@ -27,7 +27,10 @@ typerush --list-themes        # print available theme names and exit
 typerush --list-snippets      # print your snippets (name<TAB>path) and exit
 ```
 
-Counts given to `--time`, `--words` and `--symbols` must be at least 1.
+Counts must be at least 1: `--time` goes up to 3600 seconds, `--words` and
+`--symbols` up to 10,000 (the same limits apply to `time_seconds`,
+`word_count` and `symbol_count` in the config). A custom file (`--file` or a snippet) must be a
+regular UTF-8 text file of at most 1 MiB.
 
 These switches make random words harder, and combine with any of the above
 (they apply to time and words modes; zen always stays plain):
@@ -147,10 +150,14 @@ punctuation`, `n numbers`, `b 10k words` — each spelled out as `on` or `off`
 and clickable. They apply to time and words runs, whose saved label follows
 them (`time-30s+p`).
 
-The menu fits itself to the terminal. With room to spare it shows the big
-banner and a blank line between categories. On a standard 80×24 terminal it
-switches to a two-line banner and drops only as many of those blank lines as
-it must, so every option is on screen at launch. Only on a terminal too short
+The menu is laid out like every other screen: a title row, then one
+full-width box with the TypeRush banner at its top and the modes centered
+below it. It
+fits itself to the terminal. With room to spare it shows the big banner and
+a blank line between categories. On a standard 80×24 terminal it switches
+to a two-line banner and, when the blank lines between categories don't all
+fit, leaves them all out (never a mix), so every option is on screen at
+launch. Only on a terminal too short
 for the whole list does it scroll, and then the border shows `▲ more` /
 `▼ more`.
 
@@ -183,17 +190,29 @@ for the whole list does it scroll, and then the border shows `▲ more` /
 
 | Key             | Action                            |
 | --------------- | --------------------------------- |
-| `Enter` / `r`   | Restart the same mode             |
-| `Tab` / `s`     | Open the stats history            |
-| `m` / `Esc`     | Back to the menu                  |
-| `q`             | Quit                              |
+| `Enter` / `F5` / `Ctrl+R` | Restart the same mode   |
+| `Tab`           | Open the stats history            |
+| `Esc`           | Back to the menu                  |
+| `F1`            | Help                              |
+| `Ctrl+C`        | Quit                              |
+
+Only keys you never press while typing work here: if you're still typing
+when the run ends, those last letters, spaces and `?` are ignored instead of
+skipping past your results.
 
 ### Stats history
 
-| Key                | Action            |
-| ------------------ | ----------------- |
-| `m` / `Esc` / `Tab`| Back to the menu  |
-| `q`                | Quit              |
+| Key                         | Action                                       |
+| --------------------------- | -------------------------------------------- |
+| `←` / `→` (`h` / `l`)       | Previous / next category                     |
+| `a`                         | All sessions                                 |
+| `↑` / `↓` (`k` / `j`)       | Scroll the sessions (or bests) list          |
+| `PgUp` / `PgDn`, `Home` / `End` | Scroll by ten / to the newest or oldest  |
+| `m` / `Esc` / `Tab`         | Back to the menu                             |
+| `q`                         | Quit                                         |
+
+The mouse wheel scrolls the list too; in the title, click `[all]` for all
+sessions or `‹` / `›` to change category.
 
 ---
 
@@ -235,16 +254,28 @@ Everything TypeRush keeps lives in `~/.typerush/`:
 
 Each file is written atomically, so a crash mid-save never leaves a broken file.
 
-### What the Stats screen shows (v0.3.0+)
+### What the Stats screen shows
 
-Open the Stats screen from the menu (`Tab`) or results screen (`s`).
+Open the Stats screen from the menu (`Tab` or `s`) or results screen (`Tab`). The
+title row reads `◆ stats   [all]   ‹ ›   01/05   time-30s`: the buttons and
+the counter stay in place, and the current **category** comes last. `←` / `→`
+moves through the categories, `a` (or `[all]`) jumps back to all:
+
+- **all** — every session.
+- **bests** — one row per mode: its best WPM (with that run's accuracy and
+  date), its average WPM and how many runs it has had.
+- **one per mode** you have played (`time-30s`, `words-50+p`,
+  `custom-notes`, …) — everything below, for that mode only.
+
+Opened straight after a run (`Tab` on Results), Stats shows that run's mode.
+Opened from the menu, it stays on the category you were looking at last.
 
 | Section | What it shows |
 | ------- | ------------- |
-| **Summary (left)** | All-time best WPM · Average accuracy · Session count · Last WPM · **Daily streak** · **7-day avg WPM** · **30-day avg WPM** |
+| **Summary (left)** | Best WPM · Average accuracy · Session count · Last WPM · **Daily streak** · **7-day avg WPM** · **30-day avg WPM** · **Time typed** |
 | **Key accuracy (right)** | Up to 5 of your worst keys (≥ 3 presses). Colour-coded: red < 80%, amber < 93%, green otherwise. Shows `no key data yet` until enough data is collected. |
-| **WPM trend** | Sparkline of your last 20 sessions |
-| **Recent sessions** | Last 10 sessions with date, mode, WPM, accuracy, and time |
+| **WPM trend** | Sparkline of the category's last 20 sessions |
+| **Sessions** | Every session in the category, newest first, with date, mode, WPM, accuracy and time; scroll with `↑` / `↓`. A `★` marks the session holding its mode's best. The title says which rows are showing (`1–5 of 42`). |
 
 ### Per-mode personal bests
 
@@ -305,6 +336,12 @@ and is kept only so existing configs keep loading.
 > backgrounds so the theme looks the same regardless of terminal. Set
 > `background = "reset"` in `[colors]` if you'd rather one of those themes
 > use your terminal background too.
+
+> **Readability.** Every text color in `light`, `monokai` and `dracula` has
+> at least 4.5:1 contrast against the theme's background (the WCAG AA level
+> for body text; a test keeps it that way), and untyped text is dimmer than
+> typed text so you can see where you are. `dark` uses your terminal's own
+> 16-color palette, so its contrast follows your terminal's settings.
 
 ### Defaults
 

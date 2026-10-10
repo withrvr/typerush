@@ -29,7 +29,7 @@ use std::{
 
 use anyhow::Result;
 use clap::Parser;
-use crossterm::{
+use ratatui::crossterm::{
     event::{
         self, DisableMouseCapture, EnableMouseCapture, Event, KeyCode, KeyEventKind, KeyModifiers,
         MouseButton, MouseEvent, MouseEventKind,
@@ -40,22 +40,19 @@ use crossterm::{
 use ratatui::{backend::CrosstermBackend, Terminal};
 
 use crate::app::{App, ClickAction, MenuAction, Mode, Screen};
-use crate::config::load::{code_lang_kind, CliOverrides};
+use crate::config::load::{check_count, code_lang, CliOverrides, MAX_COUNT, MAX_SECONDS};
 use crate::storage::SessionRecord;
 use crate::theme::builtin;
 use crate::words::{CodeLang, WordPool};
 
-/// Value parser for counts that must be at least 1. A zero count would start
-/// a session with nothing to type that can only be left with Esc.
-fn positive<T>(value: &str) -> Result<T, String>
+/// Value parser for run lengths: a whole number from 1 to `MAX` (see
+/// `config::load::check_count`, which the config uses too).
+fn count<T, const MAX: u16>(value: &str) -> Result<T, String>
 where
-    T: std::str::FromStr + PartialOrd + From<u8>,
+    T: std::str::FromStr + PartialOrd + From<u16>,
 {
-    match value.parse::<T>() {
-        Ok(count) if count >= T::from(1) => Ok(count),
-        Ok(_) => Err("must be at least 1".into()),
-        Err(_) => Err("not a whole number".into()),
-    }
+    let count = value.parse::<T>().map_err(|_| "not a whole number")?;
+    check_count(count, MAX)
 }
 
 /// Command-line interface. Run with no args to open the interactive menu; pass
@@ -73,11 +70,11 @@ struct Cli {
     file: Option<PathBuf>,
 
     /// Start directly in time mode for N seconds (15/30/60/120).
-    #[arg(long, value_parser = positive::<u64>)]
+    #[arg(long, value_parser = count::<u64, MAX_SECONDS>)]
     time: Option<u64>,
 
     /// Start directly in words mode for N words.
-    #[arg(long, value_parser = positive::<usize>)]
+    #[arg(long, value_parser = count::<usize, MAX_COUNT>)]
     words: Option<usize>,
 
     /// Skip the menu and start a quote session.
@@ -93,7 +90,7 @@ struct Cli {
     zen: bool,
 
     /// Skip the menu and start a programming-symbols drill of N tokens (25/50).
-    #[arg(long, value_parser = positive::<usize>)]
+    #[arg(long, value_parser = count::<usize, MAX_COUNT>)]
     symbols: Option<usize>,
 
     /// Use the 10,000-word English pool (time and words modes).
@@ -361,10 +358,10 @@ fn apply_cli_autostart(app: &mut App, cli: &Cli) -> Result<()> {
 }
 
 /// `--code <name>`: the same names and aliases as `code_lang` in the config
-/// (one table, `config::load::code_lang_kind`), but an unknown name is an
+/// (one table, `config::load::code_lang`), but an unknown name is an
 /// error here rather than a fall-back-with-warning.
 fn code_lang_from_cli(name: &str) -> Result<CodeLang> {
-    code_lang_kind(name).map(CodeLang::from).ok_or_else(|| {
+    code_lang(name).ok_or_else(|| {
         anyhow::anyhow!("unknown code lang: {name} (try rust, python, js, go, java, sql, shell)")
     })
 }
@@ -377,9 +374,15 @@ fn handle_key(app: &mut App, code: KeyCode, mods: KeyModifiers) {
         app.should_quit = true;
         return;
     }
-    // '?' (or F1) toggles the help overlay everywhere except during typing
-    // (where '?' is a valid character to type).
-    if matches!(code, KeyCode::Char('?') | KeyCode::F(1)) && app.screen != Screen::Typing {
+    // '?' (or F1) toggles the help overlay, except while typing ('?' is a
+    // character to type, and help would cover the run). On Results only F1
+    // does: a fast typist's last keys land there (see `handle_results_key`).
+    let help_key = match code {
+        KeyCode::F(1) => app.screen != Screen::Typing,
+        KeyCode::Char('?') => !matches!(app.screen, Screen::Typing | Screen::Results),
+        _ => false,
+    };
+    if help_key {
         toggle_help(app);
         return;
     }
@@ -447,6 +450,12 @@ fn handle_mouse(app: &mut App, mouse: MouseEvent) {
     match mouse.kind {
         MouseEventKind::ScrollUp if app.screen == Screen::Menu => app.menu_move_row(false),
         MouseEventKind::ScrollDown if app.screen == Screen::Menu => app.menu_move_row(true),
+        MouseEventKind::ScrollUp if app.screen == Screen::Stats => {
+            handle_key(app, KeyCode::Up, KeyModifiers::NONE)
+        }
+        MouseEventKind::ScrollDown if app.screen == Screen::Stats => {
+            handle_key(app, KeyCode::Down, KeyModifiers::NONE)
+        }
         MouseEventKind::Down(MouseButton::Left) => {
             app.pressed_target = target;
             if let Some(ClickAction::Menu(index)) = target {
@@ -575,22 +584,49 @@ fn is_altgr(typed_char: char, mods: KeyModifiers) -> bool {
 }
 
 /// Keymap for the post-session results screen.
-fn handle_results_key(app: &mut App, code: KeyCode, _mods: KeyModifiers) {
+///
+/// A fast typist is still typing when the run ends, so the next few keys
+/// land here. Only keys nobody presses while typing act — Enter or F5
+/// (or Ctrl+R, as while typing) restart, Esc goes to the menu, Tab to
+/// stats, F1 opens help, Ctrl+C quits —
+/// so those stray letters, spaces and `?` can't skip the results.
+fn handle_results_key(app: &mut App, code: KeyCode, mods: KeyModifiers) {
+    let ctrl_r = code == KeyCode::Char('r') && mods.contains(KeyModifiers::CONTROL);
     match code {
-        KeyCode::Enter | KeyCode::Char('r') => {
+        _ if ctrl_r => {
             if let Err(e) = app.restart() {
                 app.show_error(&e);
             }
         }
-        KeyCode::Char('m') | KeyCode::Esc => app.screen = Screen::Menu,
-        KeyCode::Tab | KeyCode::Char('s') => app.screen = Screen::Stats,
-        KeyCode::Char('q') => app.should_quit = true,
+        KeyCode::Enter | KeyCode::F(5) => {
+            if let Err(e) = app.restart() {
+                app.show_error(&e);
+            }
+        }
+        KeyCode::Esc => app.screen = Screen::Menu,
+        KeyCode::Tab => app.screen = Screen::Stats,
         _ => {}
     }
 }
 
-/// Keymap for the historical stats screen.
+/// Keymap for the historical stats screen: ←/→ (h/l) pick a category, `a`
+/// shows all sessions, ↑/↓ (j/k), PgUp/PgDn and Home/End scroll the list.
 fn handle_stats_key(app: &mut App, code: KeyCode, _mods: KeyModifiers) {
+    let history = app.stats_cache.as_deref().unwrap_or(&[]);
+    if let Some(view) = app.stats_view.as_mut() {
+        match code {
+            KeyCode::Left | KeyCode::Char('h') => return view.cycle(history, false),
+            KeyCode::Right | KeyCode::Char('l') => return view.cycle(history, true),
+            KeyCode::Char('a') => return view.select(history, 0),
+            KeyCode::Up | KeyCode::Char('k') => return view.scroll_by(-1),
+            KeyCode::Down | KeyCode::Char('j') => return view.scroll_by(1),
+            KeyCode::PageUp => return view.scroll_by(-10),
+            KeyCode::PageDown => return view.scroll_by(10),
+            KeyCode::Home => return view.scroll.set(0),
+            KeyCode::End => return view.scroll_by(isize::MAX),
+            _ => {}
+        }
+    }
     match code {
         KeyCode::Char('m') | KeyCode::Esc | KeyCode::Tab => app.screen = Screen::Menu,
         KeyCode::Char('q') => app.should_quit = true,
@@ -628,9 +664,22 @@ fn after_input(app: &mut App, last_screen: Screen, session_saved: &mut bool, sta
             &app.session_label(),
         ));
     }
-    if app.screen == Screen::Stats && last_screen != Screen::Stats {
+    // Coming back from the help overlay keeps the category and scroll; any
+    // other way in rebuilds the view (a game may have been saved since).
+    // Straight after a run it opens on that run's mode; otherwise it stays
+    // on the category that was showing.
+    if app.screen == Screen::Stats
+        && (app.stats_view.is_none() || !matches!(last_screen, Screen::Stats | Screen::Help))
+    {
+        let category = if last_screen == Screen::Results && app.session_just_saved {
+            Some(app.session_label())
+        } else {
+            app.stats_view
+                .as_ref()
+                .map(|view| view.category_name().to_string())
+        };
         let sessions = app.stats_cache.as_deref().unwrap_or(&[]);
-        app.stats_summary = Some(storage::StatsSummary::new(sessions));
+        app.stats_view = Some(storage::StatsView::new(sessions, category.as_deref()));
     }
 }
 
@@ -688,11 +737,10 @@ fn save_current_session(app: &mut App, stats_file: &Path) {
 mod tests {
     use super::*;
     use crate::app::{Screen, Word};
-    use crate::config::load::DefaultMode;
     use crate::theme::ThemePalette;
 
     fn make_typing_app() -> App {
-        let mut app = App::new(None, ThemePalette::default(), DefaultMode::Time(15));
+        let mut app = App::new(None, ThemePalette::default(), Mode::Time(15));
         app.screen = Screen::Typing;
         app.mode = Mode::Words(2);
         app.words = vec![Word::new("hello".into()), Word::new("world".into())];
@@ -767,7 +815,7 @@ mod tests {
     /// AltGr+7 and arrives as `Char('{')` with CONTROL | ALT. It must type.
     #[test]
     fn altgr_characters_are_typed() {
-        let mut app = App::new(None, ThemePalette::default(), DefaultMode::Time(15));
+        let mut app = App::new(None, ThemePalette::default(), Mode::Time(15));
         app.screen = Screen::Typing;
         app.mode = Mode::Symbols(1);
         app.words = vec![Word::new("{@ą}".into())];
@@ -820,9 +868,28 @@ mod tests {
         handle_mouse(app, mouse(MouseEventKind::Up(MouseButton::Left), cell));
     }
 
+    /// The ‹ › around the Stats category are clickable in both directions;
+    /// the two-way footer hints are not (a click there can only go one way).
+    #[test]
+    fn clicking_stats_arrows_changes_category_both_ways() {
+        let mut app = App::new(None, ThemePalette::default(), Mode::Time(15));
+        app.stats_cache = Some(Vec::new());
+        app.screen = Screen::Stats;
+        after_input(&mut app, Screen::Menu, &mut false, Path::new("unused"));
+        draw(&app);
+        let next = target_cell(&app, ClickAction::Key(KeyCode::Right, KeyModifiers::NONE));
+        click(&mut app, next);
+        assert_eq!(app.stats_view.as_ref().unwrap().category_name(), "bests");
+        draw(&app);
+        let previous = target_cell(&app, ClickAction::Key(KeyCode::Left, KeyModifiers::NONE));
+        click(&mut app, previous);
+        assert_eq!(app.stats_view.as_ref().unwrap().category_name(), "all");
+        assert_eq!(previous.1, 0, "arrows sit on the title row");
+    }
+
     #[test]
     fn clicking_a_menu_option_starts_it() {
-        let mut app = App::new(None, ThemePalette::default(), DefaultMode::Time(15));
+        let mut app = App::new(None, ThemePalette::default(), Mode::Time(15));
         draw(&app);
         let thirty = app.menu.iter().position(|m| m.label == "30s").unwrap();
         let cell = target_cell(&app, ClickAction::Menu(thirty));
@@ -835,7 +902,7 @@ mod tests {
     /// highlights it — nothing starts.
     #[test]
     fn menu_press_then_slide_off_cancels() {
-        let mut app = App::new(None, ThemePalette::default(), DefaultMode::Time(15));
+        let mut app = App::new(None, ThemePalette::default(), Mode::Time(15));
         draw(&app);
         let cell = target_cell(&app, ClickAction::Menu(5));
         handle_mouse(
@@ -854,7 +921,7 @@ mod tests {
     /// with no press (some terminals send them) does nothing either.
     #[test]
     fn drag_between_targets_or_stray_release_does_nothing() {
-        let mut app = App::new(None, ThemePalette::default(), DefaultMode::Time(15));
+        let mut app = App::new(None, ThemePalette::default(), Mode::Time(15));
         draw(&app);
         let from = target_cell(&app, ClickAction::Menu(0));
         let to = target_cell(&app, ClickAction::Menu(3));
@@ -875,18 +942,20 @@ mod tests {
 
     #[test]
     fn clicking_a_footer_hint_acts_like_its_key() {
-        let mut app = App::new(None, ThemePalette::default(), DefaultMode::Time(15));
+        let mut app = App::new(None, ThemePalette::default(), Mode::Time(15));
         draw(&app);
         let stats = ClickAction::Key(KeyCode::Char('s'), KeyModifiers::NONE);
         let cell = target_cell(&app, stats);
         click(&mut app, cell);
         assert_eq!(app.screen, Screen::Stats);
 
-        // Stats footer: "m / esc menu" goes back.
+        // Stats footer: "Esc / m menu" goes back — on the same last row as
+        // the menu's footer.
         draw(&app);
-        let menu = ClickAction::Key(KeyCode::Char('m'), KeyModifiers::NONE);
-        let cell = target_cell(&app, menu);
-        click(&mut app, cell);
+        let menu = ClickAction::Key(KeyCode::Esc, KeyModifiers::NONE);
+        let back = target_cell(&app, menu);
+        assert_eq!(back.1, cell.1, "footer row moved between screens");
+        click(&mut app, back);
         assert_eq!(app.screen, Screen::Menu);
     }
 
@@ -894,7 +963,7 @@ mod tests {
     /// and clickable (the old List widget did this; a Paragraph doesn't).
     #[test]
     fn menu_scrolls_to_selection_on_short_terminal() {
-        let mut app = App::new(None, ThemePalette::default(), DefaultMode::Time(15));
+        let mut app = App::new(None, ThemePalette::default(), Mode::Time(15));
         app.menu_move_row(false); // wraps to "quit", the last row
         let quit = app.menu_index;
         let mut terminal = Terminal::new(ratatui::backend::TestBackend::new(80, 18)).unwrap();
@@ -907,14 +976,14 @@ mod tests {
             .map(|row| row.iter().map(|cell| cell.symbol()).collect())
             .collect();
         // Selected last row is on screen, directly under "stats" (no gap).
-        let quit_row = rows.iter().position(|r| r.contains("➤  quit")).unwrap();
-        assert!(rows[quit_row - 1].contains("    stats"));
+        let quit_row = rows.iter().position(|r| r.contains("➤ quit")).unwrap();
+        assert!(rows[quit_row - 1].contains("  stats"));
         target_cell(&app, ClickAction::Menu(quit)); // panics if not clickable
     }
 
     #[test]
     fn click_closes_help_overlay() {
-        let mut app = App::new(None, ThemePalette::default(), DefaultMode::Time(15));
+        let mut app = App::new(None, ThemePalette::default(), Mode::Time(15));
         handle_key(&mut app, KeyCode::F(1), KeyModifiers::NONE);
         assert_eq!(app.screen, Screen::Help);
         click(&mut app, (0, 0));
@@ -923,7 +992,7 @@ mod tests {
 
     #[test]
     fn scroll_wheel_moves_menu_rows() {
-        let mut app = App::new(None, ThemePalette::default(), DefaultMode::Time(15));
+        let mut app = App::new(None, ThemePalette::default(), Mode::Time(15));
         handle_mouse(&mut app, mouse(MouseEventKind::ScrollDown, (0, 0)));
         assert_eq!(app.menu[app.menu_index].group, "words");
         handle_mouse(&mut app, mouse(MouseEventKind::ScrollUp, (0, 0)));
@@ -932,17 +1001,29 @@ mod tests {
 
     // ── v0.4.0 ───────────────────────────────────────────────────────────────
 
-    /// A zero count would start a session with nothing to type; clap rejects
-    /// it before the terminal is touched. Positive counts still parse.
+    /// A zero count would start a session with nothing to type, and a huge
+    /// one would build billions of words before the first frame; clap rejects
+    /// both before the terminal is touched. Counts in range still parse.
     #[test]
-    fn zero_counts_are_rejected() {
-        for flag in ["--time", "--words", "--symbols"] {
-            let err = Cli::try_parse_from(["typerush", flag, "0"]).unwrap_err();
-            assert!(err.to_string().contains("at least 1"), "{flag} 0: {err}");
-            assert!(
-                Cli::try_parse_from(["typerush", flag, "25"]).is_ok(),
-                "{flag} 25"
-            );
+    fn out_of_range_counts_are_rejected() {
+        for (flag, max) in [("--time", 3600), ("--words", 10_000), ("--symbols", 10_000)] {
+            for bad in [
+                "0".to_string(),
+                (max + 1).to_string(),
+                "99999999999999".into(),
+            ] {
+                let err = Cli::try_parse_from(["typerush", flag, &bad]).unwrap_err();
+                assert!(
+                    err.to_string().contains(&format!("between 1 and {max}")),
+                    "{flag} {bad}: {err}"
+                );
+            }
+            for good in ["1", "25", &max.to_string()] {
+                assert!(
+                    Cli::try_parse_from(["typerush", flag, good]).is_ok(),
+                    "{flag} {good}"
+                );
+            }
         }
     }
 
@@ -980,7 +1061,7 @@ mod tests {
 
     #[test]
     fn enter_on_placeholder_custom_option_explains_and_stays() {
-        let mut app = App::new(None, ThemePalette::default(), DefaultMode::Time(15));
+        let mut app = App::new(None, ThemePalette::default(), Mode::Time(15));
         app.menu_index = option(&app, "custom", "custom");
         handle_key(&mut app, KeyCode::Enter, KeyModifiers::NONE);
         assert_eq!(app.screen, Screen::Menu);
@@ -996,7 +1077,7 @@ mod tests {
         std::fs::write(&snippet_path, "fn main ( ) { }").unwrap();
         let state_file = dir.path().join("state.json");
 
-        let mut app = App::new(None, ThemePalette::default(), DefaultMode::Time(15));
+        let mut app = App::new(None, ThemePalette::default(), Mode::Time(15));
         app.load_custom_sources(
             words::snippets::discover_in(dir.path()),
             Default::default(),
@@ -1030,7 +1111,7 @@ mod tests {
         };
         state::save_to_path(&state_file, &remembered).unwrap();
 
-        let mut app = App::new(None, ThemePalette::default(), DefaultMode::Time(15));
+        let mut app = App::new(None, ThemePalette::default(), Mode::Time(15));
         app.load_custom_sources(
             words::snippets::discover_in(dir.path()),
             remembered.clone(),
@@ -1068,7 +1149,7 @@ mod tests {
     /// A menu as a returning v0.4 user sees it: a remembered file and a few
     /// snippets in the custom row.
     fn full_menu_app() -> App {
-        let mut app = App::new(None, ThemePalette::default(), DefaultMode::Time(15));
+        let mut app = App::new(None, ThemePalette::default(), Mode::Time(15));
         let snippet = |name: &str| words::snippets::Snippet {
             name: name.into(),
             path: PathBuf::from(format!("/s/{name}.txt")),
@@ -1091,7 +1172,7 @@ mod tests {
     #[test]
     fn whole_menu_fits_80x24_at_launch() {
         for app in [
-            App::new(None, ThemePalette::default(), DefaultMode::Time(15)),
+            App::new(None, ThemePalette::default(), Mode::Time(15)),
             full_menu_app(),
         ] {
             let rows = screen(&app, 80, 24);
@@ -1105,6 +1186,22 @@ mod tests {
         }
     }
 
+    /// When not every blank line between categories fits, none are drawn:
+    /// a mix (dense at the top, spaced below) looks misaligned.
+    #[test]
+    fn category_gaps_are_all_or_nothing() {
+        let app = App::new(None, ThemePalette::default(), Mode::Time(15));
+        let rows = screen(&app, 80, 24);
+        let dump = rows.join("\n");
+        let first = rows.iter().position(|r| r.contains("time")).unwrap();
+        let last = rows.iter().position(|r| r.contains("quit")).unwrap();
+        let blanks = rows[first..last]
+            .iter()
+            .filter(|r| r.trim_matches(['│', ' ']).is_empty())
+            .count();
+        assert_eq!(blanks, 0, "{dump}");
+    }
+
     /// With room to spare the menu looks like v0.3: the big banner, and a
     /// blank line between categories.
     #[test]
@@ -1112,8 +1209,11 @@ mod tests {
         let app = full_menu_app();
         let rows = screen(&app, 100, 40);
         let dump = rows.join("\n");
-        assert!(rows[1].contains("████████"), "{dump}");
-        let time = rows.iter().position(|r| r.contains("➤  time")).unwrap();
+        // Title row, blank row, then the box: a blank line, then the banner.
+        assert!(rows[0].starts_with("  ◆ select mode"), "{dump}");
+        assert!(rows[3].trim_matches(['│', ' ']).is_empty(), "{dump}");
+        assert!(rows[4].contains("████████"), "{dump}");
+        let time = rows.iter().position(|r| r.contains("➤ time")).unwrap();
         assert!(rows[time + 2].trim_matches(['│', ' ']).is_empty(), "{dump}");
         assert!(rows[time + 3].contains("words"), "{dump}");
         assert!(all_options_clickable(&app), "{dump}");
@@ -1124,7 +1224,7 @@ mod tests {
     /// clicking the last one starts it.
     #[test]
     fn code_row_fits_at_80_and_wraps_when_narrow() {
-        let mut app = App::new(None, ThemePalette::default(), DefaultMode::Time(15));
+        let mut app = App::new(None, ThemePalette::default(), Mode::Time(15));
         app.menu_index = option(&app, "code", "rust");
         let code_lines = |app: &App| -> Vec<ratatui::layout::Rect> {
             let targets = app.click_targets.borrow();
@@ -1203,7 +1303,7 @@ mod tests {
     /// state in words, and the next run's label follows.
     #[test]
     fn menu_keys_toggle_word_settings() {
-        let mut app = App::new(None, ThemePalette::default(), DefaultMode::Time(30));
+        let mut app = App::new(None, ThemePalette::default(), Mode::Time(30));
         for code in ['p', 'n', 'b'] {
             handle_key(&mut app, KeyCode::Char(code), KeyModifiers::NONE);
         }
@@ -1228,7 +1328,7 @@ mod tests {
     /// The settings on the border are clickable and act like their keys.
     #[test]
     fn clicking_a_word_setting_toggles_it() {
-        let mut app = App::new(None, ThemePalette::default(), DefaultMode::Time(15));
+        let mut app = App::new(None, ThemePalette::default(), Mode::Time(15));
         draw(&app);
         let numbers = ClickAction::Key(KeyCode::Char('n'), KeyModifiers::NONE);
         let cell = target_cell(&app, numbers);
@@ -1257,6 +1357,86 @@ mod tests {
             overrides(&["--punctuation", "--no-punctuation", "--no-big", "--big"]),
             (Some(WordPool::Extended), Some(false), None)
         );
+    }
+
+    /// Keys a typist is still pressing when the run ends land on Results:
+    /// letters, space, digits and `?` do nothing there. Only Enter / F5,
+    /// Esc, Tab and F1 act.
+    #[test]
+    fn stray_typing_keys_do_not_leave_results() {
+        let mut app = make_typing_app();
+        for ch in "hello world".chars() {
+            app.handle_char(ch);
+        }
+        assert_eq!(app.screen, Screen::Results);
+        for ch in "rmsq? the quick brown 123".chars() {
+            handle_key(&mut app, KeyCode::Char(ch), KeyModifiers::NONE);
+            handle_key(&mut app, KeyCode::Char(ch), KeyModifiers::SHIFT);
+        }
+        handle_key(&mut app, KeyCode::Backspace, KeyModifiers::NONE);
+        assert_eq!(app.screen, Screen::Results);
+        assert!(!app.should_quit);
+
+        handle_key(&mut app, KeyCode::F(1), KeyModifiers::NONE);
+        assert_eq!(app.screen, Screen::Help);
+        handle_key(&mut app, KeyCode::F(1), KeyModifiers::NONE);
+        handle_key(&mut app, KeyCode::Tab, KeyModifiers::NONE);
+        assert_eq!(app.screen, Screen::Stats);
+        app.screen = Screen::Results;
+        handle_key(&mut app, KeyCode::Esc, KeyModifiers::NONE);
+        assert_eq!(app.screen, Screen::Menu);
+        app.screen = Screen::Results;
+        handle_key(&mut app, KeyCode::F(5), KeyModifiers::NONE);
+        assert_eq!(app.screen, Screen::Typing);
+        // Ctrl+R restarts here too, as while typing; a plain r doesn't.
+        app.screen = Screen::Results;
+        handle_key(&mut app, KeyCode::Char('r'), KeyModifiers::CONTROL);
+        assert_eq!(app.screen, Screen::Typing);
+    }
+
+    /// Stats opened straight after a run shows that run's mode; [all] (or
+    /// `a`) goes back to every session; from the menu Stats keeps the
+    /// category that was showing.
+    #[test]
+    fn stats_after_a_run_opens_on_its_mode() {
+        let dir = tempfile::tempdir().unwrap();
+        let stats_file = dir.path().join("stats.json");
+        let mut app = make_typing_app(); // words-2
+        let (mut saved, mut last) = (false, app.screen);
+        let mut step = |app: &mut App| {
+            after_input(app, last, &mut saved, &stats_file);
+            last = app.screen;
+        };
+        step(&mut app);
+        app.started_at = Some(std::time::Instant::now() - Duration::from_secs(5));
+        for ch in "hello world".chars() {
+            app.handle_char(ch);
+        }
+        step(&mut app);
+        assert!(app.session_just_saved);
+
+        handle_key(&mut app, KeyCode::Tab, KeyModifiers::NONE);
+        step(&mut app);
+        assert_eq!(app.stats_view.as_ref().unwrap().category_name(), "words-2");
+
+        // Click [all] on the title row.
+        draw(&app);
+        let all = target_cell(
+            &app,
+            ClickAction::Key(KeyCode::Char('a'), KeyModifiers::NONE),
+        );
+        click(&mut app, all);
+        assert_eq!(app.stats_view.as_ref().unwrap().category_name(), "all");
+
+        // Menu → Stats keeps the category that was showing.
+        handle_key(&mut app, KeyCode::Right, KeyModifiers::NONE); // bests
+        handle_key(&mut app, KeyCode::Esc, KeyModifiers::NONE);
+        step(&mut app);
+        handle_key(&mut app, KeyCode::Char('s'), KeyModifiers::NONE);
+        step(&mut app);
+        assert_eq!(app.stats_view.as_ref().unwrap().category_name(), "bests");
+        handle_key(&mut app, KeyCode::Char('a'), KeyModifiers::NONE);
+        assert_eq!(app.stats_view.as_ref().unwrap().category_name(), "all");
     }
 
     // ── saving ───────────────────────────────────────────────────────────────

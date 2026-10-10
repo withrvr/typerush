@@ -18,12 +18,11 @@ use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::time::{Duration, Instant};
 
-use crossterm::event::{KeyCode, KeyModifiers};
+use ratatui::crossterm::event::{KeyCode, KeyModifiers};
 use ratatui::layout::Rect;
 
-use crate::config::load::{CodeLangKind, DefaultMode};
 use crate::state::{self, AppState};
-use crate::storage::{ResultsComparison, SessionRecord, StatsSummary};
+use crate::storage::{ResultsComparison, SessionRecord, StatsView};
 use crate::theme::ThemePalette;
 use crate::words::{snippets::Snippet, WordDecor, WordPool};
 
@@ -150,56 +149,21 @@ pub enum MenuAction {
     Quit,
 }
 
-impl From<CodeLangKind> for crate::words::CodeLang {
-    fn from(kind: CodeLangKind) -> Self {
-        use crate::words::CodeLang;
-        match kind {
-            CodeLangKind::Rust => CodeLang::Rust,
-            CodeLangKind::Python => CodeLang::Python,
-            CodeLangKind::JavaScript => CodeLang::JavaScript,
-            CodeLangKind::Go => CodeLang::Go,
-            CodeLangKind::Java => CodeLang::Java,
-            CodeLangKind::Sql => CodeLang::Sql,
-            CodeLangKind::Shell => CodeLang::Shell,
-        }
-    }
-}
-
-/// Translate a `DefaultMode` (the config-side enum) into a runtime `Mode`.
-fn mode_for(default_mode: DefaultMode) -> Mode {
-    use crate::words::CodeLang;
-    match default_mode {
-        DefaultMode::Time(seconds) => Mode::Time(seconds),
-        DefaultMode::Words(count) => Mode::Words(count),
-        DefaultMode::Quote => Mode::Quote,
-        DefaultMode::Code(kind) => Mode::Code(CodeLang::from(kind)),
-        DefaultMode::Zen => Mode::Zen,
-        DefaultMode::Symbols(count) => Mode::Symbols(count),
-    }
-}
-
 /// Pick which menu row to highlight given the configured default mode.
 ///
 /// Exact match wins (e.g. `time_seconds = 30` → "Time · 30s"). Otherwise we
 /// fall back to the first row of the same mode family (so `time_seconds = 45`
 /// still pre-selects a time row rather than landing on something unrelated).
-fn best_menu_match(menu: &[MenuItem], default_mode: DefaultMode) -> usize {
-    let exact = mode_for(default_mode);
-    if let Some(index) = menu.iter().position(|item| item.mode == Some(exact)) {
-        return index;
-    }
-    let family_match = menu.iter().position(|item| {
-        matches!(
-            (item.mode, default_mode),
-            (Some(Mode::Time(_)), DefaultMode::Time(_))
-                | (Some(Mode::Words(_)), DefaultMode::Words(_))
-                | (Some(Mode::Code(_)), DefaultMode::Code(_))
-                | (Some(Mode::Quote), DefaultMode::Quote)
-                | (Some(Mode::Zen), DefaultMode::Zen)
-                | (Some(Mode::Symbols(_)), DefaultMode::Symbols(_))
-        )
-    });
-    family_match.unwrap_or(0)
+fn best_menu_match(menu: &[MenuItem], default_mode: Mode) -> usize {
+    let same_family =
+        |mode: &Mode| std::mem::discriminant(mode) == std::mem::discriminant(&default_mode);
+    menu.iter()
+        .position(|item| item.mode == Some(default_mode))
+        .or_else(|| {
+            menu.iter()
+                .position(|item| item.mode.as_ref().is_some_and(same_family))
+        })
+        .unwrap_or(0)
 }
 
 /// The menu with no custom sources — what tests and a fresh `App` start from.
@@ -439,8 +403,6 @@ pub struct App {
     /// Every character the user has typed during the session, including
     /// spaces (a correctly typed space also counts as a correct char).
     pub total_typed_chars: usize,
-    /// Total backspaces pressed — informational only.
-    pub backspaces: usize,
 
     // --- misc ---
     /// File the next `Mode::Custom` session types from: `--file`, or the
@@ -450,8 +412,6 @@ pub struct App {
     pub should_quit: bool,
     /// Transient error message rendered as a modal overlay.
     pub error_message: Option<String>,
-    /// Counts every `tick()`. Used to throttle costly UI updates if needed.
-    pub tick_count: u64,
     /// Active color palette — read by every UI module on every frame.
     pub theme: ThemePalette,
 
@@ -466,9 +426,10 @@ pub struct App {
     /// Results screen needs it and replaced by the updated list on every
     /// save. `None` until first needed (or after a failed save).
     pub stats_cache: Option<Vec<SessionRecord>>,
-    /// Summary figures for the Stats screen, computed from `stats_cache`
-    /// each time that screen is entered. `None` until the first Stats visit.
-    pub stats_summary: Option<StatsSummary>,
+    /// What the Stats screen shows (category, its summary, every mode's
+    /// best), built from `stats_cache` when that screen is entered and when
+    /// the category changes. `None` until the first Stats visit.
+    pub stats_view: Option<StatsView>,
     /// What the Results screen compares against, computed when that screen
     /// is entered (after the session is saved).
     pub results_comparison: Option<ResultsComparison>,
@@ -514,16 +475,12 @@ impl App {
     /// Touches no disk: snippets and the remembered file are added later by
     /// [`App::load_custom_sources`]. A `custom_file` (`--file`) is offered in
     /// the menu's custom row straight away.
-    pub fn new(
-        custom_file: Option<PathBuf>,
-        palette: ThemePalette,
-        default_mode: DefaultMode,
-    ) -> Self {
+    pub fn new(custom_file: Option<PathBuf>, palette: ThemePalette, default_mode: Mode) -> Self {
         // Always absolute (see `absolute`): labels and state.json then never
         // depend on the directory TypeRush happens to be in.
         let custom_file = custom_file.map(absolute);
         let menu = build_menu(&[], custom_file.as_deref());
-        let initial_mode = mode_for(default_mode);
+        let initial_mode = default_mode;
         let menu_index = best_menu_match(&menu, default_mode);
         Self {
             screen: Screen::Menu,
@@ -537,16 +494,14 @@ impl App {
             ended_at: None,
             correct_chars: 0,
             total_typed_chars: 0,
-            backspaces: 0,
             custom_file,
             should_quit: false,
             error_message: None,
-            tick_count: 0,
             theme: palette,
             key_hits: HashMap::new(),
             key_misses: HashMap::new(),
             stats_cache: None,
-            stats_summary: None,
+            stats_view: None,
             results_comparison: None,
             session_just_saved: false,
             word_pool: WordPool::Common,
@@ -759,17 +714,12 @@ impl App {
         }
     }
 
-    /// Convenience: `elapsed()` expressed in minutes (for the WPM formula).
-    pub fn elapsed_minutes(&self) -> f64 {
-        self.elapsed().as_secs_f64() / 60.0
-    }
-
     /// Live (or final) words-per-minute.
     ///
     /// Uses the industry-standard formula: a "word" is 5 characters, so
     /// `wpm = (correct_chars / 5) / minutes_elapsed`.
     pub fn wpm(&self) -> f64 {
-        let minutes = self.elapsed_minutes();
+        let minutes = self.elapsed().as_secs_f64() / 60.0;
         if minutes <= 0.0 {
             return 0.0;
         }
@@ -822,14 +772,12 @@ impl App {
         // Build the word list before touching any state: if a custom file
         // fails to load, the app is left exactly as it was.
         let text: Vec<String> = match mode {
-            // Time mode just needs *enough* words that no one runs out.
-            Mode::Time(_) => words::random_words_from(300, pool, decor),
+            // Endless modes: filled by `top_up_words` below, and topped up
+            // as the typist nears the end, so no one ever runs out.
+            Mode::Time(_) | Mode::Zen => Vec::new(),
             Mode::Words(count) => words::random_words_from(count, pool, decor),
             Mode::Quote => words::random_quote(),
             Mode::Code(lang) => words::random_code_snippet(lang),
-            // Zen stays calm and plain: the word settings are for time and
-            // words runs, which are scored; zen never is.
-            Mode::Zen => words::random_words_from(500, WordPool::Common, WordDecor::default()),
             Mode::Symbols(count) => words::symbols::random_symbol_tokens(count),
             Mode::Custom => {
                 let Some(path) = &self.custom_file else {
@@ -855,11 +803,28 @@ impl App {
         self.ended_at = None;
         self.correct_chars = 0;
         self.total_typed_chars = 0;
-        self.backspaces = 0;
         self.key_hits.clear();
         self.key_misses.clear();
+        self.top_up_words();
         self.screen = Screen::Typing;
         Ok(())
+    }
+
+    /// Time and zen runs end on the clock or on Esc, not on the last word:
+    /// keep at least a batch of words ahead of the cursor.
+    fn top_up_words(&mut self) {
+        const BATCH: usize = 100;
+        let (pool, decor) = match self.mode {
+            Mode::Time(_) => (self.word_pool, self.word_decor),
+            // Zen stays calm and plain: the word settings are for time and
+            // words runs, which are scored; zen never is.
+            Mode::Zen => (WordPool::Common, WordDecor::default()),
+            _ => return,
+        };
+        if self.words.len().saturating_sub(self.current_word) < BATCH {
+            let more = crate::words::random_words_from(BATCH, pool, decor);
+            self.words.extend(more.into_iter().map(Word::new));
+        }
     }
 
     /// Restart the most recent mode with a fresh word list.
@@ -948,17 +913,14 @@ impl App {
             if self.current_word > 0 {
                 self.current_word -= 1;
                 self.words[self.current_word].space_missed = false;
-                self.backspaces += 1;
             }
             return;
         }
 
         if delete_whole_word {
-            self.backspaces += active_word.typed.chars().count();
             active_word.typed.clear();
         } else {
             active_word.typed.pop();
-            self.backspaces += 1;
         }
     }
 
@@ -966,6 +928,7 @@ impl App {
     /// reaches the configured word/quote/code target.
     fn advance_word(&mut self) {
         self.current_word += 1;
+        self.top_up_words();
 
         // Count modes (words, symbol tokens): stop once the target is reached.
         if let Mode::Words(target) | Mode::Symbols(target) = self.mode {
@@ -982,12 +945,9 @@ impl App {
         }
     }
 
-    /// Called by the main loop every 100ms.
-    ///
-    /// Increments `tick_count` (for UI animation throttling) and, if we're in
-    /// a time-limited mode, ends the game when the timer expires.
+    /// Called by the main loop every 100ms: in a time-limited mode, ends the
+    /// game when the timer expires.
     pub fn tick(&mut self) {
-        self.tick_count = self.tick_count.wrapping_add(1);
         if self.screen != Screen::Typing {
             return;
         }
@@ -1006,14 +966,14 @@ mod tests {
     #[test]
     fn best_menu_match_exact_time() {
         let menu = default_menu();
-        let index = best_menu_match(&menu, DefaultMode::Time(30));
+        let index = best_menu_match(&menu, Mode::Time(30));
         assert_eq!(menu[index].label, "30s");
     }
 
     #[test]
     fn best_menu_match_exact_words() {
         let menu = default_menu();
-        let index = best_menu_match(&menu, DefaultMode::Words(100));
+        let index = best_menu_match(&menu, Mode::Words(100));
         assert_eq!(menu[index].label, "100");
     }
 
@@ -1022,30 +982,26 @@ mod tests {
         // 45 isn't one of the four standard time rows; we expect the first
         // time row ("Time · 15s") rather than something unrelated.
         let menu = default_menu();
-        let index = best_menu_match(&menu, DefaultMode::Time(45));
+        let index = best_menu_match(&menu, Mode::Time(45));
         assert_eq!(menu[index].label, "15s");
     }
 
     #[test]
     fn best_menu_match_falls_back_to_first_words_row() {
         let menu = default_menu();
-        let index = best_menu_match(&menu, DefaultMode::Words(7));
+        let index = best_menu_match(&menu, Mode::Words(7));
         assert_eq!(menu[index].label, "10");
     }
 
     #[test]
     fn best_menu_match_picks_zen_row() {
         let menu = default_menu();
-        let index = best_menu_match(&menu, DefaultMode::Zen);
+        let index = best_menu_match(&menu, Mode::Zen);
         assert_eq!(menu[index].label, "zen");
     }
 
     fn menu_app() -> App {
-        App::new(
-            None,
-            crate::theme::ThemePalette::default(),
-            DefaultMode::Time(30),
-        )
+        App::new(None, crate::theme::ThemePalette::default(), Mode::Time(30))
     }
 
     #[test]
@@ -1082,14 +1038,28 @@ mod tests {
         assert_eq!(app.menu[app.menu_index].group, "time");
     }
 
+    /// Time and zen runs never run out of words, however fast the typist.
+    #[test]
+    fn endless_modes_top_up_words() {
+        for mode in [Mode::Time(60), Mode::Zen] {
+            let mut app = menu_app();
+            app.start_game(mode).unwrap();
+            for _ in 0..1000 {
+                let word = app.words[app.current_word].text.clone();
+                for ch in word.chars().chain([' ']) {
+                    app.handle_char(ch);
+                }
+            }
+            assert_eq!(app.current_word, 1000, "{mode:?}");
+            assert!(app.words.len() >= 1100, "{mode:?}");
+            assert_eq!(app.screen, Screen::Typing, "{mode:?}");
+        }
+    }
+
     // ── per-key accuracy tracking (v0.3.0) ──────────────────────────────────
 
     fn make_app_with_word(word: &str) -> App {
-        let mut app = App::new(
-            None,
-            crate::theme::ThemePalette::default(),
-            DefaultMode::Time(15),
-        );
+        let mut app = App::new(None, crate::theme::ThemePalette::default(), Mode::Time(15));
         app.screen = Screen::Typing;
         app.mode = Mode::Words(1);
         app.words = vec![Word::new(word.into())];
@@ -1152,7 +1122,7 @@ mod tests {
     #[test]
     fn custom_mode_finishes_after_last_word() {
         let palette = crate::theme::ThemePalette::default();
-        let mut app = App::new(None, palette, DefaultMode::Time(15));
+        let mut app = App::new(None, palette, Mode::Time(15));
         app.mode = Mode::Custom;
         app.words = vec![Word::new("hi".into()), Word::new("bye".into())];
         app.screen = Screen::Typing;
@@ -1186,7 +1156,7 @@ mod tests {
 
     fn custom_app(words: &[&str]) -> App {
         let palette = crate::theme::ThemePalette::default();
-        let mut app = App::new(None, palette, DefaultMode::Time(15));
+        let mut app = App::new(None, palette, Mode::Time(15));
         app.mode = Mode::Custom;
         app.words = words.iter().map(|w| Word::new((*w).into())).collect();
         app.screen = Screen::Typing;
@@ -1305,12 +1275,12 @@ mod tests {
     fn best_menu_match_picks_symbols_row() {
         let menu = default_menu();
         assert_eq!(
-            menu[best_menu_match(&menu, DefaultMode::Symbols(50))].mode,
+            menu[best_menu_match(&menu, Mode::Symbols(50))].mode,
             Some(Mode::Symbols(50))
         );
         // A non-standard count falls back to the first symbols option.
         assert_eq!(
-            menu[best_menu_match(&menu, DefaultMode::Symbols(7))].mode,
+            menu[best_menu_match(&menu, Mode::Symbols(7))].mode,
             Some(Mode::Symbols(25))
         );
     }
@@ -1724,7 +1694,7 @@ mod tests {
         let mut app = App::new(
             Some(given.clone()),
             crate::theme::ThemePalette::default(),
-            DefaultMode::Time(15),
+            Mode::Time(15),
         );
         app.load_custom_sources(
             Vec::new(),

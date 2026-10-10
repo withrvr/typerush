@@ -113,7 +113,8 @@ flowchart LR
     SessionRecord + ~/.typerush/stats.json (atomic writes).
     personal_best, personal_best_for_mode, average_accuracy,
     streak, avg_wpm_last_n_days, key_accuracy,
-    StatsSummary, ResultsComparison"]
+    bests_by_mode, StatsSummary, StatsView,
+    ResultsComparison"]
     src --> state["state.rs
     ~/.typerush/state.json: the last custom file
     (atomic writes, path passed in)"]
@@ -134,15 +135,17 @@ flowchart LR
     config --> load["load.rs
     load_or_default_with(CliOverrides): never errors,
     bad files become one human-readable warning;
-    code_lang_kind: one name table for
+    code_lang: one name table for
     code_lang and --code"]
     src --> ui["ui/"]
     ui --> ui_mod["mod.rs
     render() dispatcher, background paint,
-    clickable footer (render_footer)"]
+    one clickable footer on the last row for every
+    screen (each render returns its hints)"]
     ui --> menu["menu.rs
-    banner + modes grouped by category, sized to fit
-    (big or compact banner, blank lines dropped top-first,
+    title row, then one full-width box: banner on top,
+    modes grouped by category, sized to fit (big or
+    compact banner, category gaps all or none,
     then scrolling with more hints); word settings on
     the bottom border; long rows wrap"]
     ui --> typing["typing.rs
@@ -150,7 +153,8 @@ flowchart LR
     ui --> results["results.rs
     WPM delta, mode best, sparkline"]
     ui --> stats["stats.rs
-    summary, key heatmap, sparkline, recent table"]
+    categories, summary, key heatmap, sparkline,
+    scrolling sessions table (★ bests), bests table"]
     ui --> help["help.rs
     help overlay and error modal"]
     src --> words["words/"]
@@ -231,9 +235,15 @@ redraws every 100 ms tick and on every input event, mouse motion included).
   it. `storage::save_session_to_path` re-reads the file, appends, writes, and
   returns the updated list, which replaces the cache — so `stats.json` stays
   the single source of truth and an outside edit shows up after the next save.
-- **`App::stats_summary: Option<StatsSummary>`** — PB, averages, streak,
-  rolling averages and the key-accuracy list, computed from the cache once
-  each time the Stats screen is entered.
+- **`App::stats_view: Option<StatsView>`** (v0.4.1) — the Stats screen's
+  category (all, bests, or one mode), the history indices of that
+  category's sessions, its `StatsSummary` (PB, averages, streak, time typed,
+  key accuracy), every mode's best (`bests_by_mode`) and the set of
+  best-holding sessions for the ★. Built from the cache when the screen is
+  entered (except when coming back from Help) and when the category
+  changes; never per frame. The summary helpers take any iterator of
+  `&SessionRecord`, so a category is summarised by reference. The list's
+  scroll is a `Cell` so drawing can clamp it to the rows that fit.
 
 All of this bookkeeping lives in `main.rs::after_input`, which also saves each
 finished game exactly once: the "saved" flag is cleared only when a new game
@@ -291,9 +301,14 @@ crate. We don't directly use any platform-specific code, so the binary is a
 
 - Render loop runs at 10 fps (100ms tick). The actual `terminal.draw` cost is
   dominated by ratatui's diff algorithm — only changed cells are repainted.
-- `get_char_states` is O(n) in word length and is called once per visible word
-  per frame. For a 100-word session that's still a microsecond-level cost.
-- No allocations in the hot path beyond what ratatui itself does for spans.
+- The typing screen lays out line numbers for every word (a character
+  count each), then styles only the words on visible lines: the box scrolls
+  so the cursor's line stays second from the top. A keystroke's redraw costs
+  the same at word 10 and word 1000.
+- `get_char_states` is O(n) in word length, walks both strings with
+  iterators and is called once per visible word per frame.
+- Time and zen runs keep 100 words ahead of the cursor (`App::top_up_words`)
+  instead of generating a large list up front.
 
 ---
 
@@ -313,9 +328,8 @@ crate. We don't directly use any platform-specific code, so the binary is a
 
 1. Add a variant to `CodeLang` (`src/words/mod.rs`) and a snippet pool in
    `src/words/quotes.rs`; match it in `random_code_snippet`.
-2. Add the `CodeLangKind` mirror (`src/config/load.rs`), its names in
-   `code_lang_kind` (this one table serves both `code_lang` and `--code`),
-   and the arm in `impl From<CodeLangKind> for CodeLang` (`src/app.rs`).
+2. Add its names to `code_lang` in `src/config/load.rs` (this one table
+   serves both `code_lang` in the config and `--code`).
 3. Add a `start("code", …)` entry to `build_menu()`.
 
 ---
@@ -324,9 +338,10 @@ crate. We don't directly use any platform-specific code, so the binary is a
 
 1. Declare a `pub const` of type `ThemePalette` in `src/theme/builtin.rs`.
    Fill every slot (`accent`, `secondary`, `correct`, `incorrect`, `pending`,
-   `extra`, `mode_tag`, `error`, `neutral`, `background`). `extra` is unused
-   but still required by the struct. For light-background themes, pick colors
-   at ≥4.5:1 contrast against the bg.
+   `mode_tag`, `error`, `neutral`, `background`). Every text color needs at
+   least 4.5:1 contrast against the background, and `pending` (untyped text)
+   must stay dimmer than `correct` and `neutral` — the
+   `rgb_themes_meet_contrast_minimum` test checks both.
 2. Append `("name", YOUR_THEME)` to `ALL` in the same file.
 3. That's it. The CLI loader (`--theme <name>`), the config loader (`theme =
    "..."`), and `--list-themes` all iterate `ALL` — no other wiring needed.

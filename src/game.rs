@@ -41,22 +41,18 @@ pub enum CharState {
 /// get_char_states("rust", "ru")   // Correct, Correct, Pending, Pending
 /// ```
 pub fn get_char_states(target: &str, typed: &str) -> Vec<(char, CharState)> {
-    let target_chars: Vec<char> = target.chars().collect();
-    let typed_chars: Vec<char> = typed.chars().collect();
-    let mut result = Vec::with_capacity(target_chars.len());
-
-    // Walk the target word. For each target char, decide whether the user
-    // has typed the right one, the wrong one, or nothing yet.
-    for (index, &target_char) in target_chars.iter().enumerate() {
-        let state = match typed_chars.get(index) {
-            Some(&typed_char) if typed_char == target_char => CharState::Correct,
-            Some(_) => CharState::Incorrect,
-            None => CharState::Pending,
-        };
-        result.push((target_char, state));
-    }
-
-    result
+    let mut typed_chars = typed.chars();
+    target
+        .chars()
+        .map(|target_char| {
+            let state = match typed_chars.next() {
+                Some(typed_char) if typed_char == target_char => CharState::Correct,
+                Some(_) => CharState::Incorrect,
+                None => CharState::Pending,
+            };
+            (target_char, state)
+        })
+        .collect()
 }
 
 #[cfg(test)]

@@ -11,21 +11,22 @@ use ratatui::{
     widgets::{Block, Borders, Paragraph, Sparkline},
 };
 
-use crossterm::event::KeyCode;
+use ratatui::crossterm::event::{KeyCode, KeyModifiers};
 
-use super::key;
+use super::{key, label};
 use crate::{app::App, storage};
 
 /// Render the post-session results screen.
-pub fn render(f: &mut Frame, app: &App) {
-    let area = f.area();
+/// Returns the footer hints.
+pub fn render(f: &mut Frame, app: &App, area: Rect) -> &'static [super::Hint] {
     let theme = &app.theme;
+    // Title row and a blank row (as on every screen), the results box sized
+    // to its six lines, then a compact trend strip.
     let layout = Layout::vertical([
-        Constraint::Length(3),
-        Constraint::Length(10),
+        Constraint::Length(2),
+        Constraint::Length(8),
         Constraint::Length(6),
         Constraint::Min(0),
-        Constraint::Length(3),
     ])
     .split(area);
 
@@ -60,7 +61,7 @@ pub fn render(f: &mut Frame, app: &App) {
                 theme.incorrect
             };
             Span::styled(
-                format!(" ({sign}{:.0} vs last)", diff),
+                format!("  ({sign}{:.0} vs last)", diff),
                 Style::default().fg(color),
             )
         }
@@ -86,8 +87,8 @@ pub fn render(f: &mut Frame, app: &App) {
 
     let pb_line = if is_zen {
         Line::from(vec![
-            Span::styled("  mode best  ", Style::default().fg(theme.pending)),
-            Span::styled("  — (zen not saved)", Style::default().fg(theme.pending)),
+            label(app, "mode best"),
+            Span::styled("— (zen not saved)", Style::default().fg(theme.pending)),
         ])
     } else {
         // Best including this session if it was recorded. No recorded session
@@ -97,7 +98,7 @@ pub fn render(f: &mut Frame, app: &App) {
             (false, previous) => previous,
         };
         let pb_value = Span::styled(
-            mode_pb_now.map_or("     — wpm".to_string(), |pb| format!("{:>6.1} wpm", pb)),
+            mode_pb_now.map_or("— wpm".to_string(), |pb| format!("{pb:.1} wpm")),
             Style::default()
                 .fg(theme.accent)
                 .add_modifier(Modifier::BOLD),
@@ -112,20 +113,14 @@ pub fn render(f: &mut Frame, app: &App) {
         } else {
             Span::raw("")
         };
-        Line::from(vec![
-            // The mode is named on the row above; a fixed-width label keeps
-            // the value in the same column as wpm/accuracy for every mode.
-            Span::styled("  mode best  ", Style::default().fg(theme.pending)),
-            pb_value,
-            badge,
-        ])
+        Line::from(vec![label(app, "mode best"), pb_value, badge])
     };
 
     let body_lines = vec![
         Line::from(vec![
-            Span::styled("  wpm        ", Style::default().fg(theme.pending)),
+            label(app, "wpm"),
             Span::styled(
-                format!("{:>6.1}", wpm),
+                format!("{wpm:.1}"),
                 Style::default()
                     .fg(theme.secondary)
                     .add_modifier(Modifier::BOLD),
@@ -133,25 +128,22 @@ pub fn render(f: &mut Frame, app: &App) {
             delta,
         ]),
         Line::from(vec![
-            Span::styled("  accuracy   ", Style::default().fg(theme.pending)),
-            Span::styled(format!("{:>6.1}%", acc), Style::default().fg(theme.correct)),
+            label(app, "accuracy"),
+            Span::styled(format!("{acc:.1}%"), Style::default().fg(theme.correct)),
         ]),
         Line::from(vec![
-            Span::styled("  time       ", Style::default().fg(theme.pending)),
-            Span::styled(
-                format!("{:>5.1}s", elapsed),
-                Style::default().fg(theme.accent),
-            ),
+            label(app, "time"),
+            Span::styled(format!("{elapsed:.1}s"), Style::default().fg(theme.accent)),
         ]),
         Line::from(vec![
-            Span::styled("  chars      ", Style::default().fg(theme.pending)),
+            label(app, "chars"),
             Span::styled(
                 format!("{}/{}", app.correct_chars, app.total_typed_chars),
                 Style::default().fg(theme.neutral),
             ),
         ]),
         Line::from(vec![
-            Span::styled("  mode       ", Style::default().fg(theme.pending)),
+            label(app, "mode"),
             Span::styled(&mode_label, Style::default().fg(theme.mode_tag)),
         ]),
         pb_line,
@@ -182,16 +174,15 @@ pub fn render(f: &mut Frame, app: &App) {
         .style(Style::default().fg(theme.accent));
     f.render_widget(spark, layout[2]);
 
-    super::render_footer(
-        f,
-        app,
-        layout[4],
-        &[
-            ("Enter / r restart", key(KeyCode::Enter)),
-            ("m / esc menu", key(KeyCode::Char('m'))),
-            ("s / tab stats", key(KeyCode::Char('s'))),
-            ("q quit", key(KeyCode::Char('q'))),
-            ("? help", key(KeyCode::Char('?'))),
-        ],
-    );
+    const HINTS: &[super::Hint] = &[
+        ("Enter / F5 restart", key(KeyCode::Enter)),
+        ("Esc menu", key(KeyCode::Esc)),
+        ("Tab stats", key(KeyCode::Tab)),
+        ("F1 help", key(KeyCode::F(1))),
+        (
+            "Ctrl+C quit",
+            Some((KeyCode::Char('c'), KeyModifiers::CONTROL)),
+        ),
+    ];
+    HINTS
 }

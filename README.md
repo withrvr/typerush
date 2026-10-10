@@ -115,7 +115,7 @@ typerush --list-snippets      # see every snippet in ~/.typerush/snippets/
 | `Enter`         | start / restart a session       |
 | `Esc`           | back to menu / end session      |
 | `Ctrl+R` / `F5` | restart the current mode        |
-| `Tab` / `s`     | jump to your stats history      |
+| `Tab`           | jump to your stats history      |
 | `?` / `F1`      | open the keybindings overlay    |
 | `Ctrl+C`        | quit                            |
 
@@ -135,6 +135,10 @@ shows your personal best, average accuracy, a trend sparkline, and your last
 - 📅 **7- and 30-day WPM averages**
 - ⌨️ **Per-key accuracy heatmap** — find the keys that slow you down
 - 🏅 **Per-mode personal bests** — a separate record for `time-30s`, `words-50`, etc.
+
+And as of v0.4.1, **stats by category**: flip through every mode with `←` / `→`
+to see its own summary, trend and full session list, or a table of your best
+in every mode — with a ★ on each record-holding run.
 
 ---
 

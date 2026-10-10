@@ -9,11 +9,12 @@ pub mod quotes;
 pub mod snippets;
 pub mod symbols;
 
+use std::io::Read;
 use std::path::Path;
 
 use anyhow::Context;
-use rand::seq::SliceRandom;
-use rand::{thread_rng, Rng};
+use rand::seq::IndexedRandom;
+use rand::{Rng, RngExt};
 
 /// Which English-word pool to draw from in [`random_words_from`].
 ///
@@ -45,7 +46,7 @@ pub struct WordDecor {
 /// Pick `count` random English words from the requested pool, optionally
 /// decorated with punctuation / numbers.
 pub fn random_words_from(count: usize, pool: WordPool, decor: WordDecor) -> Vec<String> {
-    let mut rng = thread_rng();
+    let mut rng = rand::rng();
     let words: &[&str] = match pool {
         WordPool::Common => english::ENGLISH_COMMON,
         WordPool::Extended => english::ENGLISH_10000,
@@ -54,11 +55,11 @@ pub fn random_words_from(count: usize, pool: WordPool, decor: WordDecor) -> Vec<
         .map(|_| {
             // ~12% of slots become numbers when the toggle is on — frequent
             // enough to be felt, rare enough not to dominate the session.
-            if decor.numbers && rng.gen_bool(0.12) {
+            if decor.numbers && rng.random_bool(0.12) {
                 return random_number(&mut rng);
             }
             let base = words.choose(&mut rng).copied().unwrap_or("the").to_string();
-            if decor.punctuation && rng.gen_bool(0.25) {
+            if decor.punctuation && rng.random_bool(0.25) {
                 decorate_with_punctuation(&base, &mut rng)
             } else {
                 base
@@ -70,14 +71,14 @@ pub fn random_words_from(count: usize, pool: WordPool, decor: WordDecor) -> Vec<
 /// Generate a short numeric literal (1–4 digits). Used by the numbers toggle.
 fn random_number(rng: &mut impl Rng) -> String {
     // 1–4 digits, each length equally likely.
-    let len = rng.gen_range(1..=4);
+    let len = rng.random_range(1..=4);
     let mut s = String::with_capacity(len);
     for i in 0..len {
         // Avoid leading zero on multi-digit numbers — they look weird ("042").
         let digit = if i == 0 && len > 1 {
-            rng.gen_range(1..=9)
+            rng.random_range(1..=9)
         } else {
-            rng.gen_range(0..=9)
+            rng.random_range(0..=9)
         };
         s.push(char::from(b'0' + digit as u8));
     }
@@ -91,9 +92,9 @@ fn decorate_with_punctuation(word: &str, rng: &mut impl Rng) -> String {
     // Punctuation that goes *after* a word (most common in prose).
     const TAIL: &[&str] = &[",", ".", ";", ":", "?", "!", "...", "\"", "'"];
     // 1 in 5 punctuation slots wraps the word with paired marks.
-    if rng.gen_bool(0.2) {
+    if rng.random_bool(0.2) {
         let pairs = [("\"", "\""), ("'", "'"), ("(", ")"), ("[", "]")];
-        let (open, close) = pairs[rng.gen_range(0..pairs.len())];
+        let (open, close) = pairs[rng.random_range(0..pairs.len())];
         return format!("{}{}{}", open, word, close);
     }
     let tail = TAIL.choose(rng).copied().unwrap_or(",");
@@ -103,7 +104,7 @@ fn decorate_with_punctuation(word: &str, rng: &mut impl Rng) -> String {
 /// Pick a random famous programming quote from the built-in list, split into
 /// whitespace-separated words.
 pub fn random_quote() -> Vec<String> {
-    let mut rng = thread_rng();
+    let mut rng = rand::rng();
     let quote = quotes::QUOTES.choose(&mut rng).copied().unwrap_or("");
     quote.split_whitespace().map(|s| s.to_string()).collect()
 }
@@ -111,7 +112,7 @@ pub fn random_quote() -> Vec<String> {
 /// Pick a random short code snippet for the given language, split into
 /// whitespace-separated words.
 pub fn random_code_snippet(lang: CodeLang) -> Vec<String> {
-    let mut rng = thread_rng();
+    let mut rng = rand::rng();
     let pool: &[&str] = match lang {
         CodeLang::Rust => quotes::CODE_RUST,
         CodeLang::Python => quotes::CODE_PYTHON,
@@ -137,9 +138,16 @@ pub enum CodeLang {
     Shell,
 }
 
+/// Largest custom file read: 1 MiB is about 170,000 words, far more than
+/// one sitting, and keeps a huge file from taking all memory.
+const MAX_FILE_BYTES: u64 = 1024 * 1024;
+
 /// Read a user-supplied text file and split it into words on whitespace.
 /// A missing or unreadable file surfaces as `Err` naming the path — a stale
 /// remembered file or deleted snippet otherwise shows a bare OS error.
+///
+/// Only regular files up to [`MAX_FILE_BYTES`] are read: a pipe or a device
+/// (`--file /dev/zero`) would otherwise block forever or fill memory.
 ///
 /// Characters that can't be typed are dropped (see `text::is_untypeable`):
 /// a byte-order mark would otherwise make the first word impossible to get
@@ -147,12 +155,41 @@ pub enum CodeLang {
 pub fn words_from_file(path: &Path) -> anyhow::Result<Vec<String>> {
     // The path is shown made safe: it can contain any character, a newline
     // or an escape sequence included.
-    let content = std::fs::read_to_string(path).with_context(|| {
-        format!(
-            "can't read {}",
-            crate::text::printable(&path.display().to_string())
-        )
-    })?;
+    let shown = || crate::text::printable(&path.display().to_string()).into_owned();
+    let metadata = std::fs::metadata(path).with_context(|| format!("can't read {}", shown()))?;
+    if !metadata.is_file() {
+        anyhow::bail!("{} is not a regular file", shown());
+    }
+    if metadata.len() > MAX_FILE_BYTES {
+        anyhow::bail!("{} is too big to type (over 1 MiB)", shown());
+    }
+    // The opened handle is checked again: the path could have been swapped
+    // for a device or directory since the check above. (A swap to a named
+    // pipe would still block in `open`; that needs someone else writing to
+    // your own snippets folder, and isn't worth platform-specific flags.)
+    // `take` still bounds the read if the file grows after the size check.
+    let mut bytes = Vec::new();
+    std::fs::File::open(path)
+        .and_then(|file| {
+            if !file.metadata()?.is_file() {
+                return Err(std::io::Error::other("not a regular file"));
+            }
+            file.take(MAX_FILE_BYTES).read_to_end(&mut bytes)
+        })
+        .with_context(|| format!("can't read {}", shown()))?;
+    let at_limit = bytes.len() as u64 == MAX_FILE_BYTES;
+    let content = match String::from_utf8(bytes) {
+        Ok(text) => text,
+        // Only a character cut in half by the size limit is dropped; any
+        // other broken UTF-8 is the file's own, and is reported.
+        Err(err) if at_limit && err.utf8_error().error_len().is_none() => {
+            let valid = err.utf8_error().valid_up_to();
+            let mut bytes = err.into_bytes();
+            bytes.truncate(valid);
+            String::from_utf8(bytes).expect("valid UTF-8 up to here")
+        }
+        Err(_) => anyhow::bail!("{} is not UTF-8 text", shown()),
+    };
     Ok(content
         .split_whitespace()
         .map(|word| {
@@ -179,6 +216,48 @@ mod tests {
             words_from_file(&path).unwrap(),
             ["plain", "[2Jclear", "name"]
         );
+    }
+
+    /// A pipe, device or directory is refused instead of blocking forever
+    /// or filling memory, and so is a file over the size limit.
+    #[test]
+    fn file_words_refuse_non_files_and_huge_files() {
+        let dir = tempfile::tempdir().unwrap();
+        let err = words_from_file(dir.path()).unwrap_err();
+        assert!(err.to_string().contains("not a regular file"), "{err}");
+        let big = dir.path().join("big.txt");
+        std::fs::write(&big, "a ".repeat(MAX_FILE_BYTES as usize / 2 + 1)).unwrap();
+        let err = words_from_file(&big).unwrap_err();
+        assert!(err.to_string().contains("too big"), "{err}");
+        #[cfg(unix)]
+        {
+            let err = words_from_file(Path::new("/dev/zero")).unwrap_err();
+            assert!(err.to_string().contains("not a regular file"), "{err}");
+        }
+    }
+
+    /// A character cut in half by the 1 MiB limit is dropped. A small file
+    /// that ends in half a character is broken itself, and is refused like
+    /// any text that isn't UTF-8 — never silently shortened.
+    #[test]
+    fn file_words_drop_a_cut_character_and_refuse_non_utf8() {
+        let dir = tempfile::tempdir().unwrap();
+        let at_limit = dir.path().join("limit.txt");
+        let mut bytes = b"ab ".repeat(MAX_FILE_BYTES as usize / 3);
+        bytes.resize(MAX_FILE_BYTES as usize - 2, b' ');
+        bytes.extend_from_slice(b"\xE2\x82");
+        std::fs::write(&at_limit, &bytes).unwrap();
+        let words = words_from_file(&at_limit).unwrap();
+        assert!(words.iter().all(|w| w == "ab"), "cut character kept");
+
+        let broken = dir.path().join("broken.txt");
+        std::fs::write(&broken, b"hello wor\xE2\x82").unwrap();
+        let err = words_from_file(&broken).unwrap_err();
+        assert!(err.to_string().contains("not UTF-8"), "{err}");
+        let latin1 = dir.path().join("latin1.txt");
+        std::fs::write(&latin1, b"caf\xE9 au lait").unwrap();
+        let err = words_from_file(&latin1).unwrap_err();
+        assert!(err.to_string().contains("not UTF-8"), "{err}");
     }
 
     /// A UTF-8 byte-order mark (some Windows editors write one) must not
@@ -377,7 +456,7 @@ mod tests {
     #[test]
     fn random_number_avoids_leading_zero_for_multi_digit() {
         // Generate many random numbers and ensure no multi-digit one starts with 0.
-        let mut rng = rand::thread_rng();
+        let mut rng = rand::rng();
         for _ in 0..200 {
             let n = random_number(&mut rng);
             if n.len() > 1 {

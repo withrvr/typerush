@@ -7,12 +7,11 @@
 
 use std::path::{Path, PathBuf};
 
-use ratatui::style::Color;
-
 use super::{Colors, Config};
+use crate::app::Mode;
 use crate::storage;
 use crate::theme::{self, builtin, ThemePalette};
-use crate::words::{WordDecor, WordPool};
+use crate::words::{CodeLang, WordDecor, WordPool};
 
 /// Final, fully-resolved configuration the rest of the app consumes.
 ///
@@ -24,7 +23,7 @@ pub struct ResolvedConfig {
     /// Final palette to render with.
     pub palette: ThemePalette,
     /// Pre-selected mode for the menu (and starting `App::mode`).
-    pub default_mode: DefaultMode,
+    pub default_mode: Mode,
     /// Which English word pool to use in Time / Words / Zen modes. Default
     /// is the legacy `Common` pool so a missing config behaves like v0.3.
     pub word_pool: WordPool,
@@ -32,44 +31,12 @@ pub struct ResolvedConfig {
     pub word_decor: WordDecor,
 }
 
-/// Coarse picker for which menu row to highlight on launch. Distinct from
-/// `app::Mode` because we don't want config-loading to depend on the runtime
-/// `Mode` enum's variants.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum DefaultMode {
-    /// `time-Ns` — value is N (seconds).
-    Time(u64),
-    /// `words-N` — value is N (words).
-    Words(usize),
-    /// Single quote round.
-    Quote,
-    /// Language identifier matching `app::Mode::Code`.
-    Code(CodeLangKind),
-    /// Zen mode.
-    Zen,
-    /// `symbols-N` — value is N (symbol tokens). Added in v0.4.0.
-    Symbols(usize),
-}
-
-/// Mirror of `crate::words::CodeLang` for config-resolution purposes.
-/// Kept here so the config module doesn't depend on the words module.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum CodeLangKind {
-    Rust,
-    Python,
-    JavaScript,
-    Go,
-    Java,
-    Sql,
-    Shell,
-}
-
 impl Default for ResolvedConfig {
     fn default() -> Self {
         Self {
             palette: ThemePalette::default(),
             // Picked in agreement with the v0.2.0 spec: "default scheme time 15 sec".
-            default_mode: DefaultMode::Time(15),
+            default_mode: Mode::Time(15),
             word_pool: WordPool::Common,
             word_decor: WordDecor::default(),
         }
@@ -217,68 +184,123 @@ fn resolve_words_section(
 }
 
 fn apply_color_overrides(
-    base: ThemePalette,
+    mut palette: ThemePalette,
     overrides: &Colors,
     warnings: &mut Vec<String>,
 ) -> ThemePalette {
-    let mut parsed: Vec<(&str, Color)> = vec![];
-    let mut try_push = |slot: &'static str, value: &Option<String>, warnings: &mut Vec<String>| {
+    // `extra` is accepted (old configs set it) and still checked, but no
+    // longer drawn.
+    let mut extra = palette.background;
+    let slots = [
+        ("extra", &overrides.extra, &mut extra),
+        ("accent", &overrides.accent, &mut palette.accent),
+        ("secondary", &overrides.secondary, &mut palette.secondary),
+        ("correct", &overrides.correct, &mut palette.correct),
+        ("incorrect", &overrides.incorrect, &mut palette.incorrect),
+        ("pending", &overrides.pending, &mut palette.pending),
+        ("mode_tag", &overrides.mode_tag, &mut palette.mode_tag),
+        ("error", &overrides.error, &mut palette.error),
+        ("neutral", &overrides.neutral, &mut palette.neutral),
+        ("background", &overrides.background, &mut palette.background),
+    ];
+    for (slot, value, color) in slots {
         if let Some(input) = value {
             match theme::color::parse_color(input) {
-                Ok(color) => parsed.push((slot, color)),
+                Ok(parsed) => *color = parsed,
                 Err(err) => warnings.push(format!("bad color for '{}': {}", slot, err)),
             }
         }
-    };
-    try_push("accent", &overrides.accent, warnings);
-    try_push("secondary", &overrides.secondary, warnings);
-    try_push("correct", &overrides.correct, warnings);
-    try_push("incorrect", &overrides.incorrect, warnings);
-    try_push("pending", &overrides.pending, warnings);
-    try_push("extra", &overrides.extra, warnings);
-    try_push("mode_tag", &overrides.mode_tag, warnings);
-    try_push("error", &overrides.error, warnings);
-    try_push("neutral", &overrides.neutral, warnings);
-    try_push("background", &overrides.background, warnings);
-    base.with_overrides(&parsed)
+    }
+    palette
 }
 
-fn resolve_default_mode(
-    defaults: Option<&super::Defaults>,
+/// Longest time run, in seconds: an hour.
+pub const MAX_SECONDS: u16 = 3600;
+/// Most words or symbol tokens in one run.
+pub const MAX_COUNT: u16 = 10_000;
+
+/// `count` if it is from 1 to `max` — the one rule for run lengths, used by
+/// the command line and the config alike. A zero count would start a session
+/// with nothing to type; a huge one would build billions of words.
+pub fn check_count<T: PartialOrd + From<u16>>(count: T, max: u16) -> Result<T, String> {
+    if count >= T::from(1) && count <= T::from(max) {
+        Ok(count)
+    } else {
+        Err(format!("must be between 1 and {max}"))
+    }
+}
+
+/// A config count: `default` when unset, or with a warning when out of range.
+fn config_count<T>(
+    name: &str,
+    value: Option<T>,
+    max: u16,
+    default: T,
     warnings: &mut Vec<String>,
-) -> DefaultMode {
+) -> T
+where
+    T: PartialOrd + From<u16> + std::fmt::Display + Copy,
+{
+    let Some(value) = value else {
+        return default;
+    };
+    check_count(value, max).unwrap_or_else(|problem| {
+        warnings.push(format!("{name} {problem}, using {default}"));
+        default
+    })
+}
+
+fn resolve_default_mode(defaults: Option<&super::Defaults>, warnings: &mut Vec<String>) -> Mode {
     let Some(defaults) = defaults else {
-        return DefaultMode::Time(15);
+        return Mode::Time(15);
     };
     let mode_name = defaults.mode.as_deref().unwrap_or("time");
     match mode_name.to_lowercase().as_str() {
-        "time" => DefaultMode::Time(defaults.time_seconds.unwrap_or(15)),
-        "words" => DefaultMode::Words(defaults.word_count.unwrap_or(25)),
-        "quote" => DefaultMode::Quote,
+        "time" => Mode::Time(config_count(
+            "time_seconds",
+            defaults.time_seconds,
+            MAX_SECONDS,
+            15,
+            warnings,
+        )),
+        "words" => Mode::Words(config_count(
+            "word_count",
+            defaults.word_count,
+            MAX_COUNT,
+            25,
+            warnings,
+        )),
+        "quote" => Mode::Quote,
         "code" => {
             let name = defaults.code_lang.as_deref().unwrap_or("rust");
-            DefaultMode::Code(code_lang_kind(name).unwrap_or_else(|| {
+            Mode::Code(code_lang(name).unwrap_or_else(|| {
                 warnings.push(format!(
                     "unknown code_lang '{}', falling back to 'rust'",
                     name.to_lowercase()
                 ));
-                CodeLangKind::Rust
+                CodeLang::Rust
             }))
         }
-        "zen" => DefaultMode::Zen,
-        "symbols" => DefaultMode::Symbols(match defaults.symbol_count {
-            Some(0) => {
-                warnings.push("symbol_count must be at least 1, using 25".to_string());
-                25
-            }
-            count => count.unwrap_or(25),
-        }),
+        "zen" => Mode::Zen,
+        "symbols" => Mode::Symbols(config_count(
+            "symbol_count",
+            defaults.symbol_count,
+            MAX_COUNT,
+            25,
+            warnings,
+        )),
         other => {
             warnings.push(format!(
                 "unknown default mode '{}', falling back to 'time'",
                 other
             ));
-            DefaultMode::Time(defaults.time_seconds.unwrap_or(15))
+            Mode::Time(config_count(
+                "time_seconds",
+                defaults.time_seconds,
+                MAX_SECONDS,
+                15,
+                warnings,
+            ))
         }
     }
 }
@@ -286,15 +308,15 @@ fn resolve_default_mode(
 /// The code-language names accepted by both `code_lang` in the config and
 /// `--code` on the command line (case-insensitive). `None` for anything else;
 /// each caller decides what an unknown name means (a warning vs an error).
-pub fn code_lang_kind(name: &str) -> Option<CodeLangKind> {
+pub fn code_lang(name: &str) -> Option<CodeLang> {
     Some(match name.to_lowercase().as_str() {
-        "rust" | "rs" => CodeLangKind::Rust,
-        "python" | "py" => CodeLangKind::Python,
-        "js" | "javascript" => CodeLangKind::JavaScript,
-        "go" | "golang" => CodeLangKind::Go,
-        "java" => CodeLangKind::Java,
-        "sql" => CodeLangKind::Sql,
-        "shell" | "sh" | "bash" => CodeLangKind::Shell,
+        "rust" | "rs" => CodeLang::Rust,
+        "python" | "py" => CodeLang::Python,
+        "js" | "javascript" => CodeLang::JavaScript,
+        "go" | "golang" => CodeLang::Go,
+        "java" => CodeLang::Java,
+        "sql" => CodeLang::Sql,
+        "shell" | "sh" | "bash" => CodeLang::Shell,
         _ => return None,
     })
 }
@@ -303,6 +325,7 @@ pub fn code_lang_kind(name: &str) -> Option<CodeLangKind> {
 mod tests {
     use super::*;
     use crate::config::{Colors, Defaults};
+    use ratatui::style::Color;
 
     /// Resolve `raw` with only a `--theme` override (most tests need no more).
     fn resolve(raw: Config, theme: Option<&str>) -> (ResolvedConfig, Vec<String>) {
@@ -320,7 +343,7 @@ mod tests {
         let (resolved, warnings) = resolve(Config::default(), None);
         assert!(warnings.is_empty());
         assert_eq!(resolved.palette, builtin::DARK);
-        assert_eq!(resolved.default_mode, DefaultMode::Time(15));
+        assert_eq!(resolved.default_mode, Mode::Time(15));
     }
 
     #[test]
@@ -398,7 +421,7 @@ mod tests {
             ..Default::default()
         };
         let (resolved, _) = resolve(raw, None);
-        assert_eq!(resolved.default_mode, DefaultMode::Words(100));
+        assert_eq!(resolved.default_mode, Mode::Words(100));
     }
 
     #[test]
@@ -411,7 +434,7 @@ mod tests {
             ..Default::default()
         };
         let (resolved, warnings) = resolve(raw, None);
-        assert_eq!(resolved.default_mode, DefaultMode::Time(15));
+        assert_eq!(resolved.default_mode, Mode::Time(15));
         assert!(!warnings.is_empty());
     }
 
@@ -442,10 +465,7 @@ mod tests {
             ..Default::default()
         };
         let (resolved, _) = resolve(raw, None);
-        assert_eq!(
-            resolved.default_mode,
-            DefaultMode::Code(CodeLangKind::Python)
-        );
+        assert_eq!(resolved.default_mode, Mode::Code(CodeLang::Python));
     }
 
     // ── v0.4.0 additions ────────────────────────────────────────────────────
@@ -454,13 +474,13 @@ mod tests {
     fn new_code_langs_resolve_correctly() {
         use crate::config::Defaults;
         for (input, expected) in [
-            ("go", CodeLangKind::Go),
-            ("golang", CodeLangKind::Go),
-            ("java", CodeLangKind::Java),
-            ("sql", CodeLangKind::Sql),
-            ("shell", CodeLangKind::Shell),
-            ("bash", CodeLangKind::Shell),
-            ("sh", CodeLangKind::Shell),
+            ("go", CodeLang::Go),
+            ("golang", CodeLang::Go),
+            ("java", CodeLang::Java),
+            ("sql", CodeLang::Sql),
+            ("shell", CodeLang::Shell),
+            ("bash", CodeLang::Shell),
+            ("sh", CodeLang::Shell),
         ] {
             let raw = Config {
                 defaults: Some(Defaults {
@@ -477,7 +497,7 @@ mod tests {
                 input,
                 warnings
             );
-            assert_eq!(resolved.default_mode, DefaultMode::Code(expected));
+            assert_eq!(resolved.default_mode, Mode::Code(expected));
         }
     }
 
@@ -494,7 +514,73 @@ mod tests {
         };
         let (resolved, warnings) = resolve(raw, None);
         assert!(warnings.is_empty());
-        assert_eq!(resolved.default_mode, DefaultMode::Symbols(40));
+        assert_eq!(resolved.default_mode, Mode::Symbols(40));
+    }
+
+    /// Config counts follow the same 1..=max rule as the command line: out
+    /// of range warns and uses the default.
+    #[test]
+    fn out_of_range_config_counts_warn_and_use_defaults() {
+        use crate::config::Defaults;
+        for (mode, defaults, expected) in [
+            (
+                "words",
+                Defaults {
+                    word_count: Some(0),
+                    ..Default::default()
+                },
+                Mode::Words(25),
+            ),
+            (
+                "time",
+                Defaults {
+                    time_seconds: Some(99_999_999),
+                    ..Default::default()
+                },
+                Mode::Time(15),
+            ),
+            (
+                "symbols",
+                Defaults {
+                    symbol_count: Some(10_001),
+                    ..Default::default()
+                },
+                Mode::Symbols(25),
+            ),
+        ] {
+            let raw = Config {
+                defaults: Some(Defaults {
+                    mode: Some(mode.into()),
+                    ..defaults
+                }),
+                ..Default::default()
+            };
+            let (resolved, warnings) = resolve(raw, None);
+            assert_eq!(resolved.default_mode, expected);
+            assert_eq!(warnings.len(), 1, "{warnings:?}");
+            assert!(
+                warnings[0].contains("must be between 1 and"),
+                "{warnings:?}"
+            );
+        }
+    }
+
+    /// `extra` isn't drawn any more, but a bad value is still reported.
+    #[test]
+    fn bad_extra_color_still_warns() {
+        let raw = Config {
+            colors: Some(Colors {
+                extra: Some("#ZZZ".into()),
+                ..Default::default()
+            }),
+            ..Default::default()
+        };
+        let (resolved, warnings) = resolve(raw, None);
+        assert_eq!(resolved.palette, builtin::DARK);
+        assert!(
+            warnings.iter().any(|w| w.contains("'extra'")),
+            "{warnings:?}"
+        );
     }
 
     /// Zero tokens would be a session with nothing to type (the CLI rejects
@@ -511,17 +597,17 @@ mod tests {
             ..Default::default()
         };
         let (resolved, warnings) = resolve(raw, None);
-        assert_eq!(resolved.default_mode, DefaultMode::Symbols(25));
+        assert_eq!(resolved.default_mode, Mode::Symbols(25));
         assert_eq!(warnings.len(), 1);
         assert!(warnings[0].contains("symbol_count"));
     }
 
     #[test]
-    fn code_lang_kind_is_case_insensitive_and_rejects_unknown() {
-        assert_eq!(code_lang_kind("GoLang"), Some(CodeLangKind::Go));
-        assert_eq!(code_lang_kind("BASH"), Some(CodeLangKind::Shell));
-        assert_eq!(code_lang_kind("cobol"), None);
-        assert_eq!(code_lang_kind(""), None);
+    fn code_lang_is_case_insensitive_and_rejects_unknown() {
+        assert_eq!(code_lang("GoLang"), Some(CodeLang::Go));
+        assert_eq!(code_lang("BASH"), Some(CodeLang::Shell));
+        assert_eq!(code_lang("cobol"), None);
+        assert_eq!(code_lang(""), None);
     }
 
     #[test]
@@ -535,7 +621,7 @@ mod tests {
             ..Default::default()
         };
         let (resolved, _) = resolve(raw, None);
-        assert_eq!(resolved.default_mode, DefaultMode::Symbols(25));
+        assert_eq!(resolved.default_mode, Mode::Symbols(25));
     }
 
     #[test]

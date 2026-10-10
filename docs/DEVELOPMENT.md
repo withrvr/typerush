@@ -136,6 +136,11 @@ tmux send-keys -t tr -l $'\e[<0;46;9M'; tmux send-keys -t tr -l $'\e[<0;46;9m'
 Send `Escape` in its own `send-keys` call (with a short sleep after it):
 tmux merges `Escape Down` into an Alt+Down sequence, so the arrow is lost.
 
+Keep each `send-keys -l` under about 4 KB: the terminal's input buffer
+drops the rest, which looks like the app froze. A key sent right after a
+long burst can also merge with it (`Escape` then `z` arrives as Alt+z), so
+sleep before the next key.
+
 Sessions shorter than 1 s aren't saved, so pause (`sleep 1.1`) mid-typing when
 you need a saved session. Check `/tmp/tr-e2e/.typerush/stats.json` afterwards.
 
@@ -143,15 +148,20 @@ you need a saved session. Check `/tmp/tr-e2e/.typerush/stats.json` afterwards.
 
 ## Quality gates (mirror CI)
 
-Run these before committing — CI runs the exact same set on Linux, macOS,
+Run these before committing — CI runs the same set on Linux, macOS,
 and Windows:
 
 ```bash
-cargo fmt --all -- --check                 # formatting
-cargo check --all-targets                  # type-check, tests included
-cargo test --all-targets                   # unit tests
-cargo clippy --all-targets -- -D warnings  # lints (warnings → errors)
+cargo fmt --all -- --check                          # formatting
+cargo check --all-targets --locked                  # type-check, tests included
+cargo test --all-targets --locked                   # unit tests
+cargo clippy --all-targets --locked -- -D warnings  # lints (warnings → errors)
+cargo +1.88.0 check --locked                        # oldest supported Rust
+cargo audit                                         # known vulnerabilities
 ```
+
+`cargo audit` comes from `cargo install cargo-audit`; CI runs it whenever
+`Cargo.toml` or `Cargo.lock` change and once a week.
 
 To auto-fix formatting:
 

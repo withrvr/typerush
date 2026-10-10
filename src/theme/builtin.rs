@@ -18,11 +18,10 @@ pub const DARK: ThemePalette = ThemePalette {
     accent: Color::Cyan,
     secondary: Color::Yellow,
     correct: Color::Green,
-    incorrect: Color::Red,
+    incorrect: Color::LightRed,
     pending: Color::DarkGray,
-    extra: Color::Red,
-    mode_tag: Color::Magenta,
-    error: Color::Red,
+    mode_tag: Color::LightMagenta,
+    error: Color::LightRed,
     neutral: Color::White,
     background: Color::Reset,
 };
@@ -34,14 +33,13 @@ pub const DARK: ThemePalette = ThemePalette {
 /// too pale would wash out against the white background.
 pub const LIGHT: ThemePalette = ThemePalette {
     accent: Color::Rgb(0x01, 0x6F, 0xA0), // deeper cyan — more contrast on white
-    secondary: Color::Rgb(0xA0, 0x6E, 0x00), // darker amber
-    correct: Color::Rgb(0x3F, 0x82, 0x3F), // darker green
+    secondary: Color::Rgb(0x93, 0x65, 0x00), // darker amber
+    correct: Color::Rgb(0x35, 0x6E, 0x35), // darker green
     incorrect: Color::Rgb(0xC5, 0x3B, 0x30), // darker red
-    pending: Color::Rgb(0x55, 0x57, 0x5C), // mid-dark gray — readable, not loud
-    extra: Color::Rgb(0xC5, 0x3B, 0x30),
-    mode_tag: Color::Rgb(0x88, 0x1F, 0x88),   // deeper purple
-    error: Color::Rgb(0xB0, 0x0F, 0x3C),      // darker error red
-    neutral: Color::Rgb(0x20, 0x22, 0x28),    // near-black body text
+    pending: Color::Rgb(0x6E, 0x71, 0x77), // mid gray — readable, dimmer than typed text
+    mode_tag: Color::Rgb(0x88, 0x1F, 0x88), // deeper purple
+    error: Color::Rgb(0xB0, 0x0F, 0x3C),  // darker error red
+    neutral: Color::Rgb(0x20, 0x22, 0x28), // near-black body text
     background: Color::Rgb(0xFA, 0xFA, 0xFA), // off-white
 };
 
@@ -50,11 +48,10 @@ pub const MONOKAI: ThemePalette = ThemePalette {
     accent: Color::Rgb(0x66, 0xD9, 0xEF),    // monokai cyan
     secondary: Color::Rgb(0xE6, 0xDB, 0x74), // monokai yellow
     correct: Color::Rgb(0xA6, 0xE2, 0x2E),   // monokai green
-    incorrect: Color::Rgb(0xF9, 0x26, 0x72), // monokai pink
-    pending: Color::Rgb(0x75, 0x71, 0x5E),   // dim gray-brown
-    extra: Color::Rgb(0xFD, 0x97, 0x1F),     // orange
+    incorrect: Color::Rgb(0xFA, 0x58, 0x92), // monokai pink, lifted for contrast
+    pending: Color::Rgb(0x97, 0x93, 0x7E),   // gray-brown, readable but dimmer than typed text
     mode_tag: Color::Rgb(0xAE, 0x81, 0xFF),  // purple
-    error: Color::Rgb(0xF9, 0x26, 0x72),
+    error: Color::Rgb(0xFA, 0x58, 0x92),
     neutral: Color::Rgb(0xF8, 0xF8, 0xF2), // monokai foreground
     background: Color::Rgb(0x27, 0x28, 0x22), // canonical monokai background
 };
@@ -64,11 +61,10 @@ pub const DRACULA: ThemePalette = ThemePalette {
     accent: Color::Rgb(0x8B, 0xE9, 0xFD),    // dracula cyan
     secondary: Color::Rgb(0xF1, 0xFA, 0x8C), // dracula yellow
     correct: Color::Rgb(0x50, 0xFA, 0x7B),   // dracula green
-    incorrect: Color::Rgb(0xFF, 0x55, 0x55), // dracula red
-    pending: Color::Rgb(0x62, 0x72, 0xA4),   // dracula comment
-    extra: Color::Rgb(0xFF, 0xB8, 0x6C),     // dracula orange
+    incorrect: Color::Rgb(0xFF, 0x62, 0x62), // dracula red, lifted for contrast
+    pending: Color::Rgb(0x8A, 0x96, 0xBB),   // dracula comment, lifted to be readable
     mode_tag: Color::Rgb(0xFF, 0x79, 0xC6),  // dracula pink
-    error: Color::Rgb(0xFF, 0x55, 0x55),
+    error: Color::Rgb(0xFF, 0x62, 0x62),
     neutral: Color::Rgb(0xF8, 0xF8, 0xF2), // dracula foreground
     background: Color::Rgb(0x28, 0x2A, 0x36), // canonical dracula background
 };
@@ -144,5 +140,59 @@ mod tests {
         assert_ne!(LIGHT.background, Color::Reset);
         assert_eq!(MONOKAI.background, Color::Rgb(0x27, 0x28, 0x22));
         assert_eq!(DRACULA.background, Color::Rgb(0x28, 0x2A, 0x36));
+    }
+
+    /// WCAG relative luminance of an RGB color.
+    fn luminance(color: Color) -> f64 {
+        let Color::Rgb(r, g, b) = color else {
+            panic!("{color:?} is not an RGB color");
+        };
+        let channel = |c: u8| {
+            let c = f64::from(c) / 255.0;
+            if c <= 0.04045 {
+                c / 12.92
+            } else {
+                ((c + 0.055) / 1.055).powf(2.4)
+            }
+        };
+        0.2126 * channel(r) + 0.7152 * channel(g) + 0.0722 * channel(b)
+    }
+
+    fn contrast(a: Color, b: Color) -> f64 {
+        let (a, b) = (luminance(a), luminance(b));
+        (a.max(b) + 0.05) / (a.min(b) + 0.05)
+    }
+
+    /// Every text color of a theme that paints its own background is easy
+    /// to read on it (WCAG AA, 4.5:1), and untyped text stays visibly dimmer
+    /// than typed text. `dark` uses the terminal's own palette, so its
+    /// contrast is the terminal's to set.
+    #[test]
+    fn rgb_themes_meet_contrast_minimum() {
+        for (name, palette) in ALL.iter().filter(|(_, p)| p.background != Color::Reset) {
+            let bg = palette.background;
+            for (slot, color) in [
+                ("accent", palette.accent),
+                ("secondary", palette.secondary),
+                ("correct", palette.correct),
+                ("incorrect", palette.incorrect),
+                ("pending", palette.pending),
+                ("mode_tag", palette.mode_tag),
+                ("error", palette.error),
+                ("neutral", palette.neutral),
+            ] {
+                let ratio = contrast(color, bg);
+                assert!(ratio >= 4.5, "{name}.{slot}: {ratio:.2}:1");
+            }
+            let pending = contrast(palette.pending, bg);
+            assert!(
+                pending < contrast(palette.correct, bg),
+                "{name}: pending vs correct"
+            );
+            assert!(
+                pending < contrast(palette.neutral, bg),
+                "{name}: pending vs neutral"
+            );
+        }
     }
 }

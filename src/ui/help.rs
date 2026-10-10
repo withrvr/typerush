@@ -3,10 +3,11 @@
 //!  - a transient error modal (dismissed by any keypress or click)
 
 use ratatui::{
-    layout::Flex,
     prelude::*,
     widgets::{Block, Borders, Clear, Paragraph, Wrap},
 };
+
+use ratatui::crossterm::event::KeyCode;
 
 use crate::{app::App, theme::ThemePalette};
 
@@ -14,7 +15,8 @@ use crate::{app::App, theme::ThemePalette};
 /// an 80×24 window whole). On a smaller terminal the box shrinks and the
 /// bottom of the list is cut, but the close hint lives in the bottom border
 /// and is always visible.
-pub fn render(f: &mut Frame, app: &App) {
+/// Returns the footer hints.
+pub fn render(f: &mut Frame, app: &App, screen: Rect) -> &'static [super::Hint] {
     let theme = &app.theme;
     let heading = |text| {
         Line::from(Span::styled(
@@ -28,21 +30,21 @@ pub fn render(f: &mut Frame, app: &App) {
 
     let lines = vec![
         heading("  TypeRush — keybindings"),
-        Line::raw(""),
         Line::from("  ↑/↓  j/k         menu: pick a category"),
         Line::from("  ←/→  h/l         menu: pick an option"),
         Line::from("  Enter  Space     start the selected mode"),
-        Line::from("  Enter  r         restart (results screen)"),
+        Line::from("  Enter  F5        restart (results; Ctrl+R too)"),
         Line::from("  Ctrl+R  F5       restart while typing"),
         Line::from("  Esc              finish session / back"),
         Line::from("  Ctrl+Bksp Ctrl+W delete word"),
         Line::from("  p  n  b          menu: punctuation, numbers,"),
         Line::from("                   10k words (time & words runs)"),
-        Line::from("  Tab  s           stats history"),
-        Line::from("  ?  F1            toggle this help"),
+        Line::from("  Tab  s           stats (only Tab on results)"),
+        Line::from("  ←/→ ↑/↓ PgUp/Dn  stats: category, scroll"),
+        Line::from("  ?  F1            help (only F1 on results)"),
         Line::from("  Ctrl+C           quit"),
         Line::from("  Mouse            click options and footer"),
-        Line::from("                   hints; wheel moves the menu"),
+        Line::from("                   hints; wheel scrolls lists"),
         Line::raw(""),
         dim("  Zen sessions are not saved"),
         dim("  Stats   ~/.typerush/stats.json"),
@@ -53,12 +55,12 @@ pub fn render(f: &mut Frame, app: &App) {
     const WIDTH: u16 = 50;
     // Narrower than the box, lines wrap and need more rows: take the full
     // height instead of guessing how many.
-    let height = if f.area().width < WIDTH {
-        f.area().height
+    let height = if screen.width < WIDTH {
+        screen.height
     } else {
         lines.len() as u16 + 2
     };
-    let area = centered(f.area(), WIDTH, height);
+    let area = screen.centered(Constraint::Length(WIDTH), Constraint::Length(height));
     f.render_widget(Clear, area);
     let p = Paragraph::new(lines)
         // Plain Line::from(string) entries inherit this fg — otherwise they
@@ -80,17 +82,8 @@ pub fn render(f: &mut Frame, app: &App) {
                 )),
         );
     f.render_widget(p, area);
-}
-
-/// A `width`×`height` rect centered in `r`, shrunk to fit if `r` is smaller.
-fn centered(r: Rect, width: u16, height: u16) -> Rect {
-    let [area] = Layout::horizontal([Constraint::Length(width)])
-        .flex(Flex::Center)
-        .areas(r);
-    let [area] = Layout::vertical([Constraint::Length(height)])
-        .flex(Flex::Center)
-        .areas(area);
-    area
+    const HINTS: &[super::Hint] = &[("Esc / F1 close", super::key(KeyCode::Esc))];
+    HINTS
 }
 
 /// Render the transient error modal. Dismissed by any keypress or click from
@@ -114,7 +107,9 @@ pub fn render_error(f: &mut Frame, theme: &ThemePalette, message: &str) {
         .sum::<usize>()
         .max(1);
     let height = message_rows as u16 + 4; // + blank + hint + borders
-    let area = centered(f.area(), WIDTH, height);
+    let area = f
+        .area()
+        .centered(Constraint::Length(WIDTH), Constraint::Length(height));
     f.render_widget(Clear, area);
     let p = Paragraph::new(format!("{}\n\n  press any key or click", lines.join("\n")))
         .wrap(Wrap { trim: false })
