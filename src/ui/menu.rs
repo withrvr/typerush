@@ -13,6 +13,7 @@ use ratatui::crossterm::event::{KeyCode, KeyModifiers};
 use super::key;
 use crate::app::{menu_row, App, ClickAction, MenuAction};
 use crate::words::WordPool;
+use unicode_width::UnicodeWidthStr;
 
 /// The big banner's width; narrower boxes get the compact one.
 const BANNER_WIDTH: u16 = 70;
@@ -138,8 +139,25 @@ pub fn render(f: &mut Frame, app: &App, area: Rect) -> &'static [super::Hint] {
     // Inside the border: the banner, then the list. Clicks outside the list
     // area can't hit an option.
     let inside = Block::default().borders(Borders::ALL).inner(box_area);
-    let [banner_area, menu_area] =
+    let [banner_area, list_area] =
         Layout::vertical([Constraint::Length(banner.rows()), Constraint::Min(0)]).areas(inside);
+    // The list is centered under the banner as one block: headings and
+    // options stay lined up with each other, with equal room either side of
+    // the text. The two-cell gutter (the ➤ marker) hangs out to the left.
+    const GUTTER: u16 = 2;
+    let list_width = menu
+        .lines
+        .iter()
+        .map(|line| line.to_string().trim_end().width())
+        .max()
+        .unwrap_or(0) as u16;
+    let content_width = list_width.saturating_sub(GUTTER);
+    let left = (list_area.width.saturating_sub(content_width) / 2).saturating_sub(GUTTER);
+    let menu_area = Rect {
+        x: list_area.x + left,
+        width: list_area.width - left,
+        ..list_area
+    };
     let banner_style = Style::default()
         .fg(theme.accent)
         .add_modifier(Modifier::BOLD);

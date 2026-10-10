@@ -467,17 +467,29 @@ mod tests {
                 );
             }
             if screen == Screen::Menu {
-                // The menu box is full width like the others, and its text
-                // starts two cells in from the border too.
-                let words = rows
+                // The menu box is full width like the others; the list is one
+                // block centered in it (equal room either side of its widest
+                // row), with headings and options in one column inside it.
+                let column_of = |text: &str| {
+                    let row = rows.iter().find(|row| row.concat().contains(text)).unwrap();
+                    assert_eq!(row[0], "│", "menu box starts at column 0");
+                    (0..80)
+                        .find(|&x| row[x..].concat().starts_with(text))
+                        .unwrap()
+                };
+                let code = rows
                     .iter()
-                    .find(|row| row.concat().contains("words"))
+                    .find(|row| row.concat().contains("javascript"))
                     .unwrap();
-                assert_eq!(words[0], "│", "menu box starts at column 0");
-                let column = (0..80)
-                    .find(|&x| words[x..].concat().starts_with("words"))
-                    .unwrap();
-                assert_eq!(column, 3, "menu text column");
+                let first = (1..79).find(|&x| code[x].trim() != "").unwrap();
+                let last = (1..79).rev().find(|&x| code[x].trim() != "").unwrap();
+                let (left, right) = (first - 1, 78 - last);
+                assert!(
+                    left.abs_diff(right) <= 1,
+                    "list not centered: {left} vs {right}"
+                );
+                assert_eq!(column_of("words"), column_of("rust"), "heading and options");
+                assert_eq!(column_of("time"), column_of("15s"), "heading and options");
             }
         }
     }

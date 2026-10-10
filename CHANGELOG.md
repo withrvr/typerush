@@ -88,8 +88,8 @@ mode at a time.
   settings.
 - **The main menu follows the same layout:** a `◆ select mode` title row,
   then one full-width box with the TypeRush banner inside at the top and
-  the modes below, their text two cells in from the border like every
-  other box. When the blank lines between categories don't all fit (80×24),
+  the modes centered below it as one block (headings and options still
+  lined up with each other). When the blank lines between categories don't all fit (80×24),
   none are drawn, instead of dense rows at the top and spaced ones below.
 - **Dependencies upgraded:** ratatui 0.30 (crossterm 0.29 through its
   re-export, only the features TypeRush uses), rand 0.10, toml 1. The
