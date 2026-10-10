@@ -163,17 +163,30 @@ pub fn words_from_file(path: &Path) -> anyhow::Result<Vec<String>> {
     if metadata.len() > MAX_FILE_BYTES {
         anyhow::bail!("{} is too big to type (over 1 MiB)", shown());
     }
-    // `take` still bounds the read if the file grows after the size check;
-    // a character cut in half at that limit is dropped, not an error.
+    // The opened handle is checked again: the path could have been swapped
+    // for a device or directory since the check above. (A swap to a named
+    // pipe would still block in `open`; that needs someone else writing to
+    // your own snippets folder, and isn't worth platform-specific flags.)
+    // `take` still bounds the read if the file grows after the size check.
     let mut bytes = Vec::new();
     std::fs::File::open(path)
-        .and_then(|file| file.take(MAX_FILE_BYTES).read_to_end(&mut bytes))
+        .and_then(|file| {
+            if !file.metadata()?.is_file() {
+                return Err(std::io::Error::other("not a regular file"));
+            }
+            file.take(MAX_FILE_BYTES).read_to_end(&mut bytes)
+        })
         .with_context(|| format!("can't read {}", shown()))?;
+    let at_limit = bytes.len() as u64 == MAX_FILE_BYTES;
     let content = match String::from_utf8(bytes) {
         Ok(text) => text,
-        Err(err) if err.utf8_error().error_len().is_none() => {
+        // Only a character cut in half by the size limit is dropped; any
+        // other broken UTF-8 is the file's own, and is reported.
+        Err(err) if at_limit && err.utf8_error().error_len().is_none() => {
             let valid = err.utf8_error().valid_up_to();
-            String::from_utf8_lossy(&err.as_bytes()[..valid]).into_owned()
+            let mut bytes = err.into_bytes();
+            bytes.truncate(valid);
+            String::from_utf8(bytes).expect("valid UTF-8 up to here")
         }
         Err(_) => anyhow::bail!("{} is not UTF-8 text", shown()),
     };
@@ -223,15 +236,24 @@ mod tests {
         }
     }
 
-    /// A character cut in half at the end (as the size limit can do to a
-    /// file that grows while it is read) is dropped; text that isn't UTF-8
-    /// at all is refused by name.
+    /// A character cut in half by the 1 MiB limit is dropped. A small file
+    /// that ends in half a character is broken itself, and is refused like
+    /// any text that isn't UTF-8 — never silently shortened.
     #[test]
     fn file_words_drop_a_cut_character_and_refuse_non_utf8() {
         let dir = tempfile::tempdir().unwrap();
-        let cut = dir.path().join("cut.txt");
-        std::fs::write(&cut, b"hello wor\xE2\x82").unwrap();
-        assert_eq!(words_from_file(&cut).unwrap(), ["hello", "wor"]);
+        let at_limit = dir.path().join("limit.txt");
+        let mut bytes = b"ab ".repeat(MAX_FILE_BYTES as usize / 3);
+        bytes.resize(MAX_FILE_BYTES as usize - 2, b' ');
+        bytes.extend_from_slice(b"\xE2\x82");
+        std::fs::write(&at_limit, &bytes).unwrap();
+        let words = words_from_file(&at_limit).unwrap();
+        assert!(words.iter().all(|w| w == "ab"), "cut character kept");
+
+        let broken = dir.path().join("broken.txt");
+        std::fs::write(&broken, b"hello wor\xE2\x82").unwrap();
+        let err = words_from_file(&broken).unwrap_err();
+        assert!(err.to_string().contains("not UTF-8"), "{err}");
         let latin1 = dir.path().join("latin1.txt");
         std::fs::write(&latin1, b"caf\xE9 au lait").unwrap();
         let err = words_from_file(&latin1).unwrap_err();

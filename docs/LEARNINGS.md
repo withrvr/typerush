@@ -30,6 +30,9 @@ rule that keeps it fixed).
 - **One frame per keystroke must stay cheap.** The render path never reads
   the disk, and does work proportional to what is on screen, not to the
   whole session.
+- **Measure the way you draw.** Layout and drawing must use the same width
+  rule: `str::width` treats 👍🏽 as 2 cells, the per-character sum as 4, and
+  the typing box draws per character.
 - **Mirror types rot.** A config-side copy of an enum (`DefaultMode`,
   `CodeLangKind`) has to be kept in step by hand; use the real type.
 - **Tests never touch the real `~/.typerush`.** Everything that reads or
@@ -76,8 +79,11 @@ rule that keeps it fixed).
   slipped through. Guards: `tests::out_of_range_counts_are_rejected`,
   `out_of_range_config_counts_warn_and_use_defaults`.
 - **A file growing past the 1 MiB limit mid-read could be cut inside a
-  character** and reported as unreadable. Fix: a character cut at the end
-  is dropped; a file that isn't UTF-8 at all says so. Guard:
+  character** and reported as unreadable. Fix: only a character cut by the
+  limit itself is dropped (a second review caught that the first fix also
+  silently shortened small files ending in half a character — those are
+  broken files and are now refused as "not UTF-8"); the opened handle is
+  checked again for being a regular file. Guard:
   `file_words_drop_a_cut_character_and_refuse_non_utf8`.
 - **Two-way footer hints were clickable one way** ("←/→ category" clicked
   as →). Rule restated: navigation hints carry no click; the title's ‹ ›

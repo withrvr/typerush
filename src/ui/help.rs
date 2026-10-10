@@ -38,7 +38,7 @@ pub fn render(f: &mut Frame, app: &App) {
         Line::from("  p  n  b          menu: punctuation, numbers,"),
         Line::from("                   10k words (time & words runs)"),
         Line::from("  Tab  s           stats history"),
-        Line::from("  ←/→  ↑/↓         stats: category, scroll"),
+        Line::from("  ←/→ ↑/↓ PgUp/Dn  stats: category, scroll"),
         Line::from("  ?  F1            toggle this help"),
         Line::from("  Ctrl+C           quit"),
         Line::from("  Mouse            click options and footer"),

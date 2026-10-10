@@ -373,13 +373,15 @@ pub struct StatsSummary {
 }
 
 impl StatsSummary {
-    pub fn new(sessions: &[&SessionRecord]) -> Self {
-        let all = || sessions.iter().copied();
+    /// `sessions` is walked once per figure, so it must be cheap to clone
+    /// (a slice iterator, or a category's indices mapped into the history).
+    pub fn new<'a>(sessions: impl Iterator<Item = &'a SessionRecord> + Clone) -> Self {
+        let all = || sessions.clone();
         Self {
             personal_best: personal_best(all()),
             average_accuracy: average_accuracy(all()),
-            sessions: sessions.len(),
-            last_wpm: sessions.last().map(|s| s.wpm),
+            sessions: all().count(),
+            last_wpm: all().last().map(|s| s.wpm),
             streak: streak(all()),
             avg_wpm_7_days: avg_wpm_last_n_days(all(), 7),
             avg_wpm_30_days: avg_wpm_last_n_days(all(), 30),
@@ -519,8 +521,7 @@ impl StatsView {
         self.indices = (0..history.len())
             .filter(|&i| mode.is_none_or(|mode| history[i].mode == mode))
             .collect();
-        let sessions: Vec<&SessionRecord> = self.indices.iter().map(|&i| &history[i]).collect();
-        self.summary = StatsSummary::new(&sessions);
+        self.summary = StatsSummary::new(self.indices.iter().map(|&i| &history[i]));
         self.scroll.set(0);
     }
 

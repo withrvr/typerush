@@ -55,8 +55,9 @@ pub fn render(f: &mut Frame, app: &App) {
     };
 
     // ‹ and › are clickable: previous / next category.
+    const LEAD: &str = "  ◆ stats   ";
     let category = shorten(&printable(view.category_name()), 32).into_owned();
-    let (row, left) = (layout[0].y, layout[0].x + 12);
+    let (row, left) = (layout[0].y, layout[0].x + LEAD.width() as u16);
     let right = left + 3 + category.width() as u16;
     let mut targets = app.click_targets.borrow_mut();
     for (x, code) in [(left, KeyCode::Left), (right, KeyCode::Right)] {
@@ -66,7 +67,7 @@ pub fn render(f: &mut Frame, app: &App) {
     drop(targets);
     let title = Paragraph::new(Line::from(vec![
         Span::styled(
-            "  ◆ stats   ",
+            LEAD,
             Style::default()
                 .fg(theme.accent)
                 .add_modifier(Modifier::BOLD),

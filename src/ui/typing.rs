@@ -15,7 +15,7 @@ use ratatui::{
     widgets::{Block, Borders, Gauge, Paragraph},
 };
 
-use unicode_width::{UnicodeWidthChar, UnicodeWidthStr};
+use unicode_width::UnicodeWidthChar;
 
 use crate::{
     app::{App, Mode},
@@ -173,7 +173,14 @@ fn render_words(f: &mut Frame, app: &App, area: Rect) {
     let mut cursor_line = 0;
     let mut at = (0, 0);
     for (word_index, word) in app.words.iter().enumerate() {
-        let width = word.text.width() + usize::from(has_space(word_index));
+        // Summed per character, exactly as step 3 draws it (one cell run per
+        // character): a whole-string width can disagree for emoji sequences.
+        let width = word
+            .text
+            .chars()
+            .map(|c| c.width().unwrap_or(0))
+            .sum::<usize>()
+            + usize::from(has_space(word_index));
         at = place(at, width.min(max_width));
         word_starts.push(at);
         let is_active = word_index == app.current_word;
@@ -388,5 +395,37 @@ mod tests {
         app.words[257].typed = "x".repeat(100);
         let (_, y) = cursor_cell(&app, 80, 24).expect("cursor drawn in a long word");
         assert!((6..23).contains(&y), "cursor row {y} outside the words box");
+    }
+
+    /// An emoji with a skin-tone modifier is two characters drawn two cells
+    /// each. Layout and drawing measure it the same way (per character), so
+    /// rows hold exactly what was laid out and nothing is clipped off a row's
+    /// end.
+    #[test]
+    fn emoji_sequences_are_laid_out_as_drawn() {
+        let mut app = App::new(None, builtin::DARK, Mode::Time(15));
+        app.start_game(Mode::Words(300)).unwrap();
+        app.words = (0..300)
+            .map(|i| {
+                let text = match i {
+                    0 => "ab",
+                    i if i % 2 == 1 => "👍🏽",
+                    _ => "abc",
+                };
+                Word::new(text.into())
+            })
+            .collect();
+        let mut terminal = Terminal::new(TestBackend::new(80, 24)).unwrap();
+        terminal.draw(|f| render(f, &app)).unwrap();
+        let buffer = terminal.backend().buffer();
+        // Every visible row, in order, spells out the start of the word list:
+        // nothing cut off at a right edge.
+        let shown: String = (6..20)
+            .flat_map(|y| (1..79).map(move |x| (x, y)))
+            .map(|(x, y)| buffer[(x, y)].symbol().to_string())
+            .filter(|cell| cell.trim() != "")
+            .collect();
+        let words: String = app.words.iter().map(|w| w.text.as_str()).collect();
+        assert!(!shown.is_empty() && words.starts_with(&shown), "{shown}");
     }
 }
