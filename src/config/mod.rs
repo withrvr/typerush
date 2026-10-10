@@ -4,21 +4,30 @@
 //! malformed file means defaults plus a warning surfaced once via the error
 //! modal. We never crash the app over a config problem.
 //!
-//! ## Schema
+//! ## Schema (v0.4.0)
 //!
 //! ```toml
 //! theme = "monokai"            # built-in name: dark | light | monokai | dracula
 //!
 //! [defaults]
-//! mode = "time"                 # time | words | quote | code | zen
+//! mode = "time"                 # time | words | quote | code | zen | symbols
 //! time_seconds = 15             # default duration for time mode
 //! word_count = 25               # default count for words mode
-//! code_lang = "rust"            # rust | python | js
+//! code_lang = "rust"            # rust | python | js | go | java | sql | shell
+//! symbol_count = 25             # symbols option to pre-select (menu rows: 25 / 50) (v0.4.0)
+//!
+//! [words]                       # v0.4.0 — English pool + decoration toggles
+//! pool = "common"               # "common" (default, ~430 frequent words) | "extended" (10k)
+//! punctuation = false           # sprinkle commas/periods/quotes on ~25% of words
+//! numbers = false               # replace ~12% of slots with random 1–4 digit numbers
 //!
 //! [colors]                      # optional — overrides slots of the chosen theme
 //! accent = "#FF00FF"
 //! correct = "green"
 //! ```
+//!
+//! Complete inline docs for every knob live in `config.example.toml` at the
+//! repo root; keep the two in sync when adding a new field.
 
 pub mod load;
 
@@ -35,6 +44,8 @@ pub struct Config {
     pub defaults: Option<Defaults>,
     /// Optional per-slot color overrides applied on top of the chosen theme.
     pub colors: Option<Colors>,
+    /// Word source / decoration toggles (v0.4.0).
+    pub words: Option<Words>,
 }
 
 /// Default mode + per-mode defaults. Pre-selects the matching row in the menu
@@ -42,14 +53,34 @@ pub struct Config {
 #[derive(Debug, Default, Deserialize, PartialEq)]
 #[serde(deny_unknown_fields)]
 pub struct Defaults {
-    /// Which menu row to pre-select: `time` | `words` | `quote` | `code` | `zen`.
+    /// Which menu row to pre-select: `time` | `words` | `quote` | `code` |
+    /// `zen` | `symbols`.
     pub mode: Option<String>,
     /// Seconds for `Mode::Time` (and for the time-mode menu row pre-selection).
     pub time_seconds: Option<u64>,
     /// Word count for `Mode::Words`.
     pub word_count: Option<usize>,
-    /// Language for `Mode::Code`: `rust` | `python` | `js`.
+    /// Language for `Mode::Code`: `rust` | `python` | `js` | `go` | `java`
+    /// | `sql` | `shell`.
     pub code_lang: Option<String>,
+    /// Which symbols option to pre-select (menu rows: 25 / 50), like
+    /// `word_count` does for words (v0.4.0).
+    pub symbol_count: Option<usize>,
+}
+
+/// `[words]` section: which pool to draw English words from and whether to
+/// decorate words with punctuation or numbers. Added in v0.4.0.
+#[derive(Debug, Default, Deserialize, PartialEq)]
+#[serde(deny_unknown_fields)]
+pub struct Words {
+    /// Pool name: `common` (default, ~430 frequent words) | `extended` (10,000).
+    pub pool: Option<String>,
+    /// When true, randomly attach punctuation marks (`,.;:?!"'` etc.) to
+    /// roughly a quarter of words and occasionally wrap a word in paired
+    /// brackets / quotes.
+    pub punctuation: Option<bool>,
+    /// When true, replace ~12% of slots with a random 1–4 digit number.
+    pub numbers: Option<bool>,
 }
 
 /// Per-slot color overrides. Any field that's `Some` overrides the corresponding

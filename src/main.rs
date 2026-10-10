@@ -13,7 +13,9 @@
 mod app;
 mod config;
 mod game;
+mod state;
 mod storage;
+mod text;
 mod theme;
 mod ui;
 mod words;
@@ -21,7 +23,7 @@ mod words;
 use std::{
     io::{stdout, Stdout},
     panic,
-    path::Path,
+    path::{Path, PathBuf},
     time::{Duration, Instant},
 };
 
@@ -38,8 +40,20 @@ use crossterm::{
 use ratatui::{backend::CrosstermBackend, Terminal};
 
 use crate::app::{App, ClickAction, MenuAction, Mode, Screen};
+use crate::config::load::{code_lang_kind, CliOverrides};
 use crate::storage::SessionRecord;
 use crate::theme::builtin;
+use crate::words::{CodeLang, WordPool};
+
+/// Value parser for counts that must be at least 1. A zero count would start
+/// a session with nothing to type that can only be left with Esc.
+fn positive<T>() -> clap::builder::RangedU64ValueParser<T>
+where
+    T: TryFrom<u64> + Clone + Send + Sync + 'static,
+    <T as TryFrom<u64>>::Error: std::fmt::Display,
+{
+    clap::builder::RangedU64ValueParser::<T>::new().range(1..)
+}
 
 /// Command-line interface. Run with no args to open the interactive menu; pass
 /// any of the mode flags to skip the menu and jump straight into a session.
@@ -53,27 +67,55 @@ use crate::theme::builtin;
 struct Cli {
     /// Custom text file to use as the word source.
     #[arg(short, long)]
-    file: Option<String>,
+    file: Option<PathBuf>,
 
     /// Start directly in time mode for N seconds (15/30/60/120).
-    #[arg(long)]
+    #[arg(long, value_parser = positive::<u64>())]
     time: Option<u64>,
 
     /// Start directly in words mode for N words.
-    #[arg(long)]
+    #[arg(long, value_parser = positive::<usize>())]
     words: Option<usize>,
 
     /// Skip the menu and start a quote session.
     #[arg(long)]
     quote: bool,
 
-    /// Skip the menu and start a code session: rust|python|js.
+    /// Skip the menu and start a code session: rust|python|js|go|java|sql|shell.
     #[arg(long)]
     code: Option<String>,
 
     /// Skip the menu and start zen mode.
     #[arg(long)]
     zen: bool,
+
+    /// Skip the menu and start a programming-symbols drill of N tokens (25/50).
+    #[arg(long, value_parser = positive::<usize>())]
+    symbols: Option<usize>,
+
+    /// Use the 10,000-word English pool (time and words modes).
+    #[arg(long, overrides_with = "no_big")]
+    big: bool,
+
+    /// Use the common-word pool even if the config picks the 10k one.
+    #[arg(long, overrides_with = "big")]
+    no_big: bool,
+
+    /// Add punctuation to random words (time and words modes).
+    #[arg(long, overrides_with = "no_punctuation")]
+    punctuation: bool,
+
+    /// No punctuation, even if the config turns it on.
+    #[arg(long, overrides_with = "punctuation")]
+    no_punctuation: bool,
+
+    /// Mix numbers in with random words (time and words modes).
+    #[arg(long, overrides_with = "no_numbers")]
+    numbers: bool,
+
+    /// No numbers, even if the config turns them on.
+    #[arg(long, overrides_with = "numbers")]
+    no_numbers: bool,
 
     /// One-shot theme override: dark | light | monokai | dracula.
     /// Takes precedence over the `theme` setting in `~/.typerush/config.toml`.
@@ -83,6 +125,35 @@ struct Cli {
     /// Print available built-in theme names and exit.
     #[arg(long)]
     list_themes: bool,
+
+    /// Print the snippets found in ~/.typerush/snippets/ and exit.
+    #[arg(long)]
+    list_snippets: bool,
+}
+
+impl Cli {
+    /// The settings the command line overrides. A switch pair left alone
+    /// (neither `--punctuation` nor `--no-punctuation`) keeps the config's
+    /// value; when both are given, the last one wins.
+    fn overrides(&self) -> CliOverrides<'_> {
+        let switch = |on: bool, off: bool| match (on, off) {
+            (true, _) => Some(true),
+            (_, true) => Some(false),
+            _ => None,
+        };
+        CliOverrides {
+            theme: self.theme.as_deref(),
+            word_pool: switch(self.big, self.no_big).map(|big| {
+                if big {
+                    WordPool::Extended
+                } else {
+                    WordPool::Common
+                }
+            }),
+            punctuation: switch(self.punctuation, self.no_punctuation),
+            numbers: switch(self.numbers, self.no_numbers),
+        }
+    }
 }
 
 fn main() -> Result<()> {
@@ -90,11 +161,28 @@ fn main() -> Result<()> {
     if cli.list_themes {
         print_themes_and_exit();
     }
+    if cli.list_snippets {
+        print_snippets_and_exit();
+    }
     install_panic_hook();
     let mut terminal = setup_terminal()?;
     let run_result = run_app(&mut terminal, cli);
-    restore_terminal(&mut terminal)?;
-    run_result
+    let restored = restore_terminal(&mut terminal);
+    if let Err(error) = run_result {
+        // The report Rust prints for an `Err` from `main`. File paths in it
+        // are already made safe where the error was built; each line goes
+        // through `printable` too, as a backstop.
+        let report = format!("{error:?}");
+        let lines: Vec<_> = report.lines().map(text::printable).collect();
+        eprintln!("Error: {}", lines.join("\n"));
+        // The run's error is the one that matters; still mention a failed
+        // terminal restore rather than dropping it.
+        if let Err(restore_error) = restored {
+            eprintln!("(also: couldn't restore the terminal: {restore_error:#})");
+        }
+        std::process::exit(1);
+    }
+    restored
 }
 
 /// Print every built-in theme name on its own line and exit with status 0.
@@ -102,6 +190,30 @@ fn main() -> Result<()> {
 fn print_themes_and_exit() -> ! {
     for theme_name in builtin::names() {
         println!("{}", theme_name);
+    }
+    std::process::exit(0);
+}
+
+/// Print each snippet in `~/.typerush/snippets/` as `name<TAB>path` and exit
+/// with status 0. With none, say where to put them (on stderr, so scripts
+/// reading stdout see an empty list).
+fn print_snippets_and_exit() -> ! {
+    let snippets = words::snippets::discover_snippets();
+    if snippets.is_empty() {
+        eprintln!(
+            "no snippets yet: drop .txt files in {}",
+            text::printable(&words::snippets::snippets_dir().display().to_string())
+        );
+    }
+    // The path column tells same-named files apart (notes.txt / notes.TXT).
+    for snippet in snippets {
+        println!(
+            "{}\t{}",
+            text::printable(&snippet.name),
+            // Kept a real path (only control and bidi characters replaced) so
+            // scripts can open it.
+            text::path_text(&snippet.path.display().to_string())
+        );
     }
     std::process::exit(0);
 }
@@ -121,14 +233,21 @@ fn setup_terminal() -> Result<Tui> {
 }
 
 /// Reverse of `setup_terminal` — restore cooked mode and exit the alt screen.
+///
+/// Every step is attempted even if an earlier one fails, so the user gets
+/// their normal screen back (and sees any error printed after this); the
+/// first failure is returned.
 fn restore_terminal(terminal: &mut Tui) -> Result<()> {
-    disable_raw_mode()?;
-    execute!(
+    let raw = disable_raw_mode();
+    let screen = execute!(
         terminal.backend_mut(),
         LeaveAlternateScreen,
         DisableMouseCapture
-    )?;
-    terminal.show_cursor()?;
+    );
+    let cursor = terminal.show_cursor();
+    raw?;
+    screen?;
+    cursor?;
     Ok(())
 }
 
@@ -150,8 +269,15 @@ fn install_panic_hook() {
 /// enough that we're not busy-looping. `event::poll` blocks for the remainder
 /// of the tick interval so keystrokes are still handled instantly.
 fn run_app(terminal: &mut Tui, cli: Cli) -> Result<()> {
-    let (resolved, warnings) = config::load::load_or_default(cli.theme.as_deref());
+    let (resolved, warnings) = config::load::load_or_default_with(cli.overrides());
     let mut app = App::new(cli.file.clone(), resolved.palette, resolved.default_mode);
+    app.set_word_source(resolved.word_pool, resolved.word_decor);
+    let state_file = state::state_path();
+    app.load_custom_sources(
+        words::snippets::discover_snippets(),
+        state::load_from_path(&state_file),
+        Some(state_file),
+    );
     // Surface the first config warning (if any) via the existing error modal.
     // We only show one — chaining them would force the user to dismiss N
     // popups before reaching the menu.
@@ -210,7 +336,7 @@ fn run_app(terminal: &mut Tui, cli: Cli) -> Result<()> {
 }
 
 /// If the user passed a mode flag (`--time`, `--words`, `--quote`, `--code`,
-/// `--zen`, `--file`) skip the menu and start that mode immediately.
+/// `--zen`, `--symbols`, `--file`) skip the menu and start that mode.
 fn apply_cli_autostart(app: &mut App, cli: &Cli) -> Result<()> {
     if let Some(seconds) = cli.time {
         app.start_game(Mode::Time(seconds))?;
@@ -219,19 +345,25 @@ fn apply_cli_autostart(app: &mut App, cli: &Cli) -> Result<()> {
     } else if cli.quote {
         app.start_game(Mode::Quote)?;
     } else if let Some(lang_string) = cli.code.as_deref() {
-        let lang = match lang_string.to_lowercase().as_str() {
-            "rust" | "rs" => words::CodeLang::Rust,
-            "python" | "py" => words::CodeLang::Python,
-            "js" | "javascript" => words::CodeLang::JavaScript,
-            other => return Err(anyhow::anyhow!("unknown code lang: {other}")),
-        };
-        app.start_game(Mode::Code(lang))?;
+        app.start_game(Mode::Code(code_lang_from_cli(lang_string)?))?;
     } else if cli.zen {
         app.start_game(Mode::Zen)?;
+    } else if let Some(count) = cli.symbols {
+        app.start_game(Mode::Symbols(count))?;
     } else if cli.file.is_some() {
-        app.start_game(Mode::Custom)?;
+        // `App::new` already holds the file; this starts and remembers it.
+        app.start_custom(None)?;
     }
     Ok(())
+}
+
+/// `--code <name>`: the same names and aliases as `code_lang` in the config
+/// (one table, `config::load::code_lang_kind`), but an unknown name is an
+/// error here rather than a fall-back-with-warning.
+fn code_lang_from_cli(name: &str) -> Result<CodeLang> {
+    code_lang_kind(name).map(CodeLang::from).ok_or_else(|| {
+        anyhow::anyhow!("unknown code lang: {name} (try rust, python, js, go, java, sql, shell)")
+    })
 }
 
 /// Top-level keymap dispatcher: handles global shortcuts first (Ctrl+C,
@@ -339,7 +471,9 @@ fn handle_mouse(app: &mut App, mouse: MouseEvent) {
 }
 
 /// Keymap for the main menu: ↑/↓ (j/k) pick a category row, ←/→ (h/l) pick
-/// an option within it, Enter (or Space) to act.
+/// an option within it, Enter (or Space) to act. `p` / `n` / `b` toggle the
+/// word settings (punctuation, numbers, 10k pool) for time and words runs,
+/// for this run of TypeRush; the config and CLI set where they start.
 fn handle_menu_key(app: &mut App, code: KeyCode, _mods: KeyModifiers) {
     match code {
         KeyCode::Up | KeyCode::Char('k') => app.menu_move_row(false),
@@ -350,16 +484,32 @@ fn handle_menu_key(app: &mut App, code: KeyCode, _mods: KeyModifiers) {
             let item = &app.menu[app.menu_index];
             let action = item.action;
             let mode = item.mode;
+            let custom_path = item.custom_path.clone();
             match action {
                 MenuAction::Start => {
                     if let Some(m) = mode {
                         if let Err(e) = app.start_game(m) {
-                            app.error_message = Some(e.to_string());
+                            app.show_error(&e);
                         }
+                    }
+                }
+                MenuAction::StartCustom => {
+                    // The placeholder option has no path: `start_custom`
+                    // then explains how to add a custom file.
+                    if let Err(e) = app.start_custom(custom_path) {
+                        app.show_error(&e);
                     }
                 }
                 MenuAction::ShowStats => app.screen = Screen::Stats,
                 MenuAction::Quit => app.should_quit = true,
+            }
+        }
+        KeyCode::Char('p') => app.word_decor.punctuation ^= true,
+        KeyCode::Char('n') => app.word_decor.numbers ^= true,
+        KeyCode::Char('b') => {
+            app.word_pool = match app.word_pool {
+                WordPool::Common => WordPool::Extended,
+                WordPool::Extended => WordPool::Common,
             }
         }
         KeyCode::Tab | KeyCode::Char('s') => app.screen = Screen::Stats,
@@ -377,12 +527,12 @@ pub(crate) fn handle_typing_key(app: &mut App, code: KeyCode, mods: KeyModifiers
         }
         KeyCode::F(5) => {
             if let Err(e) = app.restart() {
-                app.error_message = Some(e.to_string());
+                app.show_error(&e);
             }
         }
         KeyCode::Char('r') if mods.contains(KeyModifiers::CONTROL) => {
             if let Err(e) = app.restart() {
-                app.error_message = Some(e.to_string());
+                app.show_error(&e);
             }
         }
         KeyCode::Backspace => {
@@ -402,8 +552,8 @@ pub(crate) fn handle_typing_key(app: &mut App, code: KeyCode, mods: KeyModifiers
         }
         KeyCode::Char(typed_char) => {
             // Ignore other control chords like Ctrl+A — we never want those
-            // to be counted as typed characters.
-            if mods.contains(KeyModifiers::CONTROL) {
+            // to be counted as typed characters. AltGr is not one of them.
+            if mods.contains(KeyModifiers::CONTROL) && !is_altgr(typed_char, mods) {
                 return;
             }
             app.handle_char(typed_char);
@@ -412,12 +562,21 @@ pub(crate) fn handle_typing_key(app: &mut App, code: KeyCode, mods: KeyModifiers
     }
 }
 
+/// Whether a Ctrl-modified character is really AltGr. Windows reports AltGr
+/// as Ctrl+Alt, and on German, French, Spanish, Polish… layouts AltGr is how
+/// `{ } [ ] | @ ~ \` (and letters like `ą`) are typed — the symbols drill and
+/// code modes are built on them. A Ctrl+Alt chord that gives an ASCII letter
+/// or digit is a real chord (Linux reports Ctrl+Alt+A as `a`), not AltGr.
+fn is_altgr(typed_char: char, mods: KeyModifiers) -> bool {
+    mods.contains(KeyModifiers::CONTROL | KeyModifiers::ALT) && !typed_char.is_ascii_alphanumeric()
+}
+
 /// Keymap for the post-session results screen.
 fn handle_results_key(app: &mut App, code: KeyCode, _mods: KeyModifiers) {
     match code {
         KeyCode::Enter | KeyCode::Char('r') => {
             if let Err(e) = app.restart() {
-                app.error_message = Some(e.to_string());
+                app.show_error(&e);
             }
         }
         KeyCode::Char('m') | KeyCode::Esc => app.screen = Screen::Menu,
@@ -463,7 +622,7 @@ fn after_input(app: &mut App, last_screen: Screen, session_saved: &mut bool, sta
         app.results_comparison = Some(storage::ResultsComparison::new(
             sessions,
             app.session_just_saved,
-            &app.mode.label(),
+            &app.session_label(),
         ));
     }
     if app.screen == Screen::Stats && last_screen != Screen::Stats {
@@ -495,7 +654,7 @@ fn save_current_session(app: &mut App, stats_file: &Path) {
     let record = SessionRecord {
         wpm: app.wpm(),
         accuracy: app.accuracy(),
-        mode: app.mode.label(),
+        mode: app.session_label(),
         word_count: app.current_word,
         correct_chars: app.correct_chars,
         total_chars: app.total_typed_chars,
@@ -599,6 +758,34 @@ mod tests {
         handle_typing_key(&mut app, KeyCode::Char('a'), KeyModifiers::CONTROL);
         handle_typing_key(&mut app, KeyCode::Char('z'), KeyModifiers::CONTROL);
         assert_eq!(app.words[0].typed, "hel");
+    }
+
+    /// Windows reports AltGr as Ctrl+Alt: on a German layout `{` is
+    /// AltGr+7 and arrives as `Char('{')` with CONTROL | ALT. It must type.
+    #[test]
+    fn altgr_characters_are_typed() {
+        let mut app = App::new(None, ThemePalette::default(), DefaultMode::Time(15));
+        app.screen = Screen::Typing;
+        app.mode = Mode::Symbols(1);
+        app.words = vec![Word::new("{@ą}".into())];
+        let altgr = KeyModifiers::CONTROL | KeyModifiers::ALT;
+        for ch in ['{', '@', 'ą'] {
+            handle_typing_key(&mut app, KeyCode::Char(ch), altgr);
+        }
+        // Shift+AltGr works too.
+        handle_typing_key(&mut app, KeyCode::Char('}'), altgr | KeyModifiers::SHIFT);
+        assert_eq!(app.correct_chars, 4);
+        assert_eq!(app.screen, Screen::Results);
+    }
+
+    /// Ctrl+Alt with a letter or digit is a chord, not AltGr: ignored.
+    #[test]
+    fn ctrl_alt_letter_chords_are_ignored() {
+        let mut app = make_typing_app();
+        let chord = KeyModifiers::CONTROL | KeyModifiers::ALT;
+        handle_typing_key(&mut app, KeyCode::Char('a'), chord);
+        handle_typing_key(&mut app, KeyCode::Char('1'), chord);
+        assert_eq!(app.total_typed_chars, 0);
     }
 
     // ── mouse ────────────────────────────────────────────────────────────────
@@ -738,6 +925,337 @@ mod tests {
         assert_eq!(app.menu[app.menu_index].group, "words");
         handle_mouse(&mut app, mouse(MouseEventKind::ScrollUp, (0, 0)));
         assert_eq!(app.menu[app.menu_index].group, "time");
+    }
+
+    // ── v0.4.0 ───────────────────────────────────────────────────────────────
+
+    /// A zero count would start a session with nothing to type; clap rejects
+    /// it before the terminal is touched. Positive counts still parse.
+    #[test]
+    fn zero_counts_are_rejected() {
+        for flag in ["--time", "--words", "--symbols"] {
+            assert!(
+                Cli::try_parse_from(["typerush", flag, "0"]).is_err(),
+                "{flag} 0"
+            );
+            assert!(
+                Cli::try_parse_from(["typerush", flag, "25"]).is_ok(),
+                "{flag} 25"
+            );
+        }
+    }
+
+    #[test]
+    fn code_flag_accepts_every_documented_alias() {
+        use crate::words::CodeLang::*;
+        for (name, lang) in [
+            ("rust", Rust),
+            ("rs", Rust),
+            ("python", Python),
+            ("py", Python),
+            ("js", JavaScript),
+            ("JavaScript", JavaScript),
+            ("go", Go),
+            ("golang", Go),
+            ("java", Java),
+            ("sql", Sql),
+            ("shell", Shell),
+            ("sh", Shell),
+            ("bash", Shell),
+        ] {
+            assert_eq!(code_lang_from_cli(name).unwrap(), lang, "{name}");
+        }
+        let err = code_lang_from_cli("cobol").unwrap_err().to_string();
+        assert!(err.contains("cobol"), "{err}");
+    }
+
+    /// Index of the menu option with this group and label.
+    fn option(app: &App, group: &str, label: &str) -> usize {
+        app.menu
+            .iter()
+            .position(|m| m.group == group && m.label == label)
+            .unwrap_or_else(|| panic!("no {group} · {label} option"))
+    }
+
+    #[test]
+    fn enter_on_placeholder_custom_option_explains_and_stays() {
+        let mut app = App::new(None, ThemePalette::default(), DefaultMode::Time(15));
+        app.menu_index = option(&app, "custom", "custom");
+        handle_key(&mut app, KeyCode::Enter, KeyModifiers::NONE);
+        assert_eq!(app.screen, Screen::Menu);
+        assert!(app.error_message.as_deref().unwrap().contains("--file"));
+    }
+
+    /// Picking a snippet starts it, remembers it in state.json, and keeps it
+    /// highlighted for when the user comes back to the menu.
+    #[test]
+    fn picking_a_snippet_starts_and_remembers_it() {
+        let dir = tempfile::tempdir().unwrap();
+        let snippet_path = dir.path().join("drill.txt");
+        std::fs::write(&snippet_path, "fn main ( ) { }").unwrap();
+        let state_file = dir.path().join("state.json");
+
+        let mut app = App::new(None, ThemePalette::default(), DefaultMode::Time(15));
+        app.load_custom_sources(
+            words::snippets::discover_in(dir.path()),
+            Default::default(),
+            Some(state_file.clone()),
+        );
+        app.menu_index = option(&app, "custom", "drill");
+        handle_key(&mut app, KeyCode::Enter, KeyModifiers::NONE);
+
+        assert_eq!(app.screen, Screen::Typing);
+        assert_eq!(app.mode, Mode::Custom);
+        assert_eq!(app.words[0].text, "fn");
+        assert_eq!(
+            state::load_from_path(&state_file)
+                .last_custom_file
+                .as_deref(),
+            snippet_path.to_str()
+        );
+        assert_eq!(app.menu[app.menu_index].label, "drill");
+    }
+
+    /// A snippet deleted after startup: a clear error naming the file, and
+    /// the previously remembered file is not replaced.
+    #[test]
+    fn deleted_snippet_errors_and_keeps_remembered_file() {
+        let dir = tempfile::tempdir().unwrap();
+        let snippet_path = dir.path().join("gone.txt");
+        std::fs::write(&snippet_path, "hello").unwrap();
+        let state_file = dir.path().join("state.json");
+        let remembered = state::AppState {
+            last_custom_file: Some("/kept/notes.txt".into()),
+        };
+        state::save_to_path(&state_file, &remembered).unwrap();
+
+        let mut app = App::new(None, ThemePalette::default(), DefaultMode::Time(15));
+        app.load_custom_sources(
+            words::snippets::discover_in(dir.path()),
+            remembered.clone(),
+            Some(state_file.clone()),
+        );
+        std::fs::remove_file(&snippet_path).unwrap();
+        app.menu_index = option(&app, "custom", "gone");
+        handle_key(&mut app, KeyCode::Enter, KeyModifiers::NONE);
+
+        assert_eq!(app.screen, Screen::Menu);
+        assert!(app.error_message.as_deref().unwrap().contains("gone.txt"));
+        assert_eq!(state::load_from_path(&state_file), remembered);
+    }
+
+    /// Draw `app` at `width`×`height`; returns the screen as text rows.
+    fn screen(app: &App, width: u16, height: u16) -> Vec<String> {
+        let mut terminal =
+            Terminal::new(ratatui::backend::TestBackend::new(width, height)).unwrap();
+        terminal.draw(|f| ui::render(f, app)).unwrap();
+        terminal
+            .backend()
+            .buffer()
+            .content()
+            .chunks(width as usize)
+            .map(|row| row.iter().map(|cell| cell.symbol()).collect())
+            .collect()
+    }
+
+    /// Every menu option is clickable in the frame just drawn.
+    fn all_options_clickable(app: &App) -> bool {
+        let targets = app.click_targets.borrow();
+        (0..app.menu.len()).all(|i| targets.iter().any(|(_, a)| *a == ClickAction::Menu(i)))
+    }
+
+    /// A menu as a returning v0.4 user sees it: a remembered file and a few
+    /// snippets in the custom row.
+    fn full_menu_app() -> App {
+        let mut app = App::new(None, ThemePalette::default(), DefaultMode::Time(15));
+        let snippet = |name: &str| words::snippets::Snippet {
+            name: name.into(),
+            path: PathBuf::from(format!("/s/{name}.txt")),
+            canonical_path: None,
+        };
+        app.load_custom_sources(
+            vec![snippet("drill"), snippet("essay"), snippet("hello")],
+            state::AppState {
+                last_custom_file: Some("/home/me/notes.txt".into()),
+            },
+            None,
+        );
+        app
+    }
+
+    /// Regression: v0.4's extra rows pushed custom, stats and quit off a
+    /// standard 80×24 terminal at launch, with no sign there was more. Now
+    /// the whole menu is on screen at launch — the plain one and one with a
+    /// remembered file and snippets — with the banner and no "more" hint.
+    #[test]
+    fn whole_menu_fits_80x24_at_launch() {
+        for app in [
+            App::new(None, ThemePalette::default(), DefaultMode::Time(15)),
+            full_menu_app(),
+        ] {
+            let rows = screen(&app, 80, 24);
+            let dump = rows.join("\n");
+            assert!(all_options_clickable(&app), "{dump}");
+            assert!(!dump.contains("more"), "{dump}");
+            assert!(dump.contains("▀█▀"), "compact banner missing:\n{dump}");
+            for text in ["stats", "quit", "symbols", "custom", "punctuation off"] {
+                assert!(dump.contains(text), "{text:?} missing:\n{dump}");
+            }
+        }
+    }
+
+    /// With room to spare the menu looks like v0.3: the big banner, and a
+    /// blank line between categories.
+    #[test]
+    fn tall_terminal_gets_big_banner_and_gaps() {
+        let app = full_menu_app();
+        let rows = screen(&app, 100, 40);
+        let dump = rows.join("\n");
+        assert!(rows[1].contains("████████"), "{dump}");
+        let time = rows.iter().position(|r| r.contains("➤  time")).unwrap();
+        assert!(rows[time + 2].trim_matches(['│', ' ']).is_empty(), "{dump}");
+        assert!(rows[time + 3].contains("words"), "{dump}");
+        assert!(all_options_clickable(&app), "{dump}");
+    }
+
+    /// At 80 columns the seven code options fit on one line. On a narrow
+    /// terminal they wrap, every one stays inside the box and clickable, and
+    /// clicking the last one starts it.
+    #[test]
+    fn code_row_fits_at_80_and_wraps_when_narrow() {
+        let mut app = App::new(None, ThemePalette::default(), DefaultMode::Time(15));
+        app.menu_index = option(&app, "code", "rust");
+        let code_lines = |app: &App| -> Vec<ratatui::layout::Rect> {
+            let targets = app.click_targets.borrow();
+            app.menu
+                .iter()
+                .enumerate()
+                .filter(|(_, m)| m.group == "code")
+                .map(|(i, _)| {
+                    targets
+                        .iter()
+                        .find(|(_, a)| *a == ClickAction::Menu(i))
+                        .map(|(area, _)| *area)
+                        .unwrap_or_else(|| panic!("code option {i} not clickable"))
+                })
+                .collect()
+        };
+        screen(&app, 80, 24);
+        let code = code_lines(&app);
+        assert!(
+            code.iter().all(|a| a.y == code[0].y),
+            "code row wrapped at 80"
+        );
+
+        screen(&app, 50, 40);
+        let code = code_lines(&app);
+        let lines: std::collections::BTreeSet<u16> = code.iter().map(|a| a.y).collect();
+        assert!(lines.len() > 1, "expected the code row to wrap");
+        // Chips on one line never overlap.
+        for pair in code.windows(2) {
+            if pair[0].y == pair[1].y {
+                assert!(pair[0].x + pair[0].width <= pair[1].x);
+            }
+        }
+        let shell = option(&app, "code", "shell");
+        let cell = target_cell(&app, ClickAction::Menu(shell));
+        click(&mut app, cell);
+        assert_eq!(app.mode, Mode::Code(crate::words::CodeLang::Shell));
+    }
+
+    /// Every menu option can be scrolled into view and clicked on a standard
+    /// 80×24 terminal, including the new rows below zen.
+    #[test]
+    fn every_option_reachable_at_80x24() {
+        let mut app = full_menu_app();
+        for index in 0..app.menu.len() {
+            app.menu_index = index;
+            draw(&app);
+            target_cell(&app, ClickAction::Menu(index));
+        }
+    }
+
+    /// Too short for the whole list: it scrolls to the selection, and the
+    /// border says which way there is more — nothing is hidden silently.
+    #[test]
+    fn short_terminal_scrolls_with_more_hints() {
+        let mut app = full_menu_app();
+        let rows = screen(&app, 80, 12);
+        let dump = rows.join("\n");
+        assert!(
+            dump.contains("▼ more") && !dump.contains("▲ more"),
+            "{dump}"
+        );
+        assert!(!dump.contains("▀█▀"), "no room for a banner:\n{dump}");
+
+        app.menu_index = app.menu.len() - 1; // quit
+        let rows = screen(&app, 80, 12);
+        let dump = rows.join("\n");
+        assert!(
+            dump.contains("▲ more") && !dump.contains("▼ more"),
+            "{dump}"
+        );
+        target_cell(&app, ClickAction::Menu(app.menu_index));
+    }
+
+    /// `p`, `n`, `b` toggle the word settings, the border shows each one's
+    /// state in words, and the next run's label follows.
+    #[test]
+    fn menu_keys_toggle_word_settings() {
+        let mut app = App::new(None, ThemePalette::default(), DefaultMode::Time(30));
+        for code in ['p', 'n', 'b'] {
+            handle_key(&mut app, KeyCode::Char(code), KeyModifiers::NONE);
+        }
+        assert!(app.word_decor.punctuation && app.word_decor.numbers);
+        assert_eq!(app.word_pool, WordPool::Extended);
+        let dump = screen(&app, 80, 24).join("\n");
+        for text in ["punctuation on", "numbers on", "10k words on"] {
+            assert!(dump.contains(text), "{text:?} missing:\n{dump}");
+        }
+        handle_key(&mut app, KeyCode::Enter, KeyModifiers::NONE);
+        assert_eq!(app.session_label(), "time-30s+10k+p+n");
+
+        // And back off again.
+        app.screen = Screen::Menu;
+        for code in ['p', 'n', 'b'] {
+            handle_key(&mut app, KeyCode::Char(code), KeyModifiers::NONE);
+        }
+        handle_key(&mut app, KeyCode::Enter, KeyModifiers::NONE);
+        assert_eq!(app.session_label(), "time-30s");
+    }
+
+    /// The settings on the border are clickable and act like their keys.
+    #[test]
+    fn clicking_a_word_setting_toggles_it() {
+        let mut app = App::new(None, ThemePalette::default(), DefaultMode::Time(15));
+        draw(&app);
+        let numbers = ClickAction::Key(KeyCode::Char('n'), KeyModifiers::NONE);
+        let cell = target_cell(&app, numbers);
+        click(&mut app, cell);
+        assert!(app.word_decor.numbers);
+        assert_eq!(app.screen, Screen::Menu);
+    }
+
+    #[test]
+    fn cli_switch_pairs_resolve_last_one_wins() {
+        let overrides = |args: &[&str]| {
+            let cli = Cli::try_parse_from([&["typerush"], args].concat()).unwrap();
+            let o = cli.overrides();
+            (o.word_pool, o.punctuation, o.numbers)
+        };
+        assert_eq!(overrides(&[]), (None, None, None));
+        assert_eq!(
+            overrides(&["--big", "--punctuation", "--numbers"]),
+            (Some(WordPool::Extended), Some(true), Some(true))
+        );
+        assert_eq!(
+            overrides(&["--no-big", "--no-punctuation", "--no-numbers"]),
+            (Some(WordPool::Common), Some(false), Some(false))
+        );
+        assert_eq!(
+            overrides(&["--punctuation", "--no-punctuation", "--no-big", "--big"]),
+            (Some(WordPool::Extended), Some(false), None)
+        );
     }
 
     // ── saving ───────────────────────────────────────────────────────────────

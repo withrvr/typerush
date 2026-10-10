@@ -90,6 +90,24 @@ KEY:  ✅ done    🚧 in progress    🔲 planned    💡 idea
 
 ---
 
+## ✅ Shipped (v0.4 — More content)
+
+- ✅ Bigger English word pool (10k) — `--big` or `[words] pool = "extended"`
+- ✅ Programming-symbols mode (focus on `(){};=>` etc.) — `symbols` menu row, `--symbols N`
+- ✅ More languages: Go, Java, SQL, Shell
+- ✅ Punctuation / numbers toggle — `--punctuation`, `--numbers`, or `[words]`;
+  `p` / `n` / `b` in the menu, `--no-…` switches to turn them off
+- ✅ Menu fits a standard 80×24 terminal (compact banner, `▲/▼ more` when it
+  can't)
+- ✅ A personal best per custom file (`custom-notes`)
+- ✅ Custom snippet library: drop `.txt` files in `~/.typerush/snippets/` (`--list-snippets`)
+- ✅ "custom" menu row + last-picked-file memory in `~/.typerush/state.json`
+
+(The original v0.4 item "visual section gaps in the main menu" shipped early,
+in v0.3, as the category-grouped menu.)
+
+---
+
 ## 🚧 In progress
 
 - 🚧 Pre-built binary releases on GitHub
@@ -98,14 +116,6 @@ KEY:  ✅ done    🚧 in progress    🔲 planned    💡 idea
 ---
 
 ## 🔲 Planned
-
-### v0.4 — More content & menu UX
-- 🔲 Bigger English word pool (10k)
-- 🔲 Programming-symbols mode (focus on `(){};=>` etc.)
-- 🔲 More languages: Go, Java, SQL, Shell
-- 🔲 Punctuation / numbers toggle
-- 🔲 Custom snippet library: drop `.txt` files in `~/.typerush/snippets/`
-- 🔲 "Custom" menu row + last-picked-file memory in `~/.typerush/state.json`
 
 ### v0.5 — Quality of life
 - 🔲 Pause / resume mid-session

@@ -65,6 +65,20 @@ For v0.3.0, also:
   option and a footer hint; scroll wheel; click closes help.
 - Help overlay at 80×24 and in a ~40-column terminal.
 
+For v0.4.0, also:
+
+- Menu at 80×24 with a remembered file and a few snippets: every option on
+  screen at launch, compact banner, no `▼ more`. At 110×40: big banner and a
+  blank line between categories. At 80×12: `▼ more` / `▲ more` as you move.
+- `p` / `n` / `b` (and clicking them on the border) flip `on` / `off`; a time
+  run then shows `[time-30s+10k+p]` and is saved under that label.
+- `--no-big --no-punctuation --no-numbers` with all three on in the config
+  gives a plain `time-30s` run.
+- A broken `config.toml` with `--big --punctuation`: the parse error shows,
+  and the run is still `+10k+p`.
+- A snippet run is saved as `custom-<name>`; Zen stays plain with all three
+  settings on.
+
 ---
 
 ## 3. Package-shape check (the important one before publish)

@@ -114,6 +114,12 @@ flowchart LR
     personal_best, personal_best_for_mode, average_accuracy,
     streak, avg_wpm_last_n_days, key_accuracy,
     StatsSummary, ResultsComparison"]
+    src --> state["state.rs
+    ~/.typerush/state.json: the last custom file
+    (atomic writes, path passed in)"]
+    src --> text["text.rs
+    printable / shorten: safe, width-aware display
+    of user-supplied names, paths and file text"]
     src --> theme["theme/"]
     theme --> theme_mod["mod.rs
     ThemePalette (10 color slots) + per-slot overrides"]
@@ -124,16 +130,21 @@ flowchart LR
     #RRGGBB and 16 ANSI color names parser"]
     src --> config["config/"]
     config --> config_mod["mod.rs
-    Config / Defaults / Colors from config.toml (serde)"]
+    Config / Defaults / Colors / Words from config.toml (serde)"]
     config --> load["load.rs
-    load_or_default(): never errors, bad files
-    become one human-readable warning"]
+    load_or_default_with(CliOverrides): never errors,
+    bad files become one human-readable warning;
+    code_lang_kind: one name table for
+    code_lang and --code"]
     src --> ui["ui/"]
     ui --> ui_mod["mod.rs
     render() dispatcher, background paint,
     clickable footer (render_footer)"]
     ui --> menu["menu.rs
-    ASCII banner + modes grouped by category"]
+    banner + modes grouped by category, sized to fit
+    (big or compact banner, blank lines dropped top-first,
+    then scrolling with more hints); word settings on
+    the bottom border; long rows wrap"]
     ui --> typing["typing.rs
     header, progress gauge, words"]
     ui --> results["results.rs
@@ -144,11 +155,17 @@ flowchart LR
     help overlay and error modal"]
     src --> words["words/"]
     words --> words_mod["mod.rs
-    word source picker (random, quote, code, file)"]
+    word source picker (random, quote, code, symbols, file);
+    WordPool + WordDecor (punctuation / numbers)"]
     words --> english["english.rs
-    200- and 1000-word English pools"]
+    ENGLISH_COMMON (~430 common words) and ENGLISH_10000"]
     words --> quotes["quotes.rs
-    programming quotes + Rust / Python / JS snippets"]
+    programming quotes + Rust / Python / JS /
+    Go / Java / SQL / Shell snippets"]
+    words --> symbols["symbols.rs
+    programming-symbol tokens for Mode::Symbols"]
+    words --> snippets["snippets.rs
+    *.txt discovery in ~/.typerush/snippets/"]
 ```
 
 ---
@@ -222,6 +239,41 @@ All of this bookkeeping lives in `main.rs::after_input`, which also saves each
 finished game exactly once: the "saved" flag is cleared only when a new game
 starts, so visiting Help from Results can't save the session again.
 
+### Custom files and `state.json` (v0.4.0)
+
+The menu's `custom` row is built by `app::build_menu(snippets, last_file)`:
+the last custom file first (skipped when it is one of the snippets), then each
+snippet, or a single placeholder option when there is neither. Its labels come
+from `app::custom_labels`, already terminal-safe and shortened, and all
+distinct as drawn: snippets are labelled from the snippet set alone (so the
+remembered file never changes them), the remembered file falls back to
+`folder/name`, and repeats get the first free " (n)". `App::new`
+never touches disk; `main.rs` discovers snippets and loads `state.json`, then
+hands both to `App::load_custom_sources` together with the path to save to.
+Tests leave that path `None`, so they can never write to a real home
+directory.
+
+Every custom start goes through `App::start_custom(path)`: it sets
+`custom_file`, calls `start_game`, and only then saves the file to
+`state.json` and the menu. If the file fails to load, `custom_file` is put
+back, so neither a restart nor the remembered file ever points at the file
+that failed. `start_game` builds the word list before changing any state, so
+the screen, mode and words are untouched too. The saved path is made absolute
+so it works from any directory.
+
+`App::session_label` names a custom session after its file
+(`custom-notes`), so each file has its own personal best; time and words
+labels get the `+10k` / `+p` / `+n` suffixes of the word settings, which the
+menu's `p` / `n` / `b` keys toggle on `App::word_pool` / `App::word_decor`.
+
+### Config loading
+
+`config::load::load_from(path, cli)` never fails: a missing file means
+defaults, and an unreadable or unparseable one means defaults plus a warning
+(shown in the error modal). Either way the CLI overrides (`--theme`, `--big`,
+`--no-big`, `--punctuation`, …) are applied on top, so a typo in
+`config.toml` never silently drops a flag.
+
 ### Cross-platform
 crossterm handles Windows Console API, ANSI escape codes, and raw mode in one
 crate. We don't directly use any platform-specific code, so the binary is a
@@ -250,11 +302,21 @@ crate. We don't directly use any platform-specific code, so the binary is a
 1. Add a variant to `Mode` in `src/app.rs`.
 2. Pattern-match it inside `App::start_game` to pick a word source.
 3. Update `Mode::label` so it persists nicely in stats.
-4. Add an entry to `default_menu()` — items sharing a `group` render under one
-   heading, options side by side.
+4. Add an entry to `build_menu()` — items sharing a `group` render under one
+   heading, options side by side (wrapping when the row is too wide). New rows
+   go after the existing ones so ↑/↓ through the old rows doesn't change.
 5. If it has a unique completion condition, handle it in `advance_word()` /
    `tick()`.
 6. (Optional) Add a CLI flag in `main.rs::Cli`.
+
+## When you add a code language
+
+1. Add a variant to `CodeLang` (`src/words/mod.rs`) and a snippet pool in
+   `src/words/quotes.rs`; match it in `random_code_snippet`.
+2. Add the `CodeLangKind` mirror (`src/config/load.rs`), its names in
+   `code_lang_kind` (this one table serves both `code_lang` and `--code`),
+   and the arm in `impl From<CodeLangKind> for CodeLang` (`src/app.rs`).
+3. Add a `start("code", …)` entry to `build_menu()`.
 
 ---
 

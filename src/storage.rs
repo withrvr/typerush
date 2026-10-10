@@ -76,7 +76,9 @@ pub fn stats_path() -> PathBuf {
 /// at is replaced; the existing file's permissions are kept. The temp name
 /// includes the process id so two TypeRush windows saving at once never write
 /// into the same temp file.
-fn write_atomic(path: &Path, contents: &str) -> std::io::Result<()> {
+///
+/// `pub(crate)` so `state.rs` gets the same guarantee for `state.json`.
+pub(crate) fn write_atomic(path: &Path, contents: &str) -> std::io::Result<()> {
     let path = fs::canonicalize(path).unwrap_or_else(|_| path.to_path_buf());
     let mut tmp = path.as_os_str().to_owned();
     tmp.push(format!(".{}.tmp", std::process::id()));

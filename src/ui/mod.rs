@@ -169,4 +169,86 @@ mod tests {
         });
         assert!(has_red_space);
     }
+
+    /// A multi-line error (a TOML parse error points at the bad line with a
+    /// caret) keeps its line breaks and indent, fits in the box with the
+    /// dismiss hint, and an escape character in it doesn't reach the terminal.
+    #[test]
+    fn error_modal_keeps_lines_and_hides_control_characters() {
+        let mut app = App::new(None, builtin::DARK, DefaultMode::Time(15));
+        app.error_message = Some(
+            "TOML parse error at line 3, column 5\n  |\n3 | foo =\x1b[2J\n  |     ^\nexpected value"
+                .to_string(),
+        );
+        let mut terminal = Terminal::new(TestBackend::new(80, 24)).unwrap();
+        terminal.draw(|f| render(f, &app)).unwrap();
+        let rows: Vec<String> = terminal
+            .backend()
+            .buffer()
+            .content()
+            .chunks(80)
+            .map(|row| row.iter().map(|c| c.symbol()).collect())
+            .collect();
+        let dump = rows.join("\n");
+        let row_of = |needle: &str| {
+            rows.iter()
+                .position(|r| r.contains(needle))
+                .unwrap_or_else(|| panic!("{needle:?} not shown:\n{dump}"))
+        };
+        let first = row_of("  TOML parse error");
+        assert_eq!(row_of("  3 | foo =?[2J"), first + 2, "{dump}");
+        assert_eq!(row_of("expected value"), first + 4, "{dump}");
+        assert!(row_of("press any key") > first + 4, "{dump}");
+        assert!(!dump.contains('\x1b'));
+    }
+
+    /// Symbols mode shows a token-count gauge like words mode does.
+    #[test]
+    fn symbols_mode_shows_token_progress() {
+        let mut app = App::new(None, builtin::DARK, DefaultMode::Time(15));
+        app.start_game(crate::app::Mode::Symbols(2)).unwrap();
+        let mut terminal = Terminal::new(TestBackend::new(80, 24)).unwrap();
+        terminal.draw(|f| render(f, &app)).unwrap();
+        let text: String = terminal
+            .backend()
+            .buffer()
+            .content()
+            .iter()
+            .map(|c| c.symbol())
+            .collect();
+        assert!(text.contains("0 / 2"), "gauge missing");
+        assert!(text.contains("symbols-2"), "mode tag missing");
+    }
+
+    /// Mode labels in the history table are made safe (stats.json can be
+    /// hand-edited; custom labels carry file names) and long ones shortened
+    /// to the column instead of being cut off.
+    #[test]
+    fn stats_table_mode_labels_are_safe_and_shortened() {
+        let mut app = App::new(None, builtin::DARK, DefaultMode::Time(15));
+        app.stats_cache = Some(vec![crate::storage::SessionRecord {
+            wpm: 80.0,
+            accuracy: 97.0,
+            mode: "custom-\u{1b}[2Jquarterly-report-final-draft".into(),
+            word_count: 10,
+            correct_chars: 50,
+            total_chars: 52,
+            duration_secs: 30.0,
+            timestamp: chrono::Local::now(),
+            key_hits: Default::default(),
+            key_misses: Default::default(),
+        }]);
+        app.screen = crate::app::Screen::Stats;
+        let mut terminal = Terminal::new(TestBackend::new(100, 40)).unwrap();
+        terminal.draw(|f| render(f, &app)).unwrap();
+        let text: String = terminal
+            .backend()
+            .buffer()
+            .content()
+            .iter()
+            .map(|c| c.symbol())
+            .collect();
+        assert!(!text.contains('\x1b'));
+        assert!(text.contains("custom-?…nal-draft "), "{text}");
+    }
 }

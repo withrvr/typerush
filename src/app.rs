@@ -15,14 +15,17 @@
 
 use std::cell::RefCell;
 use std::collections::HashMap;
+use std::path::{Path, PathBuf};
 use std::time::{Duration, Instant};
 
 use crossterm::event::{KeyCode, KeyModifiers};
 use ratatui::layout::Rect;
 
 use crate::config::load::{CodeLangKind, DefaultMode};
+use crate::state::{self, AppState};
 use crate::storage::{ResultsComparison, SessionRecord, StatsSummary};
 use crate::theme::ThemePalette;
+use crate::words::{snippets::Snippet, WordDecor, WordPool};
 
 /// One of the high-level screens the user can be looking at. The current
 /// `Screen` drives both the renderer dispatch in `ui::render` and the keymap
@@ -56,14 +59,21 @@ pub enum Mode {
     Code(crate::words::CodeLang),
     /// No timer, no stats. Just type.
     Zen,
-    /// Words sourced from a user-supplied text file (`--file path.txt`).
+    /// Words sourced from a user-supplied text file (`--file path.txt`, the
+    /// remembered last file, or a snippet from `~/.typerush/snippets/`).
     Custom,
+    /// Programming-symbols drill: type N short tokens like `=>` or `(){};`.
+    Symbols(usize),
 }
 
 impl Mode {
     /// Short tag used when saving sessions to disk and in the UI ("time-30s",
     /// "words-50", "code-rust", …). Keeping the format stable means old stats
     /// stay readable across releases.
+    ///
+    /// Code labels come from the variant name, so JavaScript stays
+    /// `"code-javascript"` and the new languages are `"code-go"`,
+    /// `"code-java"`, `"code-sql"`, `"code-shell"`.
     pub fn label(&self) -> String {
         match self {
             Mode::Time(seconds) => format!("time-{}s", seconds),
@@ -72,6 +82,7 @@ impl Mode {
             Mode::Code(lang) => format!("code-{:?}", lang).to_lowercase(),
             Mode::Zen => "zen".to_string(),
             Mode::Custom => "custom".to_string(),
+            Mode::Symbols(count) => format!("symbols-{}", count),
         }
     }
 }
@@ -116,21 +127,42 @@ pub struct MenuItem {
     /// Category the option belongs to — the row's heading.
     pub group: &'static str,
     /// Option text within the row. Same as `group` for single-option rows.
-    pub label: &'static str,
+    /// Owned because custom options show runtime names (snippet, file).
+    pub label: String,
     /// Set for "start a game" rows; `None` for rows like "Stats" or "Quit".
     pub mode: Option<Mode>,
     pub action: MenuAction,
+    /// File a `StartCustom` option types from. `None` everywhere else, and
+    /// on the placeholder "custom" option shown when there's nothing to offer.
+    pub custom_path: Option<PathBuf>,
 }
 
 /// What pressing Enter on a menu item should do.
-#[derive(Clone, Copy, PartialEq, Eq)]
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub enum MenuAction {
     /// Start the game in `MenuItem::mode`.
     Start,
+    /// Start a custom-file session from `MenuItem::custom_path`.
+    StartCustom,
     /// Jump to the historical stats screen.
     ShowStats,
     /// Quit the application.
     Quit,
+}
+
+impl From<CodeLangKind> for crate::words::CodeLang {
+    fn from(kind: CodeLangKind) -> Self {
+        use crate::words::CodeLang;
+        match kind {
+            CodeLangKind::Rust => CodeLang::Rust,
+            CodeLangKind::Python => CodeLang::Python,
+            CodeLangKind::JavaScript => CodeLang::JavaScript,
+            CodeLangKind::Go => CodeLang::Go,
+            CodeLangKind::Java => CodeLang::Java,
+            CodeLangKind::Sql => CodeLang::Sql,
+            CodeLangKind::Shell => CodeLang::Shell,
+        }
+    }
 }
 
 /// Translate a `DefaultMode` (the config-side enum) into a runtime `Mode`.
@@ -140,10 +172,9 @@ fn mode_for(default_mode: DefaultMode) -> Mode {
         DefaultMode::Time(seconds) => Mode::Time(seconds),
         DefaultMode::Words(count) => Mode::Words(count),
         DefaultMode::Quote => Mode::Quote,
-        DefaultMode::Code(CodeLangKind::Rust) => Mode::Code(CodeLang::Rust),
-        DefaultMode::Code(CodeLangKind::Python) => Mode::Code(CodeLang::Python),
-        DefaultMode::Code(CodeLangKind::JavaScript) => Mode::Code(CodeLang::JavaScript),
+        DefaultMode::Code(kind) => Mode::Code(CodeLang::from(kind)),
         DefaultMode::Zen => Mode::Zen,
+        DefaultMode::Symbols(count) => Mode::Symbols(count),
     }
 }
 
@@ -165,21 +196,49 @@ fn best_menu_match(menu: &[MenuItem], default_mode: DefaultMode) -> usize {
                 | (Some(Mode::Code(_)), DefaultMode::Code(_))
                 | (Some(Mode::Quote), DefaultMode::Quote)
                 | (Some(Mode::Zen), DefaultMode::Zen)
+                | (Some(Mode::Symbols(_)), DefaultMode::Symbols(_))
         )
     });
     family_match.unwrap_or(0)
 }
 
-/// Build the default menu shown on startup.
+/// The menu with no custom sources — what tests and a fresh `App` start from.
+#[cfg(test)]
 pub fn default_menu() -> Vec<MenuItem> {
+    build_menu(&[], None)
+}
+
+/// Build the main menu. The `custom` row offers `last_custom_file` (unless it
+/// is one of the snippets) followed by every snippet; with neither, it shows
+/// a single placeholder option that explains how to add one.
+///
+/// The v0.3 rows keep their order; the v0.4 `symbols` and `custom` rows sit
+/// between `zen` and `stats`, so ↑/↓ through the original rows is unchanged.
+pub fn build_menu(snippets: &[Snippet], last_custom_file: Option<&Path>) -> Vec<MenuItem> {
     use crate::words::CodeLang;
-    let start = |group, label, mode| MenuItem {
+    let start = |group, label: &str, mode| MenuItem {
         group,
-        label,
+        label: label.to_string(),
         mode: Some(mode),
         action: MenuAction::Start,
+        custom_path: None,
     };
-    vec![
+    let other = |group: &'static str, action| MenuItem {
+        group,
+        label: group.to_string(),
+        mode: None,
+        action,
+        custom_path: None,
+    };
+    let custom = |label: String, path: Option<PathBuf>| MenuItem {
+        group: "custom",
+        label,
+        mode: Some(Mode::Custom),
+        action: MenuAction::StartCustom,
+        custom_path: path,
+    };
+
+    let mut menu = vec![
         start("time", "15s", Mode::Time(15)),
         start("time", "30s", Mode::Time(30)),
         start("time", "60s", Mode::Time(60)),
@@ -191,21 +250,146 @@ pub fn default_menu() -> Vec<MenuItem> {
         start("code", "rust", Mode::Code(CodeLang::Rust)),
         start("code", "python", Mode::Code(CodeLang::Python)),
         start("code", "javascript", Mode::Code(CodeLang::JavaScript)),
+        start("code", "go", Mode::Code(CodeLang::Go)),
+        start("code", "java", Mode::Code(CodeLang::Java)),
+        start("code", "sql", Mode::Code(CodeLang::Sql)),
+        start("code", "shell", Mode::Code(CodeLang::Shell)),
         start("quote", "quote", Mode::Quote),
         start("zen", "zen", Mode::Zen),
-        MenuItem {
-            group: "stats",
-            label: "stats",
-            mode: None,
-            action: MenuAction::ShowStats,
-        },
-        MenuItem {
-            group: "quit",
-            label: "quit",
-            mode: None,
-            action: MenuAction::Quit,
-        },
-    ]
+        start("symbols", "25", Mode::Symbols(25)),
+        start("symbols", "50", Mode::Symbols(50)),
+    ];
+
+    let (snippet_labels, last_label) = custom_labels(snippets, last_custom_file);
+    if let (Some(last), Some(label)) = (last_custom_file, last_label) {
+        menu.push(custom(label, Some(last.to_path_buf())));
+    }
+    for (snippet, label) in snippets.iter().zip(snippet_labels) {
+        menu.push(custom(label, Some(snippet.path.clone())));
+    }
+    if menu.last().is_some_and(|item| item.group != "custom") {
+        menu.push(custom("custom".to_string(), None));
+    }
+
+    menu.push(other("stats", MenuAction::ShowStats));
+    menu.push(other("quit", MenuAction::Quit));
+    menu
+}
+
+/// Widest custom option label, in terminal cells. Longer snippet or file
+/// names are shortened in the middle so one name can't take over the row.
+pub const MAX_OPTION_WIDTH: usize = 24;
+
+/// Labels for the custom row: one per snippet, plus one for the remembered
+/// file unless it is one of the snippets (`None` then).
+///
+/// Labels are exactly what is drawn — unsafe characters shown as `?` and
+/// long names shortened to `MAX_OPTION_WIDTH` — and no two are the same, so
+/// every option can be told apart on screen:
+///
+/// - a snippet is labelled by its name, or its full file name when two
+///   snippets share a name (`notes.txt` / `notes.TXT`), using the snippet set
+///   alone — so which file is remembered never changes a snippet's label;
+/// - the remembered file is labelled by its file name, or `folder/name` when
+///   a snippet already uses that;
+/// - labels that still clash: the first keeps it, the rest take the first
+///   " (n)" not already used — natural names are claimed before any number,
+///   so a real `notes (2).txt` keeps its name.
+fn custom_labels(snippets: &[Snippet], last: Option<&Path>) -> (Vec<String>, Option<String>) {
+    use crate::text::{printable, shorten};
+    use std::collections::HashSet;
+
+    let display = |label: &str| shorten(&printable(label), MAX_OPTION_WIDTH).into_owned();
+    let file_name = |path: &Path| {
+        path.file_name().map_or_else(
+            || path.display().to_string(),
+            |name| name.to_string_lossy().into_owned(),
+        )
+    };
+
+    let mut name_count: HashMap<&str, usize> = HashMap::new();
+    for snippet in snippets {
+        *name_count.entry(snippet.name.as_str()).or_insert(0) += 1;
+    }
+    let mut bases: Vec<String> = snippets
+        .iter()
+        .map(|snippet| {
+            if name_count[snippet.name.as_str()] > 1 {
+                file_name(&snippet.path)
+            } else {
+                snippet.name.clone()
+            }
+        })
+        .collect();
+    let mut displays: Vec<String> = bases.iter().map(|base| display(base)).collect();
+
+    let last = last.filter(|last| {
+        // Compare canonical forms too, so `./notes.txt` or a symlink still
+        // matches its snippet. Paths that can't be canonicalized (missing)
+        // only match when literally equal.
+        let canonical = std::fs::canonicalize(last).ok();
+        !snippets
+            .iter()
+            .any(|s| s.path == *last || (canonical.is_some() && s.canonical_path == canonical))
+    });
+    if let Some(last) = last {
+        let name = file_name(last);
+        // `last` is absolute (see `offered_custom_file`), so it normally has a
+        // folder; one that doesn't (`/notes.txt`, `../notes.txt`) falls back
+        // to the numbering below, which still keeps labels distinct.
+        let folder = last
+            .parent()
+            .and_then(Path::file_name)
+            .map(|folder| folder.to_string_lossy().into_owned());
+        let base = match folder {
+            Some(folder) if displays.contains(&display(&name)) => {
+                format!("{folder}{}{name}", std::path::MAIN_SEPARATOR)
+            }
+            _ => name,
+        };
+        displays.push(display(&base));
+        bases.push(base);
+    }
+
+    // Each natural label belongs to the first option that wants it, and all
+    // of them are taken before any number is handed out — so a generated
+    // "notes (2)" can never take a name another option has.
+    let mut owner: HashMap<&str, usize> = HashMap::new();
+    for (index, text) in displays.iter().enumerate() {
+        owner.entry(text.as_str()).or_insert(index);
+    }
+    let mut in_use: HashSet<String> = displays.iter().cloned().collect();
+    let mut labels: Vec<String> = Vec::with_capacity(bases.len());
+    for (index, (base, text)) in bases.iter().zip(&displays).enumerate() {
+        if owner[text.as_str()] == index {
+            labels.push(text.clone());
+            continue;
+        }
+        // A repeat: the first free " (n)".
+        let mut n = 2;
+        let label = loop {
+            let candidate = display(&format!("{base} ({n})"));
+            if !in_use.contains(&candidate) {
+                break candidate;
+            }
+            n += 1;
+        };
+        in_use.insert(label.clone());
+        labels.push(label);
+    }
+
+    let last_label = last.and_then(|_| labels.pop());
+    (labels, last_label)
+}
+
+/// `path` made absolute against the current directory, so a remembered file
+/// still works when TypeRush is next started somewhere else. Not
+/// canonicalized: symlinks and the user's spelling of the path are kept.
+fn absolute(path: PathBuf) -> PathBuf {
+    if path.is_absolute() {
+        return path;
+    }
+    std::env::current_dir().map_or(path.clone(), |dir| dir.join(&path))
 }
 
 /// Index range of the menu row (group) containing `index`.
@@ -259,8 +443,9 @@ pub struct App {
     pub backspaces: usize,
 
     // --- misc ---
-    /// Path passed to `--file`, if any.
-    pub custom_file: Option<String>,
+    /// File the next `Mode::Custom` session types from: `--file`, or the
+    /// custom option picked in the menu. Kept for Ctrl+R / Enter restarts.
+    pub custom_file: Option<PathBuf>,
     /// Set to `true` from any handler to exit the main loop cleanly.
     pub should_quit: bool,
     /// Transient error message rendered as a modal overlay.
@@ -293,6 +478,22 @@ pub struct App {
     /// whether the last history entry is the current session or a previous one.
     pub session_just_saved: bool,
 
+    // --- word sources (v0.4.0) ---
+    /// English pool for Time / Words (`--big` / `--no-big`, `[words] pool`,
+    /// or `b` in the menu). Zen always uses the common pool.
+    pub word_pool: WordPool,
+    /// Punctuation / numbers decoration for Time / Words (`p` / `n` in the
+    /// menu, or the CLI / config switches). Never applied to Zen.
+    pub word_decor: WordDecor,
+    /// Snippet library found in `~/.typerush/snippets/` at startup. Kept so
+    /// the menu can be rebuilt without rescanning the directory.
+    pub snippets: Vec<Snippet>,
+    /// Persisted UI state (the remembered last custom file).
+    pub app_state: AppState,
+    /// Where `app_state` is saved. `None` means "don't persist" — the
+    /// default, so tests never write to the real home directory.
+    pub state_file: Option<PathBuf>,
+
     // --- mouse ---
     /// Clickable regions drawn in the last frame. Rebuilt by `ui::render` on
     /// every frame (hence the `RefCell`: rendering only gets `&App`) and
@@ -309,12 +510,19 @@ impl App {
     /// `default_mode` (from `~/.typerush/config.toml`) controls which menu row
     /// is pre-selected and what `app.mode` starts as. `palette` is the active
     /// color theme — UI modules read it on every frame.
+    ///
+    /// Touches no disk: snippets and the remembered file are added later by
+    /// [`App::load_custom_sources`]. A `custom_file` (`--file`) is offered in
+    /// the menu's custom row straight away.
     pub fn new(
-        custom_file: Option<String>,
+        custom_file: Option<PathBuf>,
         palette: ThemePalette,
         default_mode: DefaultMode,
     ) -> Self {
-        let menu = default_menu();
+        // Always absolute (see `absolute`): labels and state.json then never
+        // depend on the directory TypeRush happens to be in.
+        let custom_file = custom_file.map(absolute);
+        let menu = build_menu(&[], custom_file.as_deref());
         let initial_mode = mode_for(default_mode);
         let menu_index = best_menu_match(&menu, default_mode);
         Self {
@@ -341,9 +549,171 @@ impl App {
             stats_summary: None,
             results_comparison: None,
             session_just_saved: false,
+            word_pool: WordPool::Common,
+            word_decor: WordDecor::default(),
+            snippets: Vec::new(),
+            app_state: AppState::default(),
+            state_file: None,
             click_targets: RefCell::new(Vec::new()),
             pressed_target: None,
         }
+    }
+
+    /// The label this session is saved, compared and shown under: the mode
+    /// label, plus a suffix for each setting that makes time / words harder —
+    /// `+10k` (extended pool), `+p` (punctuation), `+n` (numbers). A harder
+    /// run therefore never competes with plain runs for a personal best.
+    ///
+    /// Custom sessions are labelled by the file they type (`custom-notes`
+    /// for `notes.txt`), so every snippet or file has its own personal best
+    /// rather than a 5-word drill and a long essay sharing one.
+    ///
+    /// Plain runs, and every other mode, keep exactly their v0.3 labels.
+    pub fn session_label(&self) -> String {
+        let mut label = self.mode.label();
+        if self.mode == Mode::Custom {
+            // Lossy and made safe: the label is drawn on screen and stored
+            // in stats.json, and a file name can contain anything.
+            let name = self.custom_file.as_deref().and_then(Path::file_stem);
+            if let Some(name) = name.filter(|name| !name.is_empty()) {
+                label = format!(
+                    "{label}-{}",
+                    crate::text::printable(&name.to_string_lossy())
+                );
+            }
+        }
+        if matches!(self.mode, Mode::Time(_) | Mode::Words(_)) {
+            if self.word_pool == WordPool::Extended {
+                label.push_str("+10k");
+            }
+            if self.word_decor.punctuation {
+                label.push_str("+p");
+            }
+            if self.word_decor.numbers {
+                label.push_str("+n");
+            }
+        }
+        label
+    }
+
+    /// Show `error` in the error modal, with its cause chain ("can't read
+    /// notes.txt: No such file or directory").
+    pub fn show_error(&mut self, error: &anyhow::Error) {
+        self.error_message = Some(format!("{error:#}"));
+    }
+
+    /// Choose the English pool and decoration for Time / Words.
+    pub fn set_word_source(&mut self, pool: WordPool, decor: WordDecor) {
+        self.word_pool = pool;
+        self.word_decor = decor;
+    }
+
+    /// Offer the snippet library and the remembered last custom file in the
+    /// menu, and remember future custom picks in `state_file` (`None`: don't).
+    pub fn load_custom_sources(
+        &mut self,
+        snippets: Vec<Snippet>,
+        app_state: AppState,
+        state_file: Option<PathBuf>,
+    ) {
+        self.snippets = snippets;
+        self.app_state = app_state;
+        self.state_file = state_file;
+        self.rebuild_menu();
+    }
+
+    /// The file the custom row offers first: `--file` / the current pick,
+    /// else the one remembered from a previous run.
+    fn offered_custom_file(&self) -> Option<PathBuf> {
+        // `custom_file` is already absolute; a hand-edited state.json might
+        // not be, so normalize the remembered path the same way.
+        self.custom_file.clone().or_else(|| {
+            self.app_state
+                .last_custom_file
+                .as_ref()
+                .map(|path| absolute(PathBuf::from(path)))
+        })
+    }
+
+    /// Rebuild the menu (custom row contents changed) keeping the highlight
+    /// on the same option, or the first custom option if that one is gone.
+    fn rebuild_menu(&mut self) {
+        // `action` is part of the key: stats and quit have the same mode and
+        // path (`None`), so without it a highlight on quit would land on stats.
+        let selected = self
+            .menu
+            .get(self.menu_index)
+            .map(|item| (item.mode, item.action, item.custom_path.clone()));
+        let offered = self.offered_custom_file();
+        self.menu = build_menu(&self.snippets, offered.as_deref());
+        self.menu_index = selected
+            .and_then(|(mode, action, path)| {
+                self.menu
+                    .iter()
+                    .position(|item| {
+                        item.mode == mode && item.action == action && item.custom_path == path
+                    })
+                    .or_else(|| {
+                        if mode == Some(Mode::Custom) {
+                            self.menu
+                                .iter()
+                                .position(|item| item.action == MenuAction::StartCustom)
+                        } else {
+                            None
+                        }
+                    })
+            })
+            .unwrap_or(self.menu_index)
+            .min(self.menu.len() - 1);
+    }
+
+    /// Start a custom-file session from `path` (or from the current
+    /// `custom_file`, e.g. `--file`, when `None`), then remember the file in
+    /// `state.json` and the menu.
+    ///
+    /// If the file fails to load nothing changes — not the screen, the mode,
+    /// the file a restart would use, nor the remembered file.
+    pub fn start_custom(&mut self, path: Option<PathBuf>) -> anyhow::Result<()> {
+        let previous = self.custom_file.clone();
+        if let Some(path) = path {
+            self.custom_file = Some(absolute(path));
+        }
+        if let Err(e) = self.start_game(Mode::Custom) {
+            self.custom_file = previous;
+            return Err(e);
+        }
+        self.persist_custom_file();
+        Ok(())
+    }
+
+    /// Remember the current custom file in `state.json` and show it in the
+    /// menu. Only called once the file has loaded.
+    ///
+    /// Non-UTF-8 paths aren't stored. Disk errors are ignored — losing this
+    /// memory is never worth an error.
+    fn persist_custom_file(&mut self) {
+        let Some(path) = self.custom_file.clone() else {
+            return;
+        };
+        // `custom_file` is always absolute: `new` and `start_custom` make it so.
+        let Some(text) = path.to_str() else {
+            return;
+        };
+        if self.app_state.last_custom_file.as_deref() == Some(text) {
+            return;
+        }
+        let mut updated = self.app_state.clone();
+        updated.last_custom_file = Some(text.to_string());
+        // Only count the file as remembered once it is on disk, so a failed
+        // write (disk full, read-only home) is retried the next time it starts.
+        let saved = match &self.state_file {
+            Some(file) => state::save_to_path(file, &updated).is_ok(),
+            None => true,
+        };
+        if saved {
+            self.app_state = updated;
+        }
+        self.rebuild_menu();
     }
 
     /// Menu ↑/↓: jump to the previous/next row (wrapping), keeping the same
@@ -430,12 +800,14 @@ impl App {
         }
     }
 
-    /// In `Mode::Words`, `(words_completed, words_total)`. `None` for all other modes.
+    /// In `Mode::Words` / `Mode::Symbols`, `(completed, total)`. `None` for
+    /// all other modes.
     pub fn progress(&self) -> Option<(usize, usize)> {
-        if let Mode::Words(target) = self.mode {
-            Some((self.current_word.min(target), target))
-        } else {
-            None
+        match self.mode {
+            Mode::Words(target) | Mode::Symbols(target) => {
+                Some((self.current_word.min(target), target))
+            }
+            _ => None,
         }
     }
 
@@ -446,38 +818,38 @@ impl App {
     /// can't be initialised (e.g. `--file` was passed an empty file).
     pub fn start_game(&mut self, mode: Mode) -> anyhow::Result<()> {
         use crate::words;
-        self.mode = mode;
-        self.words = match mode {
+        let (pool, decor) = (self.word_pool, self.word_decor);
+        // Build the word list before touching any state: if a custom file
+        // fails to load, the app is left exactly as it was.
+        let text: Vec<String> = match mode {
             // Time mode just needs *enough* words that no one runs out.
-            Mode::Time(_) => words::random_words(300)
-                .into_iter()
-                .map(Word::new)
-                .collect(),
-            Mode::Words(count) => words::random_words(count)
-                .into_iter()
-                .map(Word::new)
-                .collect(),
-            Mode::Quote => words::random_quote().into_iter().map(Word::new).collect(),
-            Mode::Code(lang) => words::random_code_snippet(lang)
-                .into_iter()
-                .map(Word::new)
-                .collect(),
-            Mode::Zen => words::random_words(500)
-                .into_iter()
-                .map(Word::new)
-                .collect(),
+            Mode::Time(_) => words::random_words_from(300, pool, decor),
+            Mode::Words(count) => words::random_words_from(count, pool, decor),
+            Mode::Quote => words::random_quote(),
+            Mode::Code(lang) => words::random_code_snippet(lang),
+            // Zen stays calm and plain: the word settings are for time and
+            // words runs, which are scored; zen never is.
+            Mode::Zen => words::random_words_from(500, WordPool::Common, WordDecor::default()),
+            Mode::Symbols(count) => words::symbols::random_symbol_tokens(count),
             Mode::Custom => {
-                if let Some(path) = &self.custom_file {
-                    let loaded = words::words_from_file(path)?;
-                    if loaded.is_empty() {
-                        return Err(anyhow::anyhow!("custom file is empty"));
-                    }
-                    loaded.into_iter().map(Word::new).collect()
-                } else {
-                    return Err(anyhow::anyhow!("no custom file provided"));
+                let Some(path) = &self.custom_file else {
+                    return Err(anyhow::anyhow!(
+                        "no custom file yet: run `typerush --file <path>`, or drop .txt files in {}",
+                        crate::text::printable(&words::snippets::snippets_dir().display().to_string())
+                    ));
+                };
+                let loaded = words::words_from_file(path)?;
+                if loaded.is_empty() {
+                    return Err(anyhow::anyhow!(
+                        "{} is empty",
+                        crate::text::printable(&path.display().to_string())
+                    ));
                 }
+                loaded
             }
         };
+        self.mode = mode;
+        self.words = text.into_iter().map(Word::new).collect();
         self.current_word = 0;
         self.started_at = None;
         self.ended_at = None;
@@ -595,8 +967,8 @@ impl App {
     fn advance_word(&mut self) {
         self.current_word += 1;
 
-        // Word-count modes: stop once the user has hit the target.
-        if let Mode::Words(target) = self.mode {
+        // Count modes (words, symbol tokens): stop once the target is reached.
+        if let Mode::Words(target) | Mode::Symbols(target) = self.mode {
             if self.current_word >= target {
                 self.finish_game();
                 return;
@@ -877,5 +1249,493 @@ mod tests {
         assert_eq!(app.current_word, 0);
         assert_eq!(app.words[0].typed, "hi");
         assert!(!app.words[0].space_missed);
+    }
+
+    // ── v0.4.0 ──────────────────────────────────────────────────────────────
+
+    fn snippet(name: &str, path: &str) -> Snippet {
+        Snippet {
+            name: name.into(),
+            path: PathBuf::from(path),
+            canonical_path: None,
+        }
+    }
+
+    fn custom_options(menu: &[MenuItem]) -> Vec<(&str, Option<&Path>)> {
+        menu.iter()
+            .filter(|m| m.action == MenuAction::StartCustom)
+            .map(|m| (m.label.as_str(), m.custom_path.as_deref()))
+            .collect()
+    }
+
+    #[test]
+    fn mode_labels_for_v04_modes_are_stable() {
+        use crate::words::CodeLang;
+        assert_eq!(Mode::Symbols(25).label(), "symbols-25");
+        assert_eq!(Mode::Code(CodeLang::Go).label(), "code-go");
+        assert_eq!(Mode::Code(CodeLang::Java).label(), "code-java");
+        assert_eq!(Mode::Code(CodeLang::Sql).label(), "code-sql");
+        assert_eq!(Mode::Code(CodeLang::Shell).label(), "code-shell");
+        // Unchanged since v0.1 — saved PBs are keyed on it.
+        assert_eq!(Mode::Code(CodeLang::JavaScript).label(), "code-javascript");
+    }
+
+    #[test]
+    fn menu_offers_new_languages_and_symbols() {
+        let menu = default_menu();
+        let row = |group: &str| -> Vec<&str> {
+            menu.iter()
+                .filter(|m| m.group == group)
+                .map(|m| m.label.as_str())
+                .collect()
+        };
+        assert_eq!(
+            row("code"),
+            ["rust", "python", "javascript", "go", "java", "sql", "shell"]
+        );
+        assert_eq!(row("symbols"), ["25", "50"]);
+        // The new rows sit after zen, so the v0.3 rows keep their order.
+        let groups: Vec<&str> = menu.iter().map(|m| m.group).collect();
+        let zen = groups.iter().position(|g| *g == "zen").unwrap();
+        assert_eq!(groups[zen + 1], "symbols");
+        assert_eq!(&groups[groups.len() - 2..], ["stats", "quit"]);
+    }
+
+    #[test]
+    fn best_menu_match_picks_symbols_row() {
+        let menu = default_menu();
+        assert_eq!(
+            menu[best_menu_match(&menu, DefaultMode::Symbols(50))].mode,
+            Some(Mode::Symbols(50))
+        );
+        // A non-standard count falls back to the first symbols option.
+        assert_eq!(
+            menu[best_menu_match(&menu, DefaultMode::Symbols(7))].mode,
+            Some(Mode::Symbols(25))
+        );
+    }
+
+    #[test]
+    fn custom_row_placeholder_when_nothing_to_offer() {
+        assert_eq!(custom_options(&default_menu()), [("custom", None)]);
+    }
+
+    #[test]
+    fn custom_row_lists_last_file_then_snippets() {
+        let snippets = [
+            snippet("alpha", "/s/alpha.txt"),
+            snippet("beta", "/s/beta.txt"),
+        ];
+        let menu = build_menu(&snippets, Some(Path::new("/home/me/notes.txt")));
+        assert_eq!(
+            custom_options(&menu),
+            [
+                ("notes.txt", Some(Path::new("/home/me/notes.txt"))),
+                ("alpha", Some(Path::new("/s/alpha.txt"))),
+                ("beta", Some(Path::new("/s/beta.txt"))),
+            ]
+        );
+    }
+
+    /// The remembered file is often one of the snippets — don't list it twice.
+    #[test]
+    fn last_file_that_is_a_snippet_is_not_duplicated() {
+        let snippets = [snippet("alpha", "/s/alpha.txt")];
+        let menu = build_menu(&snippets, Some(Path::new("/s/alpha.txt")));
+        assert_eq!(
+            custom_options(&menu),
+            [("alpha", Some(Path::new("/s/alpha.txt")))]
+        );
+    }
+
+    #[test]
+    fn symbols_mode_ends_after_its_token_count() {
+        let mut app = custom_app(&["()", "=>", "{}"]);
+        app.mode = Mode::Symbols(2);
+        assert_eq!(app.progress(), Some((0, 2)));
+        for ch in "() =>".chars() {
+            app.handle_char(ch);
+        }
+        assert_eq!(app.screen, Screen::Typing, "one token left");
+        app.handle_char(' ');
+        assert_eq!(app.screen, Screen::Results);
+        assert_eq!(app.progress(), Some((2, 2)));
+    }
+
+    #[test]
+    fn start_game_symbols_builds_requested_tokens() {
+        let mut app = menu_app();
+        app.start_game(Mode::Symbols(25)).unwrap();
+        assert_eq!(app.words.len(), 25);
+        assert!(app
+            .words
+            .iter()
+            .all(|w| !w.text.contains(char::is_whitespace)));
+    }
+
+    #[test]
+    fn word_source_settings_apply_but_zen_stays_plain() {
+        let mut app = menu_app();
+        app.set_word_source(
+            WordPool::Extended,
+            WordDecor {
+                punctuation: true,
+                numbers: true,
+            },
+        );
+        app.start_game(Mode::Words(400)).unwrap();
+        assert!(app
+            .words
+            .iter()
+            .any(|w| w.text.chars().any(|c| !c.is_ascii_alphabetic())));
+        // Zen ignores all three: plain words from the common pool.
+        app.start_game(Mode::Zen).unwrap();
+        assert!(app
+            .words
+            .iter()
+            .all(|w| crate::words::english::ENGLISH_COMMON.contains(&w.text.as_str())));
+    }
+
+    /// A custom file that fails to load leaves the app exactly as it was:
+    /// same screen, mode and words — and a restart still uses the file that
+    /// last worked, not the one that just failed.
+    #[test]
+    fn failed_custom_start_changes_nothing() {
+        let dir = tempfile::tempdir().unwrap();
+        let good = dir.path().join("good.txt");
+        std::fs::write(&good, "one two").unwrap();
+        let mut app = menu_app();
+        app.start_custom(Some(good.clone())).unwrap();
+        app.screen = Screen::Menu;
+        let (mode, words) = (app.mode, app.words.len());
+        let remembered = app.app_state.clone();
+
+        let err = app
+            .start_custom(Some(PathBuf::from("/definitely/not/here.txt")))
+            .unwrap_err();
+        assert!(format!("{err:#}").contains("here.txt"), "{err:#}");
+        assert_eq!(app.screen, Screen::Menu);
+        assert_eq!((app.mode, app.words.len()), (mode, words));
+        assert_eq!(app.custom_file.as_deref(), Some(good.as_path()));
+        assert_eq!(app.app_state, remembered);
+    }
+
+    #[test]
+    fn custom_without_file_explains_how_to_add_one() {
+        let mut app = menu_app();
+        let err = app.start_custom(None).unwrap_err().to_string();
+        assert!(err.contains("--file"), "{err}");
+        assert!(err.contains("snippets"), "{err}");
+        assert_eq!(app.screen, Screen::Menu);
+    }
+
+    #[test]
+    fn empty_custom_file_names_the_file() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("blank.txt");
+        std::fs::write(&path, "  \n\t ").unwrap();
+        let mut app = menu_app();
+        let err = app.start_custom(Some(path)).unwrap_err().to_string();
+        assert!(err.contains("blank.txt") && err.contains("empty"), "{err}");
+    }
+
+    /// A successful start saves the file to state.json, offers it in the
+    /// menu, and doesn't rewrite the file when the same one starts again.
+    #[test]
+    fn successful_custom_start_is_remembered_once() {
+        let dir = tempfile::tempdir().unwrap();
+        let state_file = dir.path().join("state.json");
+        let file = dir.path().join("notes.txt");
+        std::fs::write(&file, "type me").unwrap();
+        let mut app = menu_app();
+        app.load_custom_sources(Vec::new(), AppState::default(), Some(state_file.clone()));
+
+        app.start_custom(Some(file.clone())).unwrap();
+        assert_eq!(app.screen, Screen::Typing);
+        assert_eq!(
+            state::load_from_path(&state_file)
+                .last_custom_file
+                .as_deref(),
+            file.to_str()
+        );
+        assert_eq!(
+            custom_options(&app.menu),
+            [("notes.txt", Some(file.as_path()))]
+        );
+
+        // Same file again (e.g. picked from the menu): no rewrite.
+        std::fs::remove_file(&state_file).unwrap();
+        app.start_custom(Some(file)).unwrap();
+        assert!(!state_file.exists());
+    }
+
+    /// A relative `--file` path is remembered as absolute, so it still works
+    /// when TypeRush is next started from another directory.
+    #[test]
+    fn relative_paths_are_made_absolute() {
+        let stored = absolute(PathBuf::from("relative-notes.txt"));
+        assert!(stored.is_absolute());
+        assert!(stored.ends_with("relative-notes.txt"));
+        let already = std::env::current_dir().unwrap().join("x.txt");
+        assert_eq!(absolute(already.clone()), already);
+    }
+
+    /// A state.json write that fails isn't treated as saved: the next start
+    /// of the same file tries again (and succeeds once the disk is fine).
+    #[test]
+    fn failed_state_save_is_retried() {
+        let dir = tempfile::tempdir().unwrap();
+        let file = dir.path().join("notes.txt");
+        std::fs::write(&file, "type me").unwrap();
+        // A regular file where the state directory should be: the write fails.
+        let blocker = dir.path().join("blocker");
+        std::fs::write(&blocker, "").unwrap();
+        let mut app = menu_app();
+        app.load_custom_sources(
+            Vec::new(),
+            AppState::default(),
+            Some(blocker.join("state.json")),
+        );
+        app.start_custom(Some(file.clone())).unwrap();
+        assert!(app.app_state.last_custom_file.is_none());
+        // The file is still offered for this run.
+        assert_eq!(custom_options(&app.menu)[0].1, Some(file.as_path()));
+
+        let state_file = dir.path().join("state.json");
+        app.state_file = Some(state_file.clone());
+        app.start_custom(Some(file.clone())).unwrap();
+        assert_eq!(
+            state::load_from_path(&state_file)
+                .last_custom_file
+                .as_deref(),
+            file.to_str()
+        );
+    }
+
+    /// No two custom options ever share a label, even when file managers'
+    /// copy names ("notes (2)") collide with the numbering.
+    #[test]
+    fn custom_option_labels_are_unique() {
+        let snippets = [
+            snippet("notes", "/s/notes.txt"),
+            snippet("notes (2)", "/s/notes (2).txt"),
+            snippet("notes", "/s/notes.TXT"),
+            snippet("notes.txt", "/s/notes.txt.txt"),
+        ];
+        let menu = build_menu(&snippets, Some(Path::new("/home/me/notes.txt")));
+        let labels: Vec<&str> = custom_options(&menu).iter().map(|(l, _)| *l).collect();
+        // The remembered file's name is taken by a snippet: its folder tells
+        // it apart. "notes (2)" is a real file and keeps its name; the
+        // repeated "notes.txt" gets the first number not already in use.
+        let remembered = format!("me{}notes.txt", std::path::MAIN_SEPARATOR);
+        assert_eq!(
+            labels,
+            [
+                remembered.as_str(),
+                "notes.txt",
+                "notes (2)",
+                "notes.TXT",
+                "notes.txt (2)",
+            ]
+        );
+        let unique: std::collections::HashSet<_> = labels.iter().collect();
+        assert_eq!(unique.len(), labels.len());
+    }
+
+    fn snippet_labels(snippets: &[Snippet]) -> Vec<String> {
+        custom_labels(snippets, None).0
+    }
+
+    /// A relative path in a hand-edited state.json is made absolute, so it
+    /// still gets its folder when a snippet uses its name.
+    #[test]
+    fn relative_remembered_file_gets_its_folder() {
+        let mut app = menu_app();
+        app.load_custom_sources(
+            vec![snippet("notes.txt", "/s/notes.txt.txt")],
+            AppState {
+                last_custom_file: Some("notes.txt".into()),
+            },
+            None,
+        );
+        let cwd = std::env::current_dir().unwrap();
+        let folder = cwd.file_name().unwrap().to_string_lossy();
+        assert_eq!(
+            custom_options(&app.menu)[0].0,
+            format!("{folder}{}notes.txt", std::path::MAIN_SEPARATOR)
+        );
+    }
+
+    /// Two long names that differ only in the middle would look identical
+    /// once shortened; the shown labels must still differ.
+    #[test]
+    fn shortened_labels_stay_distinct() {
+        let snippets = [
+            snippet("project-alpha-meeting-notes-final", "/s/a.txt"),
+            snippet("project-alpha-sprint-notes-final", "/s/b.txt"),
+        ];
+        let labels = snippet_labels(&snippets);
+        assert_ne!(labels[0], labels[1]);
+        for label in &labels {
+            assert!(unicode_width::UnicodeWidthStr::width(label.as_str()) <= MAX_OPTION_WIDTH);
+        }
+    }
+
+    /// Unsafe characters in a snippet name are shown as `?` in the menu.
+    #[test]
+    fn labels_are_terminal_safe() {
+        let labels = snippet_labels(&[snippet("evil\u{1b}[2J", "/s/e.txt")]);
+        assert_eq!(labels, ["evil?[2J"]);
+    }
+
+    /// Which file is remembered never changes a snippet's label.
+    #[test]
+    fn snippet_labels_do_not_depend_on_the_remembered_file() {
+        let snippets = [
+            snippet("notes", "/s/notes.txt"),
+            snippet("todo", "/s/todo.txt"),
+        ];
+        let labels = |last: Option<&str>| -> Vec<String> {
+            build_menu(&snippets, last.map(Path::new))
+                .into_iter()
+                .filter(|m| {
+                    m.custom_path
+                        .as_deref()
+                        .is_some_and(|p| p.starts_with("/s"))
+                })
+                .map(|m| m.label)
+                .collect()
+        };
+        assert_eq!(labels(None), ["notes", "todo"]);
+        assert_eq!(labels(Some("/home/me/notes")), ["notes", "todo"]);
+        assert_eq!(labels(Some("/home/me/todo")), ["notes", "todo"]);
+    }
+
+    /// A single snippet named `custom.txt` still gets the `custom` heading
+    /// and opens the file — it isn't mistaken for the placeholder.
+    #[test]
+    fn snippet_named_custom_is_a_real_option() {
+        let menu = build_menu(&[snippet("custom", "/s/custom.txt")], None);
+        assert_eq!(
+            custom_options(&menu),
+            [("custom", Some(Path::new("/s/custom.txt")))]
+        );
+    }
+
+    /// Decorated time / words runs are saved under their own label, so they
+    /// never compete with plain runs for a personal best. Plain labels and
+    /// all other modes are unchanged.
+    #[test]
+    fn session_label_marks_harder_word_settings() {
+        let mut app = menu_app();
+        app.mode = Mode::Time(30);
+        assert_eq!(app.session_label(), "time-30s");
+        app.set_word_source(
+            WordPool::Extended,
+            WordDecor {
+                punctuation: true,
+                numbers: true,
+            },
+        );
+        assert_eq!(app.session_label(), "time-30s+10k+p+n");
+        app.mode = Mode::Words(100);
+        assert_eq!(app.session_label(), "words-100+10k+p+n");
+        app.set_word_source(
+            WordPool::Common,
+            WordDecor {
+                punctuation: false,
+                numbers: true,
+            },
+        );
+        assert_eq!(app.session_label(), "words-100+n");
+        // Settings that don't apply to a mode don't change its label.
+        for mode in [Mode::Quote, Mode::Symbols(25), Mode::Custom, Mode::Zen] {
+            app.mode = mode;
+            assert_eq!(app.session_label(), mode.label());
+        }
+    }
+
+    /// Each custom file has its own label (and so its own personal best),
+    /// named after the file without its extension and made safe to draw.
+    #[test]
+    fn custom_sessions_are_labelled_by_file() {
+        let mut app = menu_app();
+        app.mode = Mode::Custom;
+        assert_eq!(app.session_label(), "custom", "no file yet");
+        app.custom_file = Some(PathBuf::from("/home/me/notes.txt"));
+        assert_eq!(app.session_label(), "custom-notes");
+        app.custom_file = Some(PathBuf::from("/s/long essay.TXT"));
+        assert_eq!(app.session_label(), "custom-long essay");
+        app.custom_file = Some(PathBuf::from("/s/evil\u{1b}[2J.txt"));
+        assert_eq!(app.session_label(), "custom-evil?[2J");
+        // Word settings never apply to custom text.
+        app.set_word_source(
+            WordPool::Extended,
+            WordDecor {
+                punctuation: true,
+                numbers: true,
+            },
+        );
+        assert_eq!(app.session_label(), "custom-evil?[2J");
+    }
+
+    /// Rebuilding the menu keeps a highlight on quit on quit — stats and
+    /// quit share mode and path (`None`), so the action must be compared too.
+    #[test]
+    fn rebuild_keeps_quit_highlighted() {
+        let mut app = menu_app();
+        app.menu_index = app.menu.iter().position(|m| m.label == "quit").unwrap();
+        app.load_custom_sources(
+            vec![snippet("alpha", "/s/alpha.txt")],
+            AppState::default(),
+            None,
+        );
+        assert_eq!(app.menu[app.menu_index].label, "quit");
+    }
+
+    /// Startup: the remembered file shows up, and the highlighted default
+    /// mode stays highlighted after the menu is rebuilt.
+    #[test]
+    fn load_custom_sources_offers_remembered_file_and_keeps_selection() {
+        let mut app = menu_app(); // highlights time · 30s
+        app.load_custom_sources(
+            vec![snippet("alpha", "/s/alpha.txt")],
+            AppState {
+                last_custom_file: Some("/home/me/notes.txt".into()),
+            },
+            None,
+        );
+        assert_eq!(app.menu[app.menu_index].label, "30s");
+        // Made absolute: on Windows `/home/me/…` has no drive, so it gains one.
+        let remembered = absolute(PathBuf::from("/home/me/notes.txt"));
+        assert_eq!(
+            custom_options(&app.menu),
+            [
+                ("notes.txt", Some(remembered.as_path())),
+                ("alpha", Some(Path::new("/s/alpha.txt"))),
+            ]
+        );
+    }
+
+    /// `--file` wins over the remembered file in the custom row.
+    #[test]
+    fn cli_file_is_offered_instead_of_remembered_one() {
+        let given = absolute(PathBuf::from("/cli/given.txt"));
+        let mut app = App::new(
+            Some(given.clone()),
+            crate::theme::ThemePalette::default(),
+            DefaultMode::Time(15),
+        );
+        app.load_custom_sources(
+            Vec::new(),
+            AppState {
+                last_custom_file: Some("/old/remembered.txt".into()),
+            },
+            None,
+        );
+        assert_eq!(
+            custom_options(&app.menu),
+            [("given.txt", Some(given.as_path()))]
+        );
     }
 }

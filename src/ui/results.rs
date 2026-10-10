@@ -40,7 +40,7 @@ pub fn render(f: &mut Frame, app: &App) {
     let wpm = app.wpm();
     let acc = app.accuracy();
     let elapsed = app.elapsed().as_secs_f64();
-    let mode_label = app.mode.label();
+    let mode_label = app.session_label();
 
     let sessions: &[storage::SessionRecord] = app.stats_cache.as_deref().unwrap_or(&[]);
     // Normally computed once on screen entry (main loop); computed here only
