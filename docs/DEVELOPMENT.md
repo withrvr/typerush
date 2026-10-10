@@ -136,6 +136,11 @@ tmux send-keys -t tr -l $'\e[<0;46;9M'; tmux send-keys -t tr -l $'\e[<0;46;9m'
 Send `Escape` in its own `send-keys` call (with a short sleep after it):
 tmux merges `Escape Down` into an Alt+Down sequence, so the arrow is lost.
 
+Keep each `send-keys -l` under about 4 KB: the terminal's input buffer
+drops the rest, which looks like the app froze. A key sent right after a
+long burst can also merge with it (`Escape` then `z` arrives as Alt+z), so
+sleep before the next key.
+
 Sessions shorter than 1 s aren't saved, so pause (`sleep 1.1`) mid-typing when
 you need a saved session. Check `/tmp/tr-e2e/.typerush/stats.json` afterwards.
 

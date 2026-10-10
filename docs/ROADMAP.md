@@ -117,7 +117,7 @@ in v0.3, as the category-grouped menu.)
 
 ---
 
-## 🚧 v0.4.1 — Polish, speed and stats by category
+## ✅ v0.4.1 — Polish, speed and stats by category
 
 Worked in this order, one commit (or a few) per step, on one branch and
 one pull request:
@@ -136,7 +136,7 @@ one pull request:
    sessions, averages and time typed, and a ★ on each mode's best run
 8. ✅ A learnings log (bugs found and how they were fixed, features and how
    they were built) and a contributor skill file that points to it
-9. 🚧 Review, end-to-end test, docs, version 0.4.1
+9. ✅ Review, end-to-end test, docs, version 0.4.1
 
 ---
 

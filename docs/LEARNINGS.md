@@ -34,6 +34,10 @@ rule that keeps it fixed).
   `CodeLangKind`) has to be kept in step by hand; use the real type.
 - **Tests never touch the real `~/.typerush`.** Everything that reads or
   writes takes a path; E2E runs use a throwaway `HOME`.
+- **Profile before optimising.** A 3000-key tmux burst looked like input
+  lag; measured, the terminal's ~4 KB input buffer was dropping keys and
+  the app kept up either way, so batching redraws bought nothing and was
+  not merged.
 - **Read the terminal's actual bytes.** Ctrl+Backspace arrives as `^H`,
   AltGr arrives as Ctrl+Alt on Windows, `Escape Down` in tmux arrives as
   Alt+Down. Check what the key really sends before writing the keymap.
