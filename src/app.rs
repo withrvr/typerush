@@ -384,7 +384,7 @@ fn custom_labels(snippets: &[Snippet], last: Option<&Path>) -> (Vec<String>, Opt
 /// `path` made absolute against the current directory, so a remembered file
 /// still works when TypeRush is next started somewhere else. Not
 /// canonicalized: symlinks and the user's spelling of the path are kept.
-pub fn absolute(path: PathBuf) -> PathBuf {
+fn absolute(path: PathBuf) -> PathBuf {
     if path.is_absolute() {
         return path;
     }
@@ -516,6 +516,9 @@ impl App {
         palette: ThemePalette,
         default_mode: DefaultMode,
     ) -> Self {
+        // Always absolute (see `absolute`): labels and state.json then never
+        // depend on the directory TypeRush happens to be in.
+        let custom_file = custom_file.map(absolute);
         let menu = build_menu(&[], custom_file.as_deref());
         let initial_mode = mode_for(default_mode);
         let menu_index = best_menu_match(&menu, default_mode);
@@ -643,7 +646,7 @@ impl App {
     pub fn start_custom(&mut self, path: Option<PathBuf>) -> anyhow::Result<()> {
         let previous = self.custom_file.clone();
         if let Some(path) = path {
-            self.custom_file = Some(path);
+            self.custom_file = Some(absolute(path));
         }
         if let Err(e) = self.start_game(Mode::Custom) {
             self.custom_file = previous;
@@ -662,8 +665,8 @@ impl App {
         let Some(path) = self.custom_file.clone() else {
             return;
         };
-        let absolute = absolute(path);
-        let Some(text) = absolute.to_str() else {
+        // `custom_file` is always absolute: `new` and `start_custom` make it so.
+        let Some(text) = path.to_str() else {
             return;
         };
         if self.app_state.last_custom_file.as_deref() == Some(text) {
@@ -680,7 +683,6 @@ impl App {
         if saved {
             self.app_state = updated;
         }
-        self.custom_file = Some(absolute);
         self.rebuild_menu();
     }
 
@@ -802,7 +804,7 @@ impl App {
                 let Some(path) = &self.custom_file else {
                     return Err(anyhow::anyhow!(
                         "no custom file yet: run `typerush --file <path>`, or drop .txt files in {}",
-                        words::snippets::snippets_dir().display()
+                        crate::text::printable(&words::snippets::snippets_dir().display().to_string())
                     ));
                 };
                 let loaded = words::words_from_file(path)?;
@@ -1656,8 +1658,9 @@ mod tests {
     /// `--file` wins over the remembered file in the custom row.
     #[test]
     fn cli_file_is_offered_instead_of_remembered_one() {
+        let given = absolute(PathBuf::from("/cli/given.txt"));
         let mut app = App::new(
-            Some(PathBuf::from("/cli/given.txt")),
+            Some(given.clone()),
             crate::theme::ThemePalette::default(),
             DefaultMode::Time(15),
         );
@@ -1670,7 +1673,7 @@ mod tests {
         );
         assert_eq!(
             custom_options(&app.menu),
-            [("given.txt", Some(Path::new("/cli/given.txt")))]
+            [("given.txt", Some(given.as_path()))]
         );
     }
 }

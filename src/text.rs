@@ -18,27 +18,40 @@ pub fn is_unsafe(c: char) -> bool {
         )
 }
 
-/// Characters that can't be typed, so a typing target must not contain
-/// them: everything [`is_unsafe`], plus invisible formatting characters —
-/// the byte-order mark some Windows editors put at the start of a UTF-8 file
-/// (U+FEFF), the zero-width space, word joiners, soft hyphens and the
-/// interlinear-annotation controls.
-///
-/// Not included, because people do type them: the zero-width non-joiner and
-/// joiner (U+200C / U+200D — Persian keyboards type ZWNJ with Shift+Space,
-/// and ZWJ builds emoji sequences) and variation selectors (emoji pickers
-/// insert U+FE0F).
+/// Characters with no visible form of their own: Unicode's
+/// Default_Ignorable_Code_Point set (the byte-order mark some Windows editors
+/// write at the start of a UTF-8 file, zero-width spaces and joiners, word
+/// joiners, variation selectors, soft hyphens, Hangul fillers, tags, …) plus
+/// the interlinear-annotation controls.
+pub fn is_invisible(c: char) -> bool {
+    matches!(
+        c,
+        '\u{00AD}'
+            | '\u{034F}'
+            | '\u{061C}'
+            | '\u{115F}'..='\u{1160}'
+            | '\u{17B4}'..='\u{17B5}'
+            | '\u{180B}'..='\u{180F}'
+            | '\u{200B}'..='\u{200F}'
+            | '\u{202A}'..='\u{202E}'
+            | '\u{2060}'..='\u{206F}'
+            | '\u{3164}'
+            | '\u{FE00}'..='\u{FE0F}'
+            | '\u{FEFF}'
+            | '\u{FFA0}'
+            | '\u{FFF0}'..='\u{FFFB}'
+            | '\u{1BCA0}'..='\u{1BCA3}'
+            | '\u{1D173}'..='\u{1D17A}'
+            | '\u{E0000}'..='\u{E0FFF}'
+    )
+}
+
+/// Characters a typing target must not contain: [`is_unsafe`] ones, and
+/// [`is_invisible`] ones — the typing screen draws one cell per character, so
+/// an invisible one would be a character the user can't see but has to type
+/// (a byte-order mark used to make a file's first word impossible).
 pub fn is_untypeable(c: char) -> bool {
-    is_unsafe(c)
-        || matches!(
-            c,
-            '\u{00AD}'
-                | '\u{180E}'
-                | '\u{200B}'
-                | '\u{2060}'..='\u{2064}'
-                | '\u{FEFF}'
-                | '\u{FFF9}'..='\u{FFFB}'
-        )
+    is_unsafe(c) || is_invisible(c)
 }
 
 /// `text` with every [`is_untypeable`] character shown as `?`: nothing that
@@ -51,6 +64,20 @@ pub fn printable(text: &str) -> Cow<'_, str> {
     Cow::Owned(
         text.chars()
             .map(|c| if is_untypeable(c) { '?' } else { c })
+            .collect(),
+    )
+}
+
+/// `text` with control characters shown as `?` and everything else kept —
+/// for output that must still name a real file (`--list-snippets` paths),
+/// where a soft hyphen or zero-width space is part of the name.
+pub fn without_controls(text: &str) -> Cow<'_, str> {
+    if !text.contains(char::is_control) {
+        return Cow::Borrowed(text);
+    }
+    Cow::Owned(
+        text.chars()
+            .map(|c| if c.is_control() { '?' } else { c })
             .collect(),
     )
 }
@@ -109,18 +136,32 @@ mod tests {
     }
 
     #[test]
-    fn byte_order_mark_and_zero_width_space_are_untypeable() {
+    fn invisible_characters_are_untypeable() {
         for c in [
-            '\u{FEFF}', '\u{200B}', '\u{00AD}', '\u{FFF9}', '\u{1b}', '\u{202E}',
+            '\u{FEFF}',
+            '\u{200B}',
+            '\u{200C}',
+            '\u{200D}',
+            '\u{FE0F}',
+            '\u{00AD}',
+            '\u{034F}',
+            '\u{3164}',
+            '\u{E0041}',
+            '\u{FFF9}',
+            '\u{1b}',
+            '\u{202E}',
         ] {
             assert!(is_untypeable(c), "{c:?}");
         }
-        // ZWNJ (Persian), ZWJ (emoji) and VS16 (emoji pickers) are typed.
-        for c in [
-            'a', 'é', ' ', '漢', '(', '…', '\u{200C}', '\u{200D}', '\u{FE0F}',
-        ] {
+        for c in ['a', 'é', ' ', '漢', '(', '…', '\u{0301}', 'ی'] {
             assert!(!is_untypeable(c), "{c:?}");
         }
+    }
+
+    #[test]
+    fn without_controls_keeps_invisible_but_real_characters() {
+        assert_eq!(without_controls("re\u{00AD}port"), "re\u{00AD}port");
+        assert_eq!(without_controls("a\u{1b}b\nc"), "a?b?c");
     }
 
     /// A name that differs from another only by a hidden character must
@@ -129,6 +170,8 @@ mod tests {
     fn printable_reveals_invisible_characters() {
         assert_eq!(printable("\u{200B}notes"), "?notes");
         assert_eq!(printable("\u{FEFF}notes"), "?notes");
+        assert_eq!(printable("no\u{200D}tes"), "no?tes");
+        assert_eq!(printable("notes\u{3164}"), "notes?");
     }
 
     #[test]

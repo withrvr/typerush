@@ -141,7 +141,7 @@ fn main() -> Result<()> {
         // The run's error is the one that matters; still mention a failed
         // terminal restore rather than dropping it.
         if let Err(restore_error) = restored {
-            eprintln!("(also: couldn't restore the terminal: {restore_error})");
+            eprintln!("(also: couldn't restore the terminal: {restore_error:#})");
         }
         std::process::exit(1);
     }
@@ -173,7 +173,9 @@ fn print_snippets_and_exit() -> ! {
         println!(
             "{}\t{}",
             text::printable(&snippet.name),
-            text::printable(&snippet.path.display().to_string())
+            // Kept a real path (only control characters replaced) so scripts
+            // can open it.
+            text::without_controls(&snippet.path.display().to_string())
         );
     }
     std::process::exit(0);
@@ -194,14 +196,21 @@ fn setup_terminal() -> Result<Tui> {
 }
 
 /// Reverse of `setup_terminal` — restore cooked mode and exit the alt screen.
+///
+/// Every step is attempted even if an earlier one fails, so the user gets
+/// their normal screen back (and sees any error printed after this); the
+/// first failure is returned.
 fn restore_terminal(terminal: &mut Tui) -> Result<()> {
-    disable_raw_mode()?;
-    execute!(
+    let raw = disable_raw_mode();
+    let screen = execute!(
         terminal.backend_mut(),
         LeaveAlternateScreen,
         DisableMouseCapture
-    )?;
-    terminal.show_cursor()?;
+    );
+    let cursor = terminal.show_cursor();
+    raw?;
+    screen?;
+    cursor?;
     Ok(())
 }
 
@@ -230,10 +239,7 @@ fn run_app(terminal: &mut Tui, cli: Cli) -> Result<()> {
         punctuation: cli.punctuation.then_some(true),
         numbers: cli.numbers.then_some(true),
     });
-    // `--file` is made absolute once, here: the menu and state.json then
-    // never depend on the directory TypeRush happens to be in later.
-    let custom_file = cli.file.clone().map(app::absolute);
-    let mut app = App::new(custom_file, resolved.palette, resolved.default_mode);
+    let mut app = App::new(cli.file.clone(), resolved.palette, resolved.default_mode);
     app.set_word_source(resolved.word_pool, resolved.word_decor);
     let state_file = state::state_path();
     app.load_custom_sources(
