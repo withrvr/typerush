@@ -134,7 +134,7 @@ pub fn render(f: &mut Frame, app: &App) {
         layout[0],
     );
 
-    let inner = centered_width(box_width, layout[1]);
+    let inner = layout[1].centered_horizontally(Constraint::Length(box_width));
     // Text area inside the border — clicks outside it can't hit an option.
     let menu_area = Rect::new(
         inner.x + 1,
@@ -382,10 +382,4 @@ fn menu_lines(app: &App, width: usize, skip_gaps: usize) -> MenuLines {
         selected_line,
         gaps,
     }
-}
-
-/// `width` columns of `r`, centered horizontally, full height.
-fn centered_width(width: u16, r: Rect) -> Rect {
-    let width = width.min(r.width);
-    Rect::new(r.x + (r.width - width) / 2, r.y, width, r.height)
 }

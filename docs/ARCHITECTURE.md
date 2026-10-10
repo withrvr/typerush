@@ -134,7 +134,7 @@ flowchart LR
     config --> load["load.rs
     load_or_default_with(CliOverrides): never errors,
     bad files become one human-readable warning;
-    code_lang_kind: one name table for
+    code_lang: one name table for
     code_lang and --code"]
     src --> ui["ui/"]
     ui --> ui_mod["mod.rs
@@ -314,7 +314,7 @@ crate. We don't directly use any platform-specific code, so the binary is a
 1. Add a variant to `CodeLang` (`src/words/mod.rs`) and a snippet pool in
    `src/words/quotes.rs`; match it in `random_code_snippet`.
 2. Add the `CodeLangKind` mirror (`src/config/load.rs`), its names in
-   `code_lang_kind` (this one table serves both `code_lang` and `--code`),
+   `code_lang` (this one table serves both `code_lang` and `--code`),
    and the arm in `impl From<CodeLangKind> for CodeLang` (`src/app.rs`).
 3. Add a `start("code", …)` entry to `build_menu()`.
 

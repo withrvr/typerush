@@ -20,7 +20,6 @@ pub const DARK: ThemePalette = ThemePalette {
     correct: Color::Green,
     incorrect: Color::Red,
     pending: Color::DarkGray,
-    extra: Color::Red,
     mode_tag: Color::Magenta,
     error: Color::Red,
     neutral: Color::White,
@@ -38,10 +37,9 @@ pub const LIGHT: ThemePalette = ThemePalette {
     correct: Color::Rgb(0x3F, 0x82, 0x3F), // darker green
     incorrect: Color::Rgb(0xC5, 0x3B, 0x30), // darker red
     pending: Color::Rgb(0x55, 0x57, 0x5C), // mid-dark gray — readable, not loud
-    extra: Color::Rgb(0xC5, 0x3B, 0x30),
-    mode_tag: Color::Rgb(0x88, 0x1F, 0x88),   // deeper purple
-    error: Color::Rgb(0xB0, 0x0F, 0x3C),      // darker error red
-    neutral: Color::Rgb(0x20, 0x22, 0x28),    // near-black body text
+    mode_tag: Color::Rgb(0x88, 0x1F, 0x88), // deeper purple
+    error: Color::Rgb(0xB0, 0x0F, 0x3C),  // darker error red
+    neutral: Color::Rgb(0x20, 0x22, 0x28), // near-black body text
     background: Color::Rgb(0xFA, 0xFA, 0xFA), // off-white
 };
 
@@ -52,7 +50,6 @@ pub const MONOKAI: ThemePalette = ThemePalette {
     correct: Color::Rgb(0xA6, 0xE2, 0x2E),   // monokai green
     incorrect: Color::Rgb(0xF9, 0x26, 0x72), // monokai pink
     pending: Color::Rgb(0x75, 0x71, 0x5E),   // dim gray-brown
-    extra: Color::Rgb(0xFD, 0x97, 0x1F),     // orange
     mode_tag: Color::Rgb(0xAE, 0x81, 0xFF),  // purple
     error: Color::Rgb(0xF9, 0x26, 0x72),
     neutral: Color::Rgb(0xF8, 0xF8, 0xF2), // monokai foreground
@@ -66,7 +63,6 @@ pub const DRACULA: ThemePalette = ThemePalette {
     correct: Color::Rgb(0x50, 0xFA, 0x7B),   // dracula green
     incorrect: Color::Rgb(0xFF, 0x55, 0x55), // dracula red
     pending: Color::Rgb(0x62, 0x72, 0xA4),   // dracula comment
-    extra: Color::Rgb(0xFF, 0xB8, 0x6C),     // dracula orange
     mode_tag: Color::Rgb(0xFF, 0x79, 0xC6),  // dracula pink
     error: Color::Rgb(0xFF, 0x55, 0x55),
     neutral: Color::Rgb(0xF8, 0xF8, 0xF2), // dracula foreground

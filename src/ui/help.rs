@@ -3,7 +3,6 @@
 //!  - a transient error modal (dismissed by any keypress or click)
 
 use ratatui::{
-    layout::Flex,
     prelude::*,
     widgets::{Block, Borders, Clear, Paragraph, Wrap},
 };
@@ -58,7 +57,9 @@ pub fn render(f: &mut Frame, app: &App) {
     } else {
         lines.len() as u16 + 2
     };
-    let area = centered(f.area(), WIDTH, height);
+    let area = f
+        .area()
+        .centered(Constraint::Length(WIDTH), Constraint::Length(height));
     f.render_widget(Clear, area);
     let p = Paragraph::new(lines)
         // Plain Line::from(string) entries inherit this fg — otherwise they
@@ -82,17 +83,6 @@ pub fn render(f: &mut Frame, app: &App) {
     f.render_widget(p, area);
 }
 
-/// A `width`×`height` rect centered in `r`, shrunk to fit if `r` is smaller.
-fn centered(r: Rect, width: u16, height: u16) -> Rect {
-    let [area] = Layout::horizontal([Constraint::Length(width)])
-        .flex(Flex::Center)
-        .areas(r);
-    let [area] = Layout::vertical([Constraint::Length(height)])
-        .flex(Flex::Center)
-        .areas(area);
-    area
-}
-
 /// Render the transient error modal. Dismissed by any keypress or click from
 /// the main loop. Tall enough for the wrapped message plus the hint line.
 pub fn render_error(f: &mut Frame, theme: &ThemePalette, message: &str) {
@@ -114,7 +104,9 @@ pub fn render_error(f: &mut Frame, theme: &ThemePalette, message: &str) {
         .sum::<usize>()
         .max(1);
     let height = message_rows as u16 + 4; // + blank + hint + borders
-    let area = centered(f.area(), WIDTH, height);
+    let area = f
+        .area()
+        .centered(Constraint::Length(WIDTH), Constraint::Length(height));
     f.render_widget(Clear, area);
     let p = Paragraph::new(format!("{}\n\n  press any key or click", lines.join("\n")))
         .wrap(Wrap { trim: false })

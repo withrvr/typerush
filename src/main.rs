@@ -40,7 +40,7 @@ use ratatui::crossterm::{
 use ratatui::{backend::CrosstermBackend, Terminal};
 
 use crate::app::{App, ClickAction, MenuAction, Mode, Screen};
-use crate::config::load::{code_lang_kind, CliOverrides};
+use crate::config::load::{code_lang, CliOverrides};
 use crate::storage::SessionRecord;
 use crate::theme::builtin;
 use crate::words::{CodeLang, WordPool};
@@ -361,10 +361,10 @@ fn apply_cli_autostart(app: &mut App, cli: &Cli) -> Result<()> {
 }
 
 /// `--code <name>`: the same names and aliases as `code_lang` in the config
-/// (one table, `config::load::code_lang_kind`), but an unknown name is an
+/// (one table, `config::load::code_lang`), but an unknown name is an
 /// error here rather than a fall-back-with-warning.
 fn code_lang_from_cli(name: &str) -> Result<CodeLang> {
-    code_lang_kind(name).map(CodeLang::from).ok_or_else(|| {
+    code_lang(name).ok_or_else(|| {
         anyhow::anyhow!("unknown code lang: {name} (try rust, python, js, go, java, sql, shell)")
     })
 }
@@ -688,11 +688,10 @@ fn save_current_session(app: &mut App, stats_file: &Path) {
 mod tests {
     use super::*;
     use crate::app::{Screen, Word};
-    use crate::config::load::DefaultMode;
     use crate::theme::ThemePalette;
 
     fn make_typing_app() -> App {
-        let mut app = App::new(None, ThemePalette::default(), DefaultMode::Time(15));
+        let mut app = App::new(None, ThemePalette::default(), Mode::Time(15));
         app.screen = Screen::Typing;
         app.mode = Mode::Words(2);
         app.words = vec![Word::new("hello".into()), Word::new("world".into())];
@@ -767,7 +766,7 @@ mod tests {
     /// AltGr+7 and arrives as `Char('{')` with CONTROL | ALT. It must type.
     #[test]
     fn altgr_characters_are_typed() {
-        let mut app = App::new(None, ThemePalette::default(), DefaultMode::Time(15));
+        let mut app = App::new(None, ThemePalette::default(), Mode::Time(15));
         app.screen = Screen::Typing;
         app.mode = Mode::Symbols(1);
         app.words = vec![Word::new("{@ą}".into())];
@@ -822,7 +821,7 @@ mod tests {
 
     #[test]
     fn clicking_a_menu_option_starts_it() {
-        let mut app = App::new(None, ThemePalette::default(), DefaultMode::Time(15));
+        let mut app = App::new(None, ThemePalette::default(), Mode::Time(15));
         draw(&app);
         let thirty = app.menu.iter().position(|m| m.label == "30s").unwrap();
         let cell = target_cell(&app, ClickAction::Menu(thirty));
@@ -835,7 +834,7 @@ mod tests {
     /// highlights it — nothing starts.
     #[test]
     fn menu_press_then_slide_off_cancels() {
-        let mut app = App::new(None, ThemePalette::default(), DefaultMode::Time(15));
+        let mut app = App::new(None, ThemePalette::default(), Mode::Time(15));
         draw(&app);
         let cell = target_cell(&app, ClickAction::Menu(5));
         handle_mouse(
@@ -854,7 +853,7 @@ mod tests {
     /// with no press (some terminals send them) does nothing either.
     #[test]
     fn drag_between_targets_or_stray_release_does_nothing() {
-        let mut app = App::new(None, ThemePalette::default(), DefaultMode::Time(15));
+        let mut app = App::new(None, ThemePalette::default(), Mode::Time(15));
         draw(&app);
         let from = target_cell(&app, ClickAction::Menu(0));
         let to = target_cell(&app, ClickAction::Menu(3));
@@ -875,7 +874,7 @@ mod tests {
 
     #[test]
     fn clicking_a_footer_hint_acts_like_its_key() {
-        let mut app = App::new(None, ThemePalette::default(), DefaultMode::Time(15));
+        let mut app = App::new(None, ThemePalette::default(), Mode::Time(15));
         draw(&app);
         let stats = ClickAction::Key(KeyCode::Char('s'), KeyModifiers::NONE);
         let cell = target_cell(&app, stats);
@@ -894,7 +893,7 @@ mod tests {
     /// and clickable (the old List widget did this; a Paragraph doesn't).
     #[test]
     fn menu_scrolls_to_selection_on_short_terminal() {
-        let mut app = App::new(None, ThemePalette::default(), DefaultMode::Time(15));
+        let mut app = App::new(None, ThemePalette::default(), Mode::Time(15));
         app.menu_move_row(false); // wraps to "quit", the last row
         let quit = app.menu_index;
         let mut terminal = Terminal::new(ratatui::backend::TestBackend::new(80, 18)).unwrap();
@@ -914,7 +913,7 @@ mod tests {
 
     #[test]
     fn click_closes_help_overlay() {
-        let mut app = App::new(None, ThemePalette::default(), DefaultMode::Time(15));
+        let mut app = App::new(None, ThemePalette::default(), Mode::Time(15));
         handle_key(&mut app, KeyCode::F(1), KeyModifiers::NONE);
         assert_eq!(app.screen, Screen::Help);
         click(&mut app, (0, 0));
@@ -923,7 +922,7 @@ mod tests {
 
     #[test]
     fn scroll_wheel_moves_menu_rows() {
-        let mut app = App::new(None, ThemePalette::default(), DefaultMode::Time(15));
+        let mut app = App::new(None, ThemePalette::default(), Mode::Time(15));
         handle_mouse(&mut app, mouse(MouseEventKind::ScrollDown, (0, 0)));
         assert_eq!(app.menu[app.menu_index].group, "words");
         handle_mouse(&mut app, mouse(MouseEventKind::ScrollUp, (0, 0)));
@@ -980,7 +979,7 @@ mod tests {
 
     #[test]
     fn enter_on_placeholder_custom_option_explains_and_stays() {
-        let mut app = App::new(None, ThemePalette::default(), DefaultMode::Time(15));
+        let mut app = App::new(None, ThemePalette::default(), Mode::Time(15));
         app.menu_index = option(&app, "custom", "custom");
         handle_key(&mut app, KeyCode::Enter, KeyModifiers::NONE);
         assert_eq!(app.screen, Screen::Menu);
@@ -996,7 +995,7 @@ mod tests {
         std::fs::write(&snippet_path, "fn main ( ) { }").unwrap();
         let state_file = dir.path().join("state.json");
 
-        let mut app = App::new(None, ThemePalette::default(), DefaultMode::Time(15));
+        let mut app = App::new(None, ThemePalette::default(), Mode::Time(15));
         app.load_custom_sources(
             words::snippets::discover_in(dir.path()),
             Default::default(),
@@ -1030,7 +1029,7 @@ mod tests {
         };
         state::save_to_path(&state_file, &remembered).unwrap();
 
-        let mut app = App::new(None, ThemePalette::default(), DefaultMode::Time(15));
+        let mut app = App::new(None, ThemePalette::default(), Mode::Time(15));
         app.load_custom_sources(
             words::snippets::discover_in(dir.path()),
             remembered.clone(),
@@ -1068,7 +1067,7 @@ mod tests {
     /// A menu as a returning v0.4 user sees it: a remembered file and a few
     /// snippets in the custom row.
     fn full_menu_app() -> App {
-        let mut app = App::new(None, ThemePalette::default(), DefaultMode::Time(15));
+        let mut app = App::new(None, ThemePalette::default(), Mode::Time(15));
         let snippet = |name: &str| words::snippets::Snippet {
             name: name.into(),
             path: PathBuf::from(format!("/s/{name}.txt")),
@@ -1091,7 +1090,7 @@ mod tests {
     #[test]
     fn whole_menu_fits_80x24_at_launch() {
         for app in [
-            App::new(None, ThemePalette::default(), DefaultMode::Time(15)),
+            App::new(None, ThemePalette::default(), Mode::Time(15)),
             full_menu_app(),
         ] {
             let rows = screen(&app, 80, 24);
@@ -1124,7 +1123,7 @@ mod tests {
     /// clicking the last one starts it.
     #[test]
     fn code_row_fits_at_80_and_wraps_when_narrow() {
-        let mut app = App::new(None, ThemePalette::default(), DefaultMode::Time(15));
+        let mut app = App::new(None, ThemePalette::default(), Mode::Time(15));
         app.menu_index = option(&app, "code", "rust");
         let code_lines = |app: &App| -> Vec<ratatui::layout::Rect> {
             let targets = app.click_targets.borrow();
@@ -1203,7 +1202,7 @@ mod tests {
     /// state in words, and the next run's label follows.
     #[test]
     fn menu_keys_toggle_word_settings() {
-        let mut app = App::new(None, ThemePalette::default(), DefaultMode::Time(30));
+        let mut app = App::new(None, ThemePalette::default(), Mode::Time(30));
         for code in ['p', 'n', 'b'] {
             handle_key(&mut app, KeyCode::Char(code), KeyModifiers::NONE);
         }
@@ -1228,7 +1227,7 @@ mod tests {
     /// The settings on the border are clickable and act like their keys.
     #[test]
     fn clicking_a_word_setting_toggles_it() {
-        let mut app = App::new(None, ThemePalette::default(), DefaultMode::Time(15));
+        let mut app = App::new(None, ThemePalette::default(), Mode::Time(15));
         draw(&app);
         let numbers = ClickAction::Key(KeyCode::Char('n'), KeyModifiers::NONE);
         let cell = target_cell(&app, numbers);

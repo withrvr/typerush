@@ -93,7 +93,7 @@ pub fn render_footer(frame: &mut Frame, app: &App, area: Rect, hints: &[Hint]) {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::config::load::DefaultMode;
+    use crate::app::Mode;
     use crate::theme::builtin;
     use ratatui::backend::TestBackend;
     use ratatui::Terminal;
@@ -102,7 +102,7 @@ mod tests {
     /// `(x, y)`. Far-corner cells aren't touched by any widget on the menu
     /// screen, so they reflect the theme's background paint directly.
     fn render_and_sample(palette: crate::theme::ThemePalette, x: u16, y: u16) -> (Color, Color) {
-        let app = App::new(None, palette, DefaultMode::Time(15));
+        let app = App::new(None, palette, Mode::Time(15));
         let backend = TestBackend::new(80, 24);
         let mut terminal = Terminal::new(backend).unwrap();
         terminal.draw(|f| render(f, &app)).unwrap();
@@ -146,7 +146,7 @@ mod tests {
     #[test]
     fn wrong_space_renders_red_underlined() {
         let palette = builtin::DARK;
-        let mut app = App::new(None, palette, DefaultMode::Time(15));
+        let mut app = App::new(None, palette, Mode::Time(15));
         app.mode = crate::app::Mode::Custom;
         app.words = vec![
             crate::app::Word::new("hi".into()),
@@ -175,7 +175,7 @@ mod tests {
     /// dismiss hint, and an escape character in it doesn't reach the terminal.
     #[test]
     fn error_modal_keeps_lines_and_hides_control_characters() {
-        let mut app = App::new(None, builtin::DARK, DefaultMode::Time(15));
+        let mut app = App::new(None, builtin::DARK, Mode::Time(15));
         app.error_message = Some(
             "TOML parse error at line 3, column 5\n  |\n3 | foo =\x1b[2J\n  |     ^\nexpected value"
                 .to_string(),
@@ -205,7 +205,7 @@ mod tests {
     /// Symbols mode shows a token-count gauge like words mode does.
     #[test]
     fn symbols_mode_shows_token_progress() {
-        let mut app = App::new(None, builtin::DARK, DefaultMode::Time(15));
+        let mut app = App::new(None, builtin::DARK, Mode::Time(15));
         app.start_game(crate::app::Mode::Symbols(2)).unwrap();
         let mut terminal = Terminal::new(TestBackend::new(80, 24)).unwrap();
         terminal.draw(|f| render(f, &app)).unwrap();
@@ -225,7 +225,7 @@ mod tests {
     /// to the column instead of being cut off.
     #[test]
     fn stats_table_mode_labels_are_safe_and_shortened() {
-        let mut app = App::new(None, builtin::DARK, DefaultMode::Time(15));
+        let mut app = App::new(None, builtin::DARK, Mode::Time(15));
         app.stats_cache = Some(vec![crate::storage::SessionRecord {
             wpm: 80.0,
             accuracy: 97.0,
