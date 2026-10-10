@@ -192,10 +192,15 @@ for the whole list does it scroll, and then the border shows `▲ more` /
 
 ### Stats history
 
-| Key                | Action            |
-| ------------------ | ----------------- |
-| `m` / `Esc` / `Tab`| Back to the menu  |
-| `q`                | Quit              |
+| Key                         | Action                                       |
+| --------------------------- | -------------------------------------------- |
+| `←` / `→` (`h` / `l`)       | Previous / next category                     |
+| `↑` / `↓` (`k` / `j`)       | Scroll the sessions (or bests) list          |
+| `PgUp` / `PgDn`, `Home` / `End` | Scroll by ten / to the newest or oldest  |
+| `m` / `Esc` / `Tab`         | Back to the menu                             |
+| `q`                         | Quit                                         |
+
+The mouse wheel scrolls the list too, and the footer hints are clickable.
 
 ---
 
@@ -237,16 +242,25 @@ Everything TypeRush keeps lives in `~/.typerush/`:
 
 Each file is written atomically, so a crash mid-save never leaves a broken file.
 
-### What the Stats screen shows (v0.3.0+)
+### What the Stats screen shows
 
-Open the Stats screen from the menu (`Tab`) or results screen (`s`).
+Open the Stats screen from the menu (`Tab`) or results screen (`s`). The
+title shows the **category** (`‹ all ›`); `←` / `→` moves through them:
+
+- **all** — every session.
+- **bests** — one row per mode: its best WPM (with that run's accuracy and
+  date), its average WPM and how many runs it has had.
+- **one per mode** you have played (`time-30s`, `words-50+p`,
+  `custom-notes`, …) — everything below, for that mode only.
+
+The category you were on is kept when you come back to Stats.
 
 | Section | What it shows |
 | ------- | ------------- |
-| **Summary (left)** | All-time best WPM · Average accuracy · Session count · Last WPM · **Daily streak** · **7-day avg WPM** · **30-day avg WPM** |
+| **Summary (left)** | Best WPM · Average accuracy · Session count · Last WPM · **Daily streak** · **7-day avg WPM** · **30-day avg WPM** · **Time typed** |
 | **Key accuracy (right)** | Up to 5 of your worst keys (≥ 3 presses). Colour-coded: red < 80%, amber < 93%, green otherwise. Shows `no key data yet` until enough data is collected. |
-| **WPM trend** | Sparkline of your last 20 sessions |
-| **Recent sessions** | Last 10 sessions with date, mode, WPM, accuracy, and time |
+| **WPM trend** | Sparkline of the category's last 20 sessions |
+| **Sessions** | Every session in the category, newest first, with date, mode, WPM, accuracy and time; scroll with `↑` / `↓`. A `★` marks the session holding its mode's best. The title says which rows are showing (`1–5 of 42`). |
 
 ### Per-mode personal bests
 

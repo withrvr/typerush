@@ -143,7 +143,7 @@ you need a saved session. Check `/tmp/tr-e2e/.typerush/stats.json` afterwards.
 
 ## Quality gates (mirror CI)
 
-Run these before committing — CI runs the exact same set on Linux, macOS,
+Run these before committing — CI runs the same set on Linux, macOS,
 and Windows:
 
 ```bash

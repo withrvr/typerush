@@ -116,7 +116,7 @@ cargo build --release && ./target/release/typerush
 
 ### Error handling
 - Use `anyhow::Result` for fallible operations that bubble up to `main`.
-- For things that "should never fail" (e.g. dirs::home_dir), fall back to a
+- For things that "should never fail" (e.g. std::env::home_dir), fall back to a
   sensible default — never panic in user-facing code.
 - File I/O in the stats path is best-effort: losing a stat row is fine; never
   crash the typing app.

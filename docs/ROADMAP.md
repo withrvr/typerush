@@ -110,7 +110,7 @@ in v0.3, as the category-grouped menu.)
 
 ## 🚧 In progress
 
-- 🚧 Release v0.2.1, v0.3.0 and v0.4.0: git tags, GitHub release binaries,
+- 🚧 Release v0.2.1, v0.3.0, v0.4.0 and v0.4.1: git tags, GitHub release binaries,
   crates.io. The latest published release is v0.2.0 — pre-built binaries on
   the [Releases page](https://github.com/withrvr/typerush/releases) and
   `cargo install typerush` both started with v0.1.1 / v0.2.0.
@@ -122,21 +122,21 @@ in v0.3, as the category-grouped menu.)
 Worked in this order, one commit (or a few) per step, on one branch and
 one pull request:
 
-1. 🚧 Plan (this section) and the future-features list below
-2. 🔲 Dependencies on their latest versions; code moved to the new APIs
-3. 🔲 Leaner code: duplicate types, dead fields and hand-rolled helpers
+1. ✅ Plan (this section) and the future-features list below
+2. ✅ Dependencies on their latest versions; code moved to the new APIs
+3. ✅ Leaner code: duplicate types, dead fields and hand-rolled helpers
    removed (nothing the standard library or an existing crate already does)
-4. 🔲 Security: custom files read with a size limit, never from a device
+4. ✅ Security: custom files read with a size limit, never from a device
    or pipe; a dependency vulnerability check in CI
-5. 🔲 Typing screen: the cursor line never scrolls off screen, time mode
+5. ✅ Typing screen: the cursor line never scrolls off screen, time mode
    never runs out of words, and only the visible lines are laid out
-6. 🔲 Themes: every built-in theme meets a contrast minimum (checked by a
+6. ✅ Themes: every built-in theme meets a contrast minimum (checked by a
    test), so text is easy on the eye in each one
-7. 🔲 Stats by category: a personal best per mode, each category's own
-   sessions, averages and time typed, and a ★ on sessions that set a best
-8. 🔲 A learnings log (bugs found and how they were fixed, features and how
+7. ✅ Stats by category: a personal best per mode, each category's own
+   sessions, averages and time typed, and a ★ on each mode's best run
+8. ✅ A learnings log (bugs found and how they were fixed, features and how
    they were built) and a contributor skill file that points to it
-9. 🔲 Review, end-to-end test, docs, version 0.4.1
+9. 🚧 Review, end-to-end test, docs, version 0.4.1
 
 ---
 
