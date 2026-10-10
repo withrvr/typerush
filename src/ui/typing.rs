@@ -96,12 +96,12 @@ fn render_header(f: &mut Frame, app: &App, area: Rect) {
 /// Quote, code, zen and custom modes don't show a bar.
 fn render_progress(f: &mut Frame, app: &App, area: Rect) {
     let gauge_color = app.theme.accent;
-    // Gauge label sits in the middle of the bar, often straddling the
-    // boundary between the filled (bg = accent) and unfilled (bg = theme bg)
-    // portions. `secondary + BOLD` gives high contrast on both halves for
-    // every built-in theme without needing a separate "on-accent" slot.
+    // The label sits in the middle of the bar, often straddling the filled
+    // (accent) and empty halves. Drawing it on the theme background keeps it
+    // readable on both, whatever the accent is.
     let label_style = Style::default()
         .fg(app.theme.secondary)
+        .bg(app.theme.background)
         .add_modifier(Modifier::BOLD);
     if let Some((done, total)) = app.progress() {
         let ratio = if total == 0 {

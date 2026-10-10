@@ -308,6 +308,12 @@ and is kept only so existing configs keep loading.
 > `background = "reset"` in `[colors]` if you'd rather one of those themes
 > use your terminal background too.
 
+> **Readability.** Every text color in `light`, `monokai` and `dracula` has
+> at least 4.5:1 contrast against the theme's background (the WCAG AA level
+> for body text; a test keeps it that way), and untyped text is dimmer than
+> typed text so you can see where you are. `dark` uses your terminal's own
+> 16-color palette, so its contrast follows your terminal's settings.
+
 ### Defaults
 
 Pre-select a menu row and starting mode:
