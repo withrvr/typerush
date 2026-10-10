@@ -384,7 +384,7 @@ fn custom_labels(snippets: &[Snippet], last: Option<&Path>) -> (Vec<String>, Opt
 /// `path` made absolute against the current directory, so a remembered file
 /// still works when TypeRush is next started somewhere else. Not
 /// canonicalized: symlinks and the user's spelling of the path are kept.
-fn absolute(path: PathBuf) -> PathBuf {
+pub fn absolute(path: PathBuf) -> PathBuf {
     if path.is_absolute() {
         return path;
     }
@@ -807,7 +807,10 @@ impl App {
                 };
                 let loaded = words::words_from_file(path)?;
                 if loaded.is_empty() {
-                    return Err(anyhow::anyhow!("{} is empty", path.display()));
+                    return Err(anyhow::anyhow!(
+                        "{} is empty",
+                        crate::text::printable(&path.display().to_string())
+                    ));
                 }
                 loaded
             }

@@ -145,8 +145,14 @@ pub enum CodeLang {
 /// a byte-order mark would otherwise make the first word impossible to get
 /// right, and control characters drawn as-is are terminal escape sequences.
 pub fn words_from_file(path: &Path) -> anyhow::Result<Vec<String>> {
-    let content =
-        std::fs::read_to_string(path).with_context(|| format!("can't read {}", path.display()))?;
+    // The path is shown made safe: it can contain any character, a newline
+    // or an escape sequence included.
+    let content = std::fs::read_to_string(path).with_context(|| {
+        format!(
+            "can't read {}",
+            crate::text::printable(&path.display().to_string())
+        )
+    })?;
     Ok(content
         .split_whitespace()
         .map(|word| {

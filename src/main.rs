@@ -130,16 +130,22 @@ fn main() -> Result<()> {
     install_panic_hook();
     let mut terminal = setup_terminal()?;
     let run_result = run_app(&mut terminal, cli);
-    restore_terminal(&mut terminal)?;
+    let restored = restore_terminal(&mut terminal);
     if let Err(error) = run_result {
-        // The report Rust prints for an `Err` from `main`, line by line, but
-        // with any control characters (from a `--file` path) shown as `?`.
+        // The report Rust prints for an `Err` from `main`. File paths in it
+        // are already made safe where the error was built; each line goes
+        // through `printable` too, as a backstop.
         let report = format!("{error:?}");
         let lines: Vec<_> = report.lines().map(text::printable).collect();
         eprintln!("Error: {}", lines.join("\n"));
+        // The run's error is the one that matters; still mention a failed
+        // terminal restore rather than dropping it.
+        if let Err(restore_error) = restored {
+            eprintln!("(also: couldn't restore the terminal: {restore_error})");
+        }
         std::process::exit(1);
     }
-    Ok(())
+    restored
 }
 
 /// Print every built-in theme name on its own line and exit with status 0.
@@ -224,7 +230,10 @@ fn run_app(terminal: &mut Tui, cli: Cli) -> Result<()> {
         punctuation: cli.punctuation.then_some(true),
         numbers: cli.numbers.then_some(true),
     });
-    let mut app = App::new(cli.file.clone(), resolved.palette, resolved.default_mode);
+    // `--file` is made absolute once, here: the menu and state.json then
+    // never depend on the directory TypeRush happens to be in later.
+    let custom_file = cli.file.clone().map(app::absolute);
+    let mut app = App::new(custom_file, resolved.palette, resolved.default_mode);
     app.set_word_source(resolved.word_pool, resolved.word_decor);
     let state_file = state::state_path();
     app.load_custom_sources(

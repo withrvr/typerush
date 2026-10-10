@@ -21,23 +21,36 @@ pub fn is_unsafe(c: char) -> bool {
 /// Characters that can't be typed, so a typing target must not contain
 /// them: everything [`is_unsafe`], plus invisible formatting characters —
 /// the byte-order mark some Windows editors put at the start of a UTF-8 file
-/// (U+FEFF), zero-width spaces and joiners, word joiners, and soft hyphens.
+/// (U+FEFF), the zero-width space, word joiners, soft hyphens and the
+/// interlinear-annotation controls.
+///
+/// Not included, because people do type them: the zero-width non-joiner and
+/// joiner (U+200C / U+200D — Persian keyboards type ZWNJ with Shift+Space,
+/// and ZWJ builds emoji sequences) and variation selectors (emoji pickers
+/// insert U+FE0F).
 pub fn is_untypeable(c: char) -> bool {
     is_unsafe(c)
         || matches!(
             c,
-            '\u{00AD}' | '\u{180E}' | '\u{200B}'..='\u{200D}' | '\u{2060}'..='\u{2064}' | '\u{FEFF}'
+            '\u{00AD}'
+                | '\u{180E}'
+                | '\u{200B}'
+                | '\u{2060}'..='\u{2064}'
+                | '\u{FEFF}'
+                | '\u{FFF9}'..='\u{FFFB}'
         )
 }
 
-/// `text` with every [`is_unsafe`] character shown as `?`.
+/// `text` with every [`is_untypeable`] character shown as `?`: nothing that
+/// could disturb the terminal, and nothing invisible — so two names that
+/// differ only by a hidden character also look different.
 pub fn printable(text: &str) -> Cow<'_, str> {
-    if !text.contains(is_unsafe) {
+    if !text.contains(is_untypeable) {
         return Cow::Borrowed(text);
     }
     Cow::Owned(
         text.chars()
-            .map(|c| if is_unsafe(c) { '?' } else { c })
+            .map(|c| if is_untypeable(c) { '?' } else { c })
             .collect(),
     )
 }
@@ -48,7 +61,14 @@ pub fn printable(text: &str) -> Cow<'_, str> {
 /// is two), and cuts fall on grapheme boundaries so an accent never loses its
 /// letter — macOS often stores names decomposed, as `e` + U+0301.
 pub fn shorten(text: &str, max_width: usize) -> Cow<'_, str> {
-    if text.width() <= max_width {
+    // Measured grapheme by grapheme — how the terminal buffer draws it, and
+    // the same rule the cut below uses, so head and tail can't overlap.
+    if text
+        .graphemes(true)
+        .map(UnicodeWidthStr::width)
+        .sum::<usize>()
+        <= max_width
+    {
         return Cow::Borrowed(text);
     }
     // One cell for the ellipsis; the rest split between start and end.
@@ -67,9 +87,7 @@ pub fn shorten(text: &str, max_width: usize) -> Cow<'_, str> {
     let (mut tail_start, mut tail_width) = (text.len(), 0);
     for (index, grapheme) in text.grapheme_indices(true).rev() {
         let width = grapheme.width();
-        // `index < head_end` guards against overlap: a whole string's width
-        // can differ slightly from the sum of its graphemes' widths.
-        if tail_width + width > tail_budget || index < head_end {
+        if tail_width + width > tail_budget {
             break;
         }
         tail_width += width;
@@ -91,15 +109,26 @@ mod tests {
     }
 
     #[test]
-    fn byte_order_mark_and_zero_width_characters_are_untypeable() {
+    fn byte_order_mark_and_zero_width_space_are_untypeable() {
         for c in [
-            '\u{FEFF}', '\u{200B}', '\u{200D}', '\u{00AD}', '\u{1b}', '\u{202E}',
+            '\u{FEFF}', '\u{200B}', '\u{00AD}', '\u{FFF9}', '\u{1b}', '\u{202E}',
         ] {
             assert!(is_untypeable(c), "{c:?}");
         }
-        for c in ['a', 'é', ' ', '漢', '(', '…'] {
+        // ZWNJ (Persian), ZWJ (emoji) and VS16 (emoji pickers) are typed.
+        for c in [
+            'a', 'é', ' ', '漢', '(', '…', '\u{200C}', '\u{200D}', '\u{FE0F}',
+        ] {
             assert!(!is_untypeable(c), "{c:?}");
         }
+    }
+
+    /// A name that differs from another only by a hidden character must
+    /// look different.
+    #[test]
+    fn printable_reveals_invisible_characters() {
+        assert_eq!(printable("\u{200B}notes"), "?notes");
+        assert_eq!(printable("\u{FEFF}notes"), "?notes");
     }
 
     #[test]
