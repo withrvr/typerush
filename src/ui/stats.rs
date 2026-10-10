@@ -52,37 +52,50 @@ pub fn render(f: &mut Frame, app: &App, area: Rect) -> &'static [super::Hint] {
         }
     };
 
-    // ‹ and › are clickable: previous / next category.
-    const LEAD: &str = "  ◆ stats   ";
+    // `◆ stats   [all]   ‹ ›   01/05   time-30s`: the buttons and counter
+    // come before the category name, so they never move when it changes,
+    // and the counter is zero-padded to a fixed width. [all], ‹ and › are
+    // clickable: all sessions, previous / next category.
+    let total = view.category_count();
+    let digits = total.to_string().len().max(2);
+    let counter = format!("{:0digits$}/{total:0digits$}", view.category + 1);
+    let button = Style::default()
+        .fg(theme.accent)
+        .add_modifier(Modifier::BOLD);
+    let current = Style::default()
+        .fg(theme.mode_tag)
+        .add_modifier(Modifier::BOLD);
     let category = shorten(&printable(view.category_name()), 32).into_owned();
-    let (row, left) = (layout[0].y, layout[0].x + LEAD.width() as u16);
-    let right = left + 3 + category.width() as u16;
+    let parts: [(String, Style, Option<KeyCode>); 10] = [
+        ("  ◆ stats".into(), button, None),
+        ("   ".into(), Style::default(), None),
+        (
+            "[all]".into(),
+            if view.category == 0 { current } else { button },
+            Some(KeyCode::Char('a')),
+        ),
+        ("   ".into(), Style::default(), None),
+        ("‹".into(), button, Some(KeyCode::Left)),
+        (" ".into(), Style::default(), None),
+        ("›".into(), button, Some(KeyCode::Right)),
+        ("   ".into(), Style::default(), None),
+        (counter, Style::default().fg(theme.pending), None),
+        (format!("   {category}"), current, None),
+    ];
+    let mut spans = Vec::with_capacity(parts.len());
+    let mut x = layout[0].x;
     let mut targets = app.click_targets.borrow_mut();
-    for (x, code) in [(left, KeyCode::Left), (right, KeyCode::Right)] {
-        let cell = Rect::new(x, row, 1, 1).intersection(layout[0]);
-        targets.push((cell, ClickAction::Key(code, KeyModifiers::NONE)));
+    for (text, style, action) in parts {
+        let width = text.width() as u16;
+        if let Some(code) = action {
+            let cell = Rect::new(x, layout[0].y, width, 1).intersection(layout[0]);
+            targets.push((cell, ClickAction::Key(code, KeyModifiers::NONE)));
+        }
+        x += width;
+        spans.push(Span::styled(text, style));
     }
     drop(targets);
-    let title = Paragraph::new(Line::from(vec![
-        Span::styled(
-            LEAD,
-            Style::default()
-                .fg(theme.accent)
-                .add_modifier(Modifier::BOLD),
-        ),
-        Span::styled("‹ ", Style::default().fg(theme.accent)),
-        Span::styled(
-            category,
-            Style::default()
-                .fg(theme.mode_tag)
-                .add_modifier(Modifier::BOLD),
-        ),
-        Span::styled(" ›", Style::default().fg(theme.accent)),
-        Span::styled(
-            format!("   {}/{}", view.category + 1, view.category_count()),
-            Style::default().fg(theme.pending),
-        ),
-    ]));
+    let title = Paragraph::new(Line::from(spans));
     f.render_widget(title, layout[0]);
 
     render_summary_and_heatmap(f, app, layout[1], &view.summary);
@@ -98,6 +111,7 @@ pub fn render(f: &mut Frame, app: &App, area: Rect) -> &'static [super::Hint] {
         // the mouse wheel do it with the mouse.
         ("←/→ category", None),
         ("↑/↓ scroll", None),
+        ("a all", key(KeyCode::Char('a'))),
         ("Esc / m menu", key(KeyCode::Esc)),
         ("? help", key(KeyCode::Char('?'))),
         ("q quit", key(KeyCode::Char('q'))),

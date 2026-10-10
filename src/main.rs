@@ -602,14 +602,15 @@ fn handle_results_key(app: &mut App, code: KeyCode, _mods: KeyModifiers) {
     }
 }
 
-/// Keymap for the historical stats screen: ←/→ (h/l) pick a category,
-/// ↑/↓ (j/k), PgUp/PgDn and Home/End scroll the sessions list.
+/// Keymap for the historical stats screen: ←/→ (h/l) pick a category, `a`
+/// shows all sessions, ↑/↓ (j/k), PgUp/PgDn and Home/End scroll the list.
 fn handle_stats_key(app: &mut App, code: KeyCode, _mods: KeyModifiers) {
     let history = app.stats_cache.as_deref().unwrap_or(&[]);
     if let Some(view) = app.stats_view.as_mut() {
         match code {
             KeyCode::Left | KeyCode::Char('h') => return view.cycle(history, false),
             KeyCode::Right | KeyCode::Char('l') => return view.cycle(history, true),
+            KeyCode::Char('a') => return view.select(history, 0),
             KeyCode::Up | KeyCode::Char('k') => return view.scroll_by(-1),
             KeyCode::Down | KeyCode::Char('j') => return view.scroll_by(1),
             KeyCode::PageUp => return view.scroll_by(-10),
@@ -657,14 +658,21 @@ fn after_input(app: &mut App, last_screen: Screen, session_saved: &mut bool, sta
         ));
     }
     // Coming back from the help overlay keeps the category and scroll; any
-    // other way in rebuilds the view (a game may have been saved since),
-    // staying on the category that was showing.
+    // other way in rebuilds the view (a game may have been saved since).
+    // Straight after a run it opens on that run's mode; otherwise it stays
+    // on the category that was showing.
     if app.screen == Screen::Stats
         && (app.stats_view.is_none() || !matches!(last_screen, Screen::Stats | Screen::Help))
     {
+        let category = if last_screen == Screen::Results && app.session_just_saved {
+            Some(app.session_label())
+        } else {
+            app.stats_view
+                .as_ref()
+                .map(|view| view.category_name().to_string())
+        };
         let sessions = app.stats_cache.as_deref().unwrap_or(&[]);
-        let category = app.stats_view.as_ref().map(|view| view.category_name());
-        app.stats_view = Some(storage::StatsView::new(sessions, category));
+        app.stats_view = Some(storage::StatsView::new(sessions, category.as_deref()));
     }
 }
 
@@ -1372,6 +1380,51 @@ mod tests {
         app.screen = Screen::Results;
         handle_key(&mut app, KeyCode::F(5), KeyModifiers::NONE);
         assert_eq!(app.screen, Screen::Typing);
+    }
+
+    /// Stats opened straight after a run shows that run's mode; [all] (or
+    /// `a`) goes back to every session; from the menu Stats keeps the
+    /// category that was showing.
+    #[test]
+    fn stats_after_a_run_opens_on_its_mode() {
+        let dir = tempfile::tempdir().unwrap();
+        let stats_file = dir.path().join("stats.json");
+        let mut app = make_typing_app(); // words-2
+        let (mut saved, mut last) = (false, app.screen);
+        let mut step = |app: &mut App| {
+            after_input(app, last, &mut saved, &stats_file);
+            last = app.screen;
+        };
+        step(&mut app);
+        app.started_at = Some(std::time::Instant::now() - Duration::from_secs(5));
+        for ch in "hello world".chars() {
+            app.handle_char(ch);
+        }
+        step(&mut app);
+        assert!(app.session_just_saved);
+
+        handle_key(&mut app, KeyCode::Tab, KeyModifiers::NONE);
+        step(&mut app);
+        assert_eq!(app.stats_view.as_ref().unwrap().category_name(), "words-2");
+
+        // Click [all] on the title row.
+        draw(&app);
+        let all = target_cell(
+            &app,
+            ClickAction::Key(KeyCode::Char('a'), KeyModifiers::NONE),
+        );
+        click(&mut app, all);
+        assert_eq!(app.stats_view.as_ref().unwrap().category_name(), "all");
+
+        // Menu → Stats keeps the category that was showing.
+        handle_key(&mut app, KeyCode::Right, KeyModifiers::NONE); // bests
+        handle_key(&mut app, KeyCode::Esc, KeyModifiers::NONE);
+        step(&mut app);
+        handle_key(&mut app, KeyCode::Char('s'), KeyModifiers::NONE);
+        step(&mut app);
+        assert_eq!(app.stats_view.as_ref().unwrap().category_name(), "bests");
+        handle_key(&mut app, KeyCode::Char('a'), KeyModifiers::NONE);
+        assert_eq!(app.stats_view.as_ref().unwrap().category_name(), "all");
     }
 
     // ── saving ───────────────────────────────────────────────────────────────

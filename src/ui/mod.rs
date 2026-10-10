@@ -324,7 +324,7 @@ mod tests {
             "{dump}"
         );
         assert!(dump.contains("sessions · 1–"), "{dump}");
-        assert!(dump.contains("‹ all ›"), "{dump}");
+        assert!(dump.contains("[all]   ‹ ›   01/04   all"), "{dump}");
 
         // Scrolling far past the end shows the last page, oldest at the bottom.
         app.stats_view.as_ref().unwrap().scroll_by(1000);
@@ -475,5 +475,41 @@ mod tests {
                 assert_eq!(column, 3, "menu text column");
             }
         }
+    }
+
+    /// The Stats title keeps [all], ‹ › and the zero-padded counter in the
+    /// same columns whatever the category's name is; only the name, last on
+    /// the row, changes.
+    #[test]
+    fn stats_title_buttons_never_move() {
+        let mut app = App::new(None, builtin::DARK, Mode::Time(15));
+        app.stats_cache = Some(vec![
+            record(50.0, "time-30s"),
+            record(60.0, "custom-a-very-long-file-name"),
+        ]);
+        app.screen = crate::app::Screen::Stats;
+        let sessions = app.stats_cache.as_deref().unwrap();
+        app.stats_view = Some(crate::storage::StatsView::new(sessions, None));
+        let mut columns = Vec::new();
+        for _ in 0..app.stats_view.as_ref().unwrap().category_count() {
+            let rows = stats_rows(&app);
+            let title = &rows[0];
+            let at = |text: &str| {
+                title
+                    .find(text)
+                    .unwrap_or_else(|| panic!("{text:?} in {title:?}"))
+            };
+            columns.push((at("[all]"), at("‹ ›"), at("/04")));
+            assert!(
+                title.contains(&format!("{:02}/04", columns.len())),
+                "{title}"
+            );
+            let sessions = app.stats_cache.as_deref().unwrap();
+            app.stats_view.as_mut().unwrap().cycle(sessions, true);
+        }
+        assert!(
+            columns.windows(2).all(|pair| pair[0] == pair[1]),
+            "{columns:?}"
+        );
     }
 }

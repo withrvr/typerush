@@ -204,13 +204,14 @@ skipping past your results.
 | Key                         | Action                                       |
 | --------------------------- | -------------------------------------------- |
 | `←` / `→` (`h` / `l`)       | Previous / next category                     |
+| `a`                         | All sessions                                 |
 | `↑` / `↓` (`k` / `j`)       | Scroll the sessions (or bests) list          |
 | `PgUp` / `PgDn`, `Home` / `End` | Scroll by ten / to the newest or oldest  |
 | `m` / `Esc` / `Tab`         | Back to the menu                             |
 | `q`                         | Quit                                         |
 
-The mouse wheel scrolls the list too; click `‹` / `›` in the title to change
-category.
+The mouse wheel scrolls the list too; in the title, click `[all]` for all
+sessions or `‹` / `›` to change category.
 
 ---
 
@@ -255,7 +256,9 @@ Each file is written atomically, so a crash mid-save never leaves a broken file.
 ### What the Stats screen shows
 
 Open the Stats screen from the menu (`Tab` or `s`) or results screen (`Tab`). The
-title shows the **category** (`‹ all ›`); `←` / `→` moves through them:
+title row reads `◆ stats   [all]   ‹ ›   01/05   time-30s`: the buttons and
+the counter stay in place, and the current **category** comes last. `←` / `→`
+moves through the categories, `a` (or `[all]`) jumps back to all:
 
 - **all** — every session.
 - **bests** — one row per mode: its best WPM (with that run's accuracy and
@@ -263,7 +266,8 @@ title shows the **category** (`‹ all ›`); `←` / `→` moves through them:
 - **one per mode** you have played (`time-30s`, `words-50+p`,
   `custom-notes`, …) — everything below, for that mode only.
 
-The category you were on is kept when you come back to Stats.
+Opened straight after a run (`Tab` on Results), Stats shows that run's mode.
+Opened from the menu, it stays on the category you were looking at last.
 
 | Section | What it shows |
 | ------- | ------------- |

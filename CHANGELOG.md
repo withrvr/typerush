@@ -27,8 +27,13 @@ mode at a time.
   accuracy, WPM trend and every one of its sessions.
 - **★ on record runs.** In the sessions list, the session holding its
   mode's best is marked with a star.
-- **Click `‹` / `›`** around the category name to change category with
-  the mouse.
+- **Stats opens on the run you just finished:** `Tab` on Results shows that
+  mode's category. `[all]` in the title (or `a`) jumps back to every
+  session; from the menu, Stats stays on the category you last looked at.
+- **A steady Stats title:** `◆ stats   [all]   ‹ ›   01/05   time-30s` —
+  the buttons and the zero-padded counter come before the category name, so
+  nothing moves when the name's length changes. `[all]`, `‹` and `›` are
+  clickable.
 - **The sessions list scrolls** with `↑` / `↓` (`k` / `j`), `PgUp` /
   `PgDn`, `Home` / `End` or the mouse wheel, and its title says which rows
   are showing (`1–5 of 42`). It used to show only the last 10 sessions.
