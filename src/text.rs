@@ -57,7 +57,7 @@ pub fn is_invisible(c: char) -> bool {
 /// file's first word impossible). That includes the zero-width non-joiner a
 /// Persian keyboard types on Shift+Space: such words are typed without it.
 pub fn is_untypeable(c: char) -> bool {
-    c.is_control() || is_invisible(c)
+    is_unsafe(c) || is_invisible(c)
 }
 
 /// `text` with every character matching `replace` shown as `?`.

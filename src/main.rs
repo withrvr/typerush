@@ -456,7 +456,7 @@ fn handle_menu_key(app: &mut App, code: KeyCode, _mods: KeyModifiers) {
                 MenuAction::Start => {
                     if let Some(m) = mode {
                         if let Err(e) = app.start_game(m) {
-                            app.error_message = Some(format!("{e:#}"));
+                            app.show_error(&e);
                         }
                     }
                 }
@@ -464,8 +464,7 @@ fn handle_menu_key(app: &mut App, code: KeyCode, _mods: KeyModifiers) {
                     // The placeholder option has no path: `start_custom`
                     // then explains how to add a custom file.
                     if let Err(e) = app.start_custom(custom_path) {
-                        // `{:#}` includes the cause ("can't read …: No such file").
-                        app.error_message = Some(format!("{e:#}"));
+                        app.show_error(&e);
                     }
                 }
                 MenuAction::ShowStats => app.screen = Screen::Stats,
@@ -487,12 +486,12 @@ pub(crate) fn handle_typing_key(app: &mut App, code: KeyCode, mods: KeyModifiers
         }
         KeyCode::F(5) => {
             if let Err(e) = app.restart() {
-                app.error_message = Some(format!("{e:#}"));
+                app.show_error(&e);
             }
         }
         KeyCode::Char('r') if mods.contains(KeyModifiers::CONTROL) => {
             if let Err(e) = app.restart() {
-                app.error_message = Some(format!("{e:#}"));
+                app.show_error(&e);
             }
         }
         KeyCode::Backspace => {
@@ -527,7 +526,7 @@ fn handle_results_key(app: &mut App, code: KeyCode, _mods: KeyModifiers) {
     match code {
         KeyCode::Enter | KeyCode::Char('r') => {
             if let Err(e) = app.restart() {
-                app.error_message = Some(format!("{e:#}"));
+                app.show_error(&e);
             }
         }
         KeyCode::Char('m') | KeyCode::Esc => app.screen = Screen::Menu,

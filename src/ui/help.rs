@@ -94,22 +94,27 @@ fn centered(r: Rect, width: u16, height: u16) -> Rect {
 /// Render the transient error modal. Dismissed by any keypress or click from
 /// the main loop. Tall enough for the wrapped message plus the hint line.
 pub fn render_error(f: &mut Frame, theme: &ThemePalette, message: &str) {
+    use unicode_width::UnicodeWidthStr;
     // Messages can carry file paths, which may contain control characters.
-    // Made safe line by line: multi-line messages (a TOML parse error points
-    // at the bad line with a caret) keep their layout.
-    let message = message
+    // Made safe and indented line by line, so a multi-line message (a TOML
+    // parse error points at the bad line with a caret) keeps its layout.
+    let lines: Vec<String> = message
         .lines()
-        .map(crate::text::printable)
-        .collect::<Vec<_>>()
-        .join("\n");
+        .map(|line| format!("  {}", crate::text::printable(line)))
+        .collect();
     const WIDTH: u16 = 60;
-    let text_width = WIDTH.min(f.area().width).saturating_sub(4).max(1) as usize;
-    // Rough wrapped-line count; slightly over is fine, the box just has a gap.
-    let message_lines = (message.chars().count() + 2).div_ceil(text_width);
-    let height = message_lines as u16 + 4; // + blank + hint + borders
+    let text_width = WIDTH.min(f.area().width).saturating_sub(2).max(1) as usize;
+    // Rows the message takes once each line wraps; slightly over is fine,
+    // the box just has a gap.
+    let message_rows: usize = lines
+        .iter()
+        .map(|line| line.width().div_ceil(text_width).max(1))
+        .sum::<usize>()
+        .max(1);
+    let height = message_rows as u16 + 4; // + blank + hint + borders
     let area = centered(f.area(), WIDTH, height);
     f.render_widget(Clear, area);
-    let p = Paragraph::new(format!("  {}\n\n  press any key or click", message))
+    let p = Paragraph::new(format!("{}\n\n  press any key or click", lines.join("\n")))
         .wrap(Wrap { trim: false })
         .block(
             Block::default()

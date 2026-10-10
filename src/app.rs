@@ -334,7 +334,9 @@ fn custom_labels(snippets: &[Snippet], last: Option<&Path>) -> (Vec<String>, Opt
     });
     if let Some(last) = last {
         let name = file_name(last);
-        // `last` is absolute (see `offered_custom_file`), so it has a folder.
+        // `last` is absolute (see `offered_custom_file`), so it normally has a
+        // folder; one that doesn't (`/notes.txt`, `../notes.txt`) falls back
+        // to the numbering below, which still keeps labels distinct.
         let folder = last
             .parent()
             .and_then(Path::file_name)
@@ -574,6 +576,12 @@ impl App {
             }
         }
         label
+    }
+
+    /// Show `error` in the error modal, with its cause chain ("can't read
+    /// notes.txt: No such file or directory").
+    pub fn show_error(&mut self, error: &anyhow::Error) {
+        self.error_message = Some(format!("{error:#}"));
     }
 
     /// Choose the English pool and decoration for Time / Words / Zen.
