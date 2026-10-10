@@ -136,86 +136,97 @@ fn render_progress(f: &mut Frame, app: &App, area: Rect) {
 /// full control of where line breaks happen — important because each character
 /// has its own style.
 ///
+/// When the text is taller than the box it scrolls: the cursor's line stays
+/// second from the top, so the line just typed is still visible above it.
+/// Only the visible lines are styled — a long time run has hundreds of words,
+/// and every keystroke redraws the screen.
+///
 /// The cursor never blinks: it is rendered as an underlined character (or
 /// underlined trailing space when it sits on the space after the word) using
 /// `theme.accent`. Keeping the cursor steady avoids the horizontal "jitter"
 /// that a phantom blinking character would cause.
 fn render_words(f: &mut Frame, app: &App, area: Rect) {
-    let mut wrapped_lines: Vec<Line> = vec![];
-    let mut current_line: Vec<Span> = vec![];
     // -4 to account for the surrounding border (1 char each side + padding).
     let max_line_width = area.width.saturating_sub(4) as usize;
-    let mut current_line_width = 0usize;
-    let is_zen_mode = matches!(app.mode, Mode::Zen);
+    let visible_lines = area.height.saturating_sub(2) as usize;
     let last_word_index = app.words.len().saturating_sub(1);
+
+    // 1. Lay out: which line each word starts. A word and its trailing space
+    //    wrap together; the last word has no trailing space.
+    let mut line_of_word = Vec::with_capacity(app.words.len());
+    let (mut line, mut line_width) = (0usize, 0usize);
+    for (word_index, word) in app.words.iter().enumerate() {
+        let width = word.text.chars().count() + usize::from(word_index < last_word_index);
+        if line_width + width > max_line_width && line_width > 0 {
+            line += 1;
+            line_width = 0;
+        }
+        line_of_word.push(line);
+        line_width += width;
+    }
+    let total_lines = line_of_word.last().map_or(0, |last| last + 1);
+
+    // 2. Scroll so the cursor's line is second from the top, once the text
+    //    no longer fits.
+    let cursor_line = line_of_word
+        .get(app.current_word)
+        .or(line_of_word.last())
+        .copied()
+        .unwrap_or(0);
+    let first_line = if total_lines > visible_lines {
+        cursor_line
+            .saturating_sub(1)
+            .min(total_lines.saturating_sub(visible_lines))
+    } else {
+        0
+    };
+    let end_line = first_line + visible_lines;
+
+    // 3. Style only the words on visible lines.
+    let is_zen_mode = matches!(app.mode, Mode::Zen);
     let cursor_style = Style::default()
         .fg(app.theme.accent)
         .add_modifier(Modifier::UNDERLINED);
-
-    for (word_index, word) in app.words.iter().enumerate() {
+    let mut lines: Vec<Vec<Span>> = vec![Vec::new(); end_line.min(total_lines) - first_line];
+    let first_word = line_of_word.partition_point(|&l| l < first_line);
+    for (word_index, word) in app.words.iter().enumerate().skip(first_word) {
+        let line = line_of_word[word_index];
+        if line >= end_line {
+            break;
+        }
+        let spans = &mut lines[line - first_line];
         let char_states = get_char_states(&word.text, &word.typed);
         let typed_char_count = word.typed.chars().count();
         let is_active_word = word_index == app.current_word;
-        // True when every character of the word is typed — i.e. the cursor
-        // sits on the space after it.
-        let cursor_past_word_end = is_active_word && typed_char_count >= char_states.len();
 
-        // 1. Render every character with its state-driven style.
-        //    If the cursor is on this char, overlay it with the cursor style.
-        let mut word_spans: Vec<Span> = Vec::with_capacity(char_states.len() + 1);
+        // Every character with its state-driven style; the cursor overlays
+        // the character it sits on.
         for (char_index, (ch, state)) in char_states.iter().enumerate() {
-            let cursor_on_this_char = is_active_word && char_index == typed_char_count;
-            let base_style = style_for_char(*state, is_zen_mode, &app.theme);
-            let style = if cursor_on_this_char {
+            let style = if is_active_word && char_index == typed_char_count {
                 cursor_style
             } else {
-                base_style
+                style_for_char(*state, is_zen_mode, &app.theme)
             };
-            word_spans.push(Span::styled(ch.to_string(), style));
+            spans.push(Span::styled(ch.to_string(), style));
         }
 
-        // 2. Decide whether (and how) to render the trailing space.
-        //    A trailing space goes between every pair of words. It is a
-        //    character like any other, so the cursor lands on it once the word
-        //    is fully typed.
-        let has_trailing_space = word_index < last_word_index;
-        let space_style = if word.space_missed {
-            // A colored blank is invisible — underline so the wrong space shows.
-            style_for_char(CharState::Incorrect, is_zen_mode, &app.theme)
-                .add_modifier(Modifier::UNDERLINED)
-        } else if cursor_past_word_end {
-            cursor_style
-        } else {
-            Style::default()
-        };
-
-        // The last word has no trailing space: typing its last character ends
-        // the run, so the cursor never rests past it.
-        let trailing_chars: usize = if has_trailing_space {
-            word_spans.push(Span::styled(" ", space_style));
-            1
-        } else {
-            0
-        };
-
-        // 3. Word-wrap: if this word + space won't fit on the current line,
-        //    flush and start a new one.
-        let visible_word_width = char_states.len();
-        let total_word_width = visible_word_width + trailing_chars;
-
-        if current_line_width + total_word_width > max_line_width && !current_line.is_empty() {
-            wrapped_lines.push(Line::from(std::mem::take(&mut current_line)));
-            current_line_width = 0;
+        // The space between words is a character like any other: the cursor
+        // lands on it once the word is fully typed.
+        if word_index < last_word_index {
+            let space_style = if word.space_missed {
+                // A colored blank is invisible — underline so the wrong space shows.
+                style_for_char(CharState::Incorrect, is_zen_mode, &app.theme)
+                    .add_modifier(Modifier::UNDERLINED)
+            } else if is_active_word && typed_char_count >= char_states.len() {
+                cursor_style
+            } else {
+                Style::default()
+            };
+            spans.push(Span::styled(" ", space_style));
         }
-        current_line.extend(word_spans);
-        current_line_width += total_word_width;
     }
 
-    if !current_line.is_empty() {
-        wrapped_lines.push(Line::from(current_line));
-    }
-
-    let words_paragraph = Paragraph::new(wrapped_lines)
+    let words_paragraph = Paragraph::new(lines.into_iter().map(Line::from).collect::<Vec<_>>())
         .wrap(Wrap { trim: false })
         .block(
             Block::default()
@@ -272,4 +283,40 @@ fn render_footer(f: &mut Frame, app: &App, area: Rect) {
             ),
         ],
     );
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::app::Word;
+    use crate::theme::builtin;
+    use ratatui::{backend::TestBackend, Terminal};
+
+    /// The cell the cursor is drawn on (accent + underline), if on screen.
+    fn cursor_cell(app: &App, width: u16, height: u16) -> Option<(u16, u16)> {
+        let mut terminal = Terminal::new(TestBackend::new(width, height)).unwrap();
+        terminal.draw(|f| render(f, app)).unwrap();
+        let buffer = terminal.backend().buffer();
+        (0..height)
+            .flat_map(|y| (0..width).map(move |x| (x, y)))
+            .find(|&(x, y)| {
+                let cell = &buffer[(x, y)];
+                cell.fg == app.theme.accent && cell.modifier.contains(Modifier::UNDERLINED)
+            })
+    }
+
+    /// Far into a long run the words area scrolls so the cursor's line stays
+    /// on screen (it used to run off the bottom of the box).
+    #[test]
+    fn cursor_stays_visible_deep_into_a_long_run() {
+        let mut app = App::new(None, builtin::DARK, Mode::Time(15));
+        app.start_game(Mode::Words(400)).unwrap();
+        app.words = (0..400).map(|_| Word::new("word".into())).collect();
+        for word in &mut app.words[..350] {
+            word.typed = word.text.clone();
+        }
+        app.current_word = 350;
+        let (_, y) = cursor_cell(&app, 80, 24).expect("cursor drawn");
+        assert!((6..23).contains(&y), "cursor row {y} outside the words box");
+    }
 }

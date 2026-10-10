@@ -771,14 +771,12 @@ impl App {
         // Build the word list before touching any state: if a custom file
         // fails to load, the app is left exactly as it was.
         let text: Vec<String> = match mode {
-            // Time mode just needs *enough* words that no one runs out.
-            Mode::Time(_) => words::random_words_from(300, pool, decor),
+            // Endless modes: filled by `top_up_words` below, and topped up
+            // as the typist nears the end, so no one ever runs out.
+            Mode::Time(_) | Mode::Zen => Vec::new(),
             Mode::Words(count) => words::random_words_from(count, pool, decor),
             Mode::Quote => words::random_quote(),
             Mode::Code(lang) => words::random_code_snippet(lang),
-            // Zen stays calm and plain: the word settings are for time and
-            // words runs, which are scored; zen never is.
-            Mode::Zen => words::random_words_from(500, WordPool::Common, WordDecor::default()),
             Mode::Symbols(count) => words::symbols::random_symbol_tokens(count),
             Mode::Custom => {
                 let Some(path) = &self.custom_file else {
@@ -806,8 +804,26 @@ impl App {
         self.total_typed_chars = 0;
         self.key_hits.clear();
         self.key_misses.clear();
+        self.top_up_words();
         self.screen = Screen::Typing;
         Ok(())
+    }
+
+    /// Time and zen runs end on the clock or on Esc, not on the last word:
+    /// keep at least a batch of words ahead of the cursor.
+    fn top_up_words(&mut self) {
+        const BATCH: usize = 100;
+        let (pool, decor) = match self.mode {
+            Mode::Time(_) => (self.word_pool, self.word_decor),
+            // Zen stays calm and plain: the word settings are for time and
+            // words runs, which are scored; zen never is.
+            Mode::Zen => (WordPool::Common, WordDecor::default()),
+            _ => return,
+        };
+        if self.words.len().saturating_sub(self.current_word) < BATCH {
+            let more = crate::words::random_words_from(BATCH, pool, decor);
+            self.words.extend(more.into_iter().map(Word::new));
+        }
     }
 
     /// Restart the most recent mode with a fresh word list.
@@ -911,6 +927,7 @@ impl App {
     /// reaches the configured word/quote/code target.
     fn advance_word(&mut self) {
         self.current_word += 1;
+        self.top_up_words();
 
         // Count modes (words, symbol tokens): stop once the target is reached.
         if let Mode::Words(target) | Mode::Symbols(target) = self.mode {
@@ -1018,6 +1035,24 @@ mod tests {
         assert_eq!(app.menu[app.menu_index].label, "quit");
         app.menu_move_row(true);
         assert_eq!(app.menu[app.menu_index].group, "time");
+    }
+
+    /// Time and zen runs never run out of words, however fast the typist.
+    #[test]
+    fn endless_modes_top_up_words() {
+        for mode in [Mode::Time(60), Mode::Zen] {
+            let mut app = menu_app();
+            app.start_game(mode).unwrap();
+            for _ in 0..1000 {
+                let word = app.words[app.current_word].text.clone();
+                for ch in word.chars().chain([' ']) {
+                    app.handle_char(ch);
+                }
+            }
+            assert_eq!(app.current_word, 1000, "{mode:?}");
+            assert!(app.words.len() >= 1100, "{mode:?}");
+            assert_eq!(app.screen, Screen::Typing, "{mode:?}");
+        }
     }
 
     // ── per-key accuracy tracking (v0.3.0) ──────────────────────────────────
