@@ -9,6 +9,7 @@ pub mod quotes;
 pub mod snippets;
 pub mod symbols;
 
+use std::io::Read;
 use std::path::Path;
 
 use anyhow::Context;
@@ -137,9 +138,16 @@ pub enum CodeLang {
     Shell,
 }
 
+/// Largest custom file read: 1 MiB is about 170,000 words, far more than
+/// one sitting, and keeps a huge file from taking all memory.
+const MAX_FILE_BYTES: u64 = 1024 * 1024;
+
 /// Read a user-supplied text file and split it into words on whitespace.
 /// A missing or unreadable file surfaces as `Err` naming the path — a stale
 /// remembered file or deleted snippet otherwise shows a bare OS error.
+///
+/// Only regular files up to [`MAX_FILE_BYTES`] are read: a pipe or a device
+/// (`--file /dev/zero`) would otherwise block forever or fill memory.
 ///
 /// Characters that can't be typed are dropped (see `text::is_untypeable`):
 /// a byte-order mark would otherwise make the first word impossible to get
@@ -147,12 +155,19 @@ pub enum CodeLang {
 pub fn words_from_file(path: &Path) -> anyhow::Result<Vec<String>> {
     // The path is shown made safe: it can contain any character, a newline
     // or an escape sequence included.
-    let content = std::fs::read_to_string(path).with_context(|| {
-        format!(
-            "can't read {}",
-            crate::text::printable(&path.display().to_string())
-        )
-    })?;
+    let shown = || crate::text::printable(&path.display().to_string()).into_owned();
+    let metadata = std::fs::metadata(path).with_context(|| format!("can't read {}", shown()))?;
+    if !metadata.is_file() {
+        anyhow::bail!("{} is not a regular file", shown());
+    }
+    if metadata.len() > MAX_FILE_BYTES {
+        anyhow::bail!("{} is too big to type (over 1 MiB)", shown());
+    }
+    // `take` still bounds the read if the file grows after the size check.
+    let mut content = String::new();
+    std::fs::File::open(path)
+        .and_then(|file| file.take(MAX_FILE_BYTES).read_to_string(&mut content))
+        .with_context(|| format!("can't read {}", shown()))?;
     Ok(content
         .split_whitespace()
         .map(|word| {
@@ -179,6 +194,24 @@ mod tests {
             words_from_file(&path).unwrap(),
             ["plain", "[2Jclear", "name"]
         );
+    }
+
+    /// A pipe, device or directory is refused instead of blocking forever
+    /// or filling memory, and so is a file over the size limit.
+    #[test]
+    fn file_words_refuse_non_files_and_huge_files() {
+        let dir = tempfile::tempdir().unwrap();
+        let err = words_from_file(dir.path()).unwrap_err();
+        assert!(err.to_string().contains("not a regular file"), "{err}");
+        let big = dir.path().join("big.txt");
+        std::fs::write(&big, "a ".repeat(MAX_FILE_BYTES as usize / 2 + 1)).unwrap();
+        let err = words_from_file(&big).unwrap_err();
+        assert!(err.to_string().contains("too big"), "{err}");
+        #[cfg(unix)]
+        {
+            let err = words_from_file(Path::new("/dev/zero")).unwrap_err();
+            assert!(err.to_string().contains("not a regular file"), "{err}");
+        }
     }
 
     /// A UTF-8 byte-order mark (some Windows editors write one) must not

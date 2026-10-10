@@ -45,18 +45,24 @@ use crate::storage::SessionRecord;
 use crate::theme::builtin;
 use crate::words::{CodeLang, WordPool};
 
-/// Value parser for counts that must be at least 1. A zero count would start
-/// a session with nothing to type that can only be left with Esc.
-fn positive<T>(value: &str) -> Result<T, String>
+/// Value parser for counts from 1 to `MAX`. A zero count would start a
+/// session with nothing to type that can only be left with Esc; a huge one
+/// would try to build billions of words before the first frame.
+fn count<T, const MAX: u16>(value: &str) -> Result<T, String>
 where
-    T: std::str::FromStr + PartialOrd + From<u8>,
+    T: std::str::FromStr + PartialOrd + From<u16>,
 {
     match value.parse::<T>() {
-        Ok(count) if count >= T::from(1) => Ok(count),
-        Ok(_) => Err("must be at least 1".into()),
+        Ok(count) if count >= T::from(1) && count <= T::from(MAX) => Ok(count),
+        Ok(_) => Err(format!("must be between 1 and {MAX}")),
         Err(_) => Err("not a whole number".into()),
     }
 }
+
+/// Longest `--time` run: an hour.
+const MAX_SECONDS: u16 = 3600;
+/// Most words or symbol tokens in one `--words` / `--symbols` run.
+const MAX_COUNT: u16 = 10_000;
 
 /// Command-line interface. Run with no args to open the interactive menu; pass
 /// any of the mode flags to skip the menu and jump straight into a session.
@@ -73,11 +79,11 @@ struct Cli {
     file: Option<PathBuf>,
 
     /// Start directly in time mode for N seconds (15/30/60/120).
-    #[arg(long, value_parser = positive::<u64>)]
+    #[arg(long, value_parser = count::<u64, MAX_SECONDS>)]
     time: Option<u64>,
 
     /// Start directly in words mode for N words.
-    #[arg(long, value_parser = positive::<usize>)]
+    #[arg(long, value_parser = count::<usize, MAX_COUNT>)]
     words: Option<usize>,
 
     /// Skip the menu and start a quote session.
@@ -93,7 +99,7 @@ struct Cli {
     zen: bool,
 
     /// Skip the menu and start a programming-symbols drill of N tokens (25/50).
-    #[arg(long, value_parser = positive::<usize>)]
+    #[arg(long, value_parser = count::<usize, MAX_COUNT>)]
     symbols: Option<usize>,
 
     /// Use the 10,000-word English pool (time and words modes).
@@ -931,17 +937,29 @@ mod tests {
 
     // ── v0.4.0 ───────────────────────────────────────────────────────────────
 
-    /// A zero count would start a session with nothing to type; clap rejects
-    /// it before the terminal is touched. Positive counts still parse.
+    /// A zero count would start a session with nothing to type, and a huge
+    /// one would build billions of words before the first frame; clap rejects
+    /// both before the terminal is touched. Counts in range still parse.
     #[test]
-    fn zero_counts_are_rejected() {
-        for flag in ["--time", "--words", "--symbols"] {
-            let err = Cli::try_parse_from(["typerush", flag, "0"]).unwrap_err();
-            assert!(err.to_string().contains("at least 1"), "{flag} 0: {err}");
-            assert!(
-                Cli::try_parse_from(["typerush", flag, "25"]).is_ok(),
-                "{flag} 25"
-            );
+    fn out_of_range_counts_are_rejected() {
+        for (flag, max) in [("--time", 3600), ("--words", 10_000), ("--symbols", 10_000)] {
+            for bad in [
+                "0".to_string(),
+                (max + 1).to_string(),
+                "99999999999999".into(),
+            ] {
+                let err = Cli::try_parse_from(["typerush", flag, &bad]).unwrap_err();
+                assert!(
+                    err.to_string().contains(&format!("between 1 and {max}")),
+                    "{flag} {bad}: {err}"
+                );
+            }
+            for good in ["1", "25", &max.to_string()] {
+                assert!(
+                    Cli::try_parse_from(["typerush", flag, good]).is_ok(),
+                    "{flag} {good}"
+                );
+            }
         }
     }
 
