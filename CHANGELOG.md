@@ -69,6 +69,17 @@ mode at a time.
 
 ### Changed
 
+- **Key hints always sit on the bottom row,** in the same place on every
+  screen (they were three rows up while typing, two on Results), worded
+  the same way everywhere (`Enter`, `Esc`, `Tab`, `F1`, `Ctrl+C`; quit
+  last).
+- **One alignment grid for every screen:** the title on the first row, a
+  blank row, then the content; text inside every box starts two cells in;
+  every value on Results and in the Stats summary starts in the same
+  column. The Results box fits its six lines (no empty rows), the Stats
+  summary's two columns have room between them, the typing header lines up
+  with the other titles, and the menu leaves a blank line above the word
+  settings.
 - **Dependencies upgraded:** ratatui 0.30 (crossterm 0.29 through its
   re-export, only the features TypeRush uses), rand 0.10, toml 1. The
   `dirs` crate is gone (the standard library's `home_dir` is used). The

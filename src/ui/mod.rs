@@ -57,6 +57,19 @@ pub fn render(frame: &mut Frame, app: &App) {
     }
 }
 
+/// Width of the label column inside boxes ("accuracy", "time typed", …).
+/// Labels are padded to it on every screen, so values line up in one column.
+pub const LABEL_WIDTH: usize = 12;
+
+/// A muted label padded to [`LABEL_WIDTH`], two cells in from the box border
+/// like all text inside a box: `"  accuracy    "`.
+pub fn label(app: &App, text: &str) -> Span<'static> {
+    Span::styled(
+        format!("  {text:<LABEL_WIDTH$}"),
+        Style::default().fg(app.theme.pending),
+    )
+}
+
 /// A footer hint: its text and, when clicking it should do something, the key
 /// press it stands for. Navigation hints like "↑/↓ category" carry `None`.
 pub type Hint = (&'static str, Option<(KeyCode, KeyModifiers)>);
@@ -383,6 +396,71 @@ mod tests {
                 last.starts_with(&format!("  {first_hint}")),
                 "{screen:?}: {last:?}"
             );
+        }
+    }
+
+    /// One grid on every screen: the title starts at column 2 of the first
+    /// row, and inside boxes every value starts in the same column (border,
+    /// two cells, the shared label width) — on Results and in the Stats
+    /// summary alike.
+    #[test]
+    fn titles_and_values_line_up_across_screens() {
+        use crate::app::Screen;
+        let value_column = 1 + 2 + LABEL_WIDTH;
+        let rows_of = |app: &App| -> Vec<Vec<String>> {
+            let mut terminal = Terminal::new(TestBackend::new(80, 24)).unwrap();
+            terminal.draw(|f| render(f, app)).unwrap();
+            let buffer = terminal.backend().buffer();
+            (0..24)
+                .map(|y| {
+                    (0..80)
+                        .map(|x| buffer[(x, y)].symbol().to_string())
+                        .collect()
+                })
+                .collect()
+        };
+        // Column of the first visible cell after `label` on its row.
+        let value_after = |rows: &[Vec<String>], label: &str| -> usize {
+            let row = rows
+                .iter()
+                .find(|row| row.concat().contains(&format!("  {label}  ")))
+                .unwrap_or_else(|| panic!("{label:?} not shown"));
+            let text: Vec<&str> = row.iter().map(String::as_str).collect();
+            let start = (0..text.len())
+                .find(|&x| text[x..].concat().starts_with(&format!("  {label}")))
+                .unwrap();
+            (start + 2 + label.chars().count()..text.len())
+                .find(|&x| text[x].trim() != "")
+                .unwrap()
+        };
+
+        let mut app = App::new(None, builtin::DARK, Mode::Time(15));
+        app.start_game(Mode::Words(2)).unwrap();
+        app.stats_cache = Some(vec![record(61.5, "words-2")]);
+        for screen in [Screen::Typing, Screen::Results, Screen::Stats] {
+            app.screen = screen;
+            let rows = rows_of(&app);
+            let first = rows[0].iter().position(|cell| cell.trim() != "").unwrap();
+            assert_eq!(first, 2, "{screen:?} title column");
+            let labels: &[&str] = match screen {
+                Screen::Results => &["wpm", "accuracy", "time", "chars", "mode", "mode best"],
+                Screen::Stats => &[
+                    "best wpm",
+                    "sessions",
+                    "streak",
+                    "7-day avg",
+                    "30-day avg",
+                    "time typed",
+                ],
+                _ => &[],
+            };
+            for label in labels {
+                assert_eq!(
+                    value_after(&rows, label),
+                    value_column,
+                    "{screen:?} {label:?}"
+                );
+            }
         }
     }
 }

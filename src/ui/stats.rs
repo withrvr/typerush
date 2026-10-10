@@ -15,7 +15,7 @@ use ratatui::{
 use ratatui::crossterm::event::{KeyCode, KeyModifiers};
 use unicode_width::UnicodeWidthStr;
 
-use super::key;
+use super::{key, label};
 use crate::text::{printable, shorten};
 use crate::{
     app::{App, ClickAction},
@@ -145,71 +145,63 @@ fn render_summary_and_heatmap(
     let avg30 = summary.avg_wpm_30_days;
 
     let fmt_avg = |v: Option<f64>| match v {
-        None => "  —".to_string(),
-        Some(x) => format!("{:>5.1}", x),
+        None => "—".to_string(),
+        Some(x) => format!("{x:.1}"),
     };
 
+    // Two columns on the first rows, one below: every value in the left
+    // column starts at the shared label width, and the right column's values
+    // line up with each other too.
+    let value = |text: String, style: Style| Span::styled(format!("{text:<10}"), style);
+    let right_label =
+        |text: &str| Span::styled(format!("{text:<10}"), Style::default().fg(theme.pending));
+    let streak_style = if streak > 0 {
+        Style::default()
+            .fg(theme.secondary)
+            .add_modifier(Modifier::BOLD)
+    } else {
+        Style::default().fg(theme.neutral)
+    };
     let summary_lines = vec![
         Line::from(vec![
-            Span::styled("  best wpm     ", Style::default().fg(theme.pending)),
-            Span::styled(
-                format!("{:>6.1}", pb),
+            label(app, "best wpm"),
+            value(
+                format!("{pb:.1}"),
                 Style::default()
                     .fg(theme.secondary)
                     .add_modifier(Modifier::BOLD),
             ),
-            Span::raw("   "),
-            Span::styled("avg acc  ", Style::default().fg(theme.pending)),
-            Span::styled(
-                format!("{:>5.1}%", avg_acc),
-                Style::default().fg(theme.correct),
-            ),
+            right_label("avg acc"),
+            Span::styled(format!("{avg_acc:.1}%"), Style::default().fg(theme.correct)),
         ]),
         Line::from(vec![
-            Span::styled("  sessions     ", Style::default().fg(theme.pending)),
-            Span::styled(format!("{:>6}", total), Style::default().fg(theme.neutral)),
-            Span::raw("   "),
-            Span::styled("last wpm ", Style::default().fg(theme.pending)),
-            Span::styled(
-                format!("{:>5.1}", last_wpm),
-                Style::default().fg(theme.accent),
-            ),
+            label(app, "sessions"),
+            value(total.to_string(), Style::default().fg(theme.neutral)),
+            right_label("last wpm"),
+            Span::styled(format!("{last_wpm:.1}"), Style::default().fg(theme.accent)),
         ]),
         Line::from(vec![
-            Span::styled("  streak       ", Style::default().fg(theme.pending)),
-            Span::styled(
-                format!("{:>9}", streak_text),
-                Style::default()
-                    .fg(if streak > 0 {
-                        theme.secondary
-                    } else {
-                        theme.neutral
-                    })
-                    .add_modifier(if streak > 0 {
-                        Modifier::BOLD
-                    } else {
-                        Modifier::empty()
-                    }),
-            ),
+            label(app, "streak"),
+            Span::styled(streak_text, streak_style),
         ]),
         Line::from(vec![
-            Span::styled("  7-day avg    ", Style::default().fg(theme.pending)),
+            label(app, "7-day avg"),
             Span::styled(
                 format!("{} wpm", fmt_avg(avg7)),
                 Style::default().fg(theme.accent),
             ),
         ]),
         Line::from(vec![
-            Span::styled("  30-day avg   ", Style::default().fg(theme.pending)),
+            label(app, "30-day avg"),
             Span::styled(
                 format!("{} wpm", fmt_avg(avg30)),
                 Style::default().fg(theme.accent),
             ),
         ]),
         Line::from(vec![
-            Span::styled("  time typed   ", Style::default().fg(theme.pending)),
+            label(app, "time typed"),
             Span::styled(
-                format!("{:>6}", format_duration(summary.time_typed_secs)),
+                format_duration(summary.time_typed_secs),
                 Style::default().fg(theme.neutral),
             ),
         ]),
@@ -451,6 +443,9 @@ fn render_bests_table(
         .map(|best| {
             let record = &sessions[best.best_index];
             Row::new(vec![
+                // Empty gutter, like the sessions table's ★ column, so the
+                // first column starts where it does in every other box.
+                Cell::from(""),
                 Cell::from(shorten(&printable(&best.mode), MODE_WIDTH).into_owned())
                     .style(Style::default().fg(theme.mode_tag)),
                 Cell::from(format!("★ {:.1}", record.wpm)).style(
@@ -469,7 +464,7 @@ fn render_bests_table(
         .collect();
     let shown = rows.len();
 
-    let header = Row::new(vec!["Mode", "Best", "Acc", "Avg", "Runs", "Set on"]).style(
+    let header = Row::new(vec!["", "Mode", "Best", "Acc", "Avg", "Runs", "Set on"]).style(
         Style::default()
             .fg(theme.pending)
             .add_modifier(Modifier::BOLD),
@@ -477,6 +472,7 @@ fn render_bests_table(
     let table = Table::new(
         rows,
         [
+            Constraint::Length(1),
             Constraint::Length(MODE_WIDTH as u16),
             Constraint::Length(9),
             Constraint::Length(7),

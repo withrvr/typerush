@@ -33,6 +33,11 @@ rule that keeps it fixed).
 - **Measure the way you draw.** Layout and drawing must use the same width
   rule: `str::width` treats 👍🏽 as 2 cells, the per-character sum as 4, and
   the typing box draws per character.
+- **Layout rules live in one place.** Each screen padding its own labels
+  and drawing its own footer let every screen drift (labels 11–13 cells,
+  footers on three different rows). One footer row in `ui::render`, one
+  `ui::label` and `LABEL_WIDTH`, and a test that checks the columns keep
+  them in line.
 - **Mirror types rot.** A config-side copy of an enum (`DefaultMode`,
   `CodeLangKind`) has to be kept in step by hand; use the real type.
 - **Tests never touch the real `~/.typerush`.** Everything that reads or

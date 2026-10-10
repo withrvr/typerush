@@ -147,7 +147,9 @@ pub fn render(f: &mut Frame, app: &App, area: Rect) -> &'static [super::Hint] {
     let visible = menu_area.height as usize;
     let scroll = (menu.selected_line + 1).saturating_sub(visible);
     let more_above = scroll > 0;
-    let more_below = scroll + visible < menu.lines.len();
+    // The trailing blank line is padding, not an option: it never counts
+    // as "more".
+    let more_below = scroll + visible < menu.lines.len() - 1;
     let mut targets = app.click_targets.borrow_mut();
     for (line, x, width, index) in menu.chips {
         if line < scroll || line - scroll >= visible {
@@ -371,6 +373,10 @@ fn menu_lines(app: &App, width: usize, skip_gaps: usize) -> MenuLines {
         start = row.end;
         previous_row = Some(row);
     }
+    // A blank line under the last option, so the word settings on the
+    // bottom border don't sit right against it. Always kept: when space is
+    // short, the gaps between categories go first.
+    lines.push(Line::raw(""));
     MenuLines {
         lines,
         chips,

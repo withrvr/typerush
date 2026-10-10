@@ -12,7 +12,7 @@
 use ratatui::crossterm::event::{KeyCode, KeyModifiers};
 use ratatui::{
     prelude::*,
-    widgets::{Block, Borders, Gauge, Paragraph},
+    widgets::{Block, Borders, Gauge, Padding, Paragraph},
 };
 
 use unicode_width::UnicodeWidthChar;
@@ -27,16 +27,19 @@ use crate::{
 /// horizontal bands: header, progress bar, words. Returns the footer hints —
 /// no help hint: `?` is a character you may need to type here.
 pub fn render(f: &mut Frame, app: &App, area: Rect) -> &'static [super::Hint] {
+    // Same grid as every screen: the title row (here the live stats) and a
+    // blank row, then the content — the gauge, a blank row and the words.
     let layout = Layout::vertical([
-        Constraint::Length(3), // live stats header
-        Constraint::Length(2), // progress gauge
+        Constraint::Length(2), // live stats header
+        Constraint::Length(1), // progress gauge
+        Constraint::Length(1), // breathing room
         Constraint::Min(6),    // words to type
     ])
     .split(area);
 
     render_header(f, app, layout[0]);
     render_progress(f, app, layout[1]);
-    render_words(f, app, layout[2]);
+    render_words(f, app, layout[3]);
     const HINTS: &[super::Hint] = &[
         ("Ctrl+R / F5 restart", super::key(KeyCode::F(5))),
         ("Esc finish", super::key(KeyCode::Esc)),
@@ -62,12 +65,12 @@ fn render_header(f: &mut Frame, app: &App, area: Rect) {
 
     let header = if is_zen_mode {
         Line::from(vec![
-            Span::styled(" zen ", Style::default().fg(theme.pending)),
+            Span::styled("  zen ", Style::default().fg(theme.pending)),
             Span::styled(" · esc to finish", Style::default().fg(theme.pending)),
         ])
     } else {
         Line::from(vec![
-            Span::styled(" wpm ", Style::default().fg(theme.pending)),
+            Span::styled("  wpm ", Style::default().fg(theme.pending)),
             Span::styled(
                 format!("{:>3.0}", app.wpm()),
                 Style::default()
@@ -93,12 +96,7 @@ fn render_header(f: &mut Frame, app: &App, area: Rect) {
         ])
     };
 
-    let header_paragraph = Paragraph::new(header).block(
-        Block::default()
-            .borders(Borders::BOTTOM)
-            .border_style(Style::default().fg(theme.pending)),
-    );
-    f.render_widget(header_paragraph, area);
+    f.render_widget(Paragraph::new(header), area);
 }
 
 /// Progress bar — words-typed / total for word modes, elapsed / total for time modes.
@@ -158,8 +156,9 @@ fn render_progress(f: &mut Frame, app: &App, area: Rect) {
 /// `theme.accent`. Keeping the cursor steady avoids the horizontal "jitter"
 /// that a phantom blinking character would cause.
 fn render_words(f: &mut Frame, app: &App, area: Rect) {
-    // -4 to account for the surrounding border (1 char each side + padding).
-    let max_width = area.width.saturating_sub(4).max(2) as usize;
+    // Borders, plus two cells of padding each side: text starts two cells in
+    // from the border, as in every box.
+    let max_width = area.width.saturating_sub(6).max(2) as usize;
     let visible_lines = area.height.saturating_sub(2) as usize;
     let last_word_index = app.words.len().saturating_sub(1);
     let has_space = |word_index: usize| word_index < last_word_index;
@@ -284,6 +283,7 @@ fn render_words(f: &mut Frame, app: &App, area: Rect) {
         .block(
             Block::default()
                 .borders(Borders::ALL)
+                .padding(Padding::horizontal(2))
                 .border_style(Style::default().fg(app.theme.pending))
                 .title(Span::styled(
                     " typerush ",
@@ -409,7 +409,7 @@ mod tests {
         let buffer = terminal.backend().buffer();
         // Every visible row, in order, spells out the start of the word list:
         // nothing cut off at a right edge.
-        let shown: String = (6..20)
+        let shown: String = (5..22)
             .flat_map(|y| (1..79).map(move |x| (x, y)))
             .map(|(x, y)| buffer[(x, y)].symbol().to_string())
             .filter(|cell| cell.trim() != "")
