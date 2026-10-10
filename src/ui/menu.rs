@@ -8,7 +8,7 @@ use ratatui::{
     widgets::{Block, Borders, Paragraph},
 };
 
-use crossterm::event::{KeyCode, KeyModifiers};
+use ratatui::crossterm::event::{KeyCode, KeyModifiers};
 
 use super::{key, render_footer};
 use crate::app::{menu_row, App, ClickAction, MenuAction};

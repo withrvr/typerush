@@ -12,7 +12,7 @@ use ratatui::{
     widgets::{Block, Borders, Cell, Paragraph, Row, Sparkline, Table},
 };
 
-use crossterm::event::KeyCode;
+use ratatui::crossterm::event::KeyCode;
 
 use super::key;
 use crate::text::{printable, shorten};

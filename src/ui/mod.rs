@@ -24,7 +24,7 @@ pub mod results;
 pub mod stats;
 pub mod typing;
 
-use crossterm::event::{KeyCode, KeyModifiers};
+use ratatui::crossterm::event::{KeyCode, KeyModifiers};
 use ratatui::{prelude::*, widgets::Paragraph, Frame};
 
 use crate::app::{App, ClickAction, Screen};

@@ -55,7 +55,7 @@ pub struct SessionRecord {
 /// Directory we write to: `$HOME/.typerush`. Falls back to the current
 /// directory if `$HOME` can't be resolved.
 pub fn data_dir() -> PathBuf {
-    dirs::home_dir()
+    std::env::home_dir()
         .unwrap_or_else(|| PathBuf::from("."))
         .join(".typerush")
 }

@@ -9,7 +9,7 @@
 //! characters + "underline" on spaces) avoids the visual jolt of switching
 //! styles as the cursor crosses word boundaries.
 
-use crossterm::event::{KeyCode, KeyModifiers};
+use ratatui::crossterm::event::{KeyCode, KeyModifiers};
 use ratatui::{
     prelude::*,
     widgets::{Block, Borders, Gauge, Paragraph, Wrap},

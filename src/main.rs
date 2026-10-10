@@ -29,7 +29,7 @@ use std::{
 
 use anyhow::Result;
 use clap::Parser;
-use crossterm::{
+use ratatui::crossterm::{
     event::{
         self, DisableMouseCapture, EnableMouseCapture, Event, KeyCode, KeyEventKind, KeyModifiers,
         MouseButton, MouseEvent, MouseEventKind,

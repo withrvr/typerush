@@ -11,7 +11,7 @@ use ratatui::{
     widgets::{Block, Borders, Paragraph, Sparkline},
 };
 
-use crossterm::event::KeyCode;
+use ratatui::crossterm::event::KeyCode;
 
 use super::key;
 use crate::{app::App, storage};

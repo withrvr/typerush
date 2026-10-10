@@ -12,8 +12,8 @@ pub mod symbols;
 use std::path::Path;
 
 use anyhow::Context;
-use rand::seq::SliceRandom;
-use rand::{thread_rng, Rng};
+use rand::seq::IndexedRandom;
+use rand::{Rng, RngExt};
 
 /// Which English-word pool to draw from in [`random_words_from`].
 ///
@@ -45,7 +45,7 @@ pub struct WordDecor {
 /// Pick `count` random English words from the requested pool, optionally
 /// decorated with punctuation / numbers.
 pub fn random_words_from(count: usize, pool: WordPool, decor: WordDecor) -> Vec<String> {
-    let mut rng = thread_rng();
+    let mut rng = rand::rng();
     let words: &[&str] = match pool {
         WordPool::Common => english::ENGLISH_COMMON,
         WordPool::Extended => english::ENGLISH_10000,
@@ -54,11 +54,11 @@ pub fn random_words_from(count: usize, pool: WordPool, decor: WordDecor) -> Vec<
         .map(|_| {
             // ~12% of slots become numbers when the toggle is on — frequent
             // enough to be felt, rare enough not to dominate the session.
-            if decor.numbers && rng.gen_bool(0.12) {
+            if decor.numbers && rng.random_bool(0.12) {
                 return random_number(&mut rng);
             }
             let base = words.choose(&mut rng).copied().unwrap_or("the").to_string();
-            if decor.punctuation && rng.gen_bool(0.25) {
+            if decor.punctuation && rng.random_bool(0.25) {
                 decorate_with_punctuation(&base, &mut rng)
             } else {
                 base
@@ -70,14 +70,14 @@ pub fn random_words_from(count: usize, pool: WordPool, decor: WordDecor) -> Vec<
 /// Generate a short numeric literal (1–4 digits). Used by the numbers toggle.
 fn random_number(rng: &mut impl Rng) -> String {
     // 1–4 digits, each length equally likely.
-    let len = rng.gen_range(1..=4);
+    let len = rng.random_range(1..=4);
     let mut s = String::with_capacity(len);
     for i in 0..len {
         // Avoid leading zero on multi-digit numbers — they look weird ("042").
         let digit = if i == 0 && len > 1 {
-            rng.gen_range(1..=9)
+            rng.random_range(1..=9)
         } else {
-            rng.gen_range(0..=9)
+            rng.random_range(0..=9)
         };
         s.push(char::from(b'0' + digit as u8));
     }
@@ -91,9 +91,9 @@ fn decorate_with_punctuation(word: &str, rng: &mut impl Rng) -> String {
     // Punctuation that goes *after* a word (most common in prose).
     const TAIL: &[&str] = &[",", ".", ";", ":", "?", "!", "...", "\"", "'"];
     // 1 in 5 punctuation slots wraps the word with paired marks.
-    if rng.gen_bool(0.2) {
+    if rng.random_bool(0.2) {
         let pairs = [("\"", "\""), ("'", "'"), ("(", ")"), ("[", "]")];
-        let (open, close) = pairs[rng.gen_range(0..pairs.len())];
+        let (open, close) = pairs[rng.random_range(0..pairs.len())];
         return format!("{}{}{}", open, word, close);
     }
     let tail = TAIL.choose(rng).copied().unwrap_or(",");
@@ -103,7 +103,7 @@ fn decorate_with_punctuation(word: &str, rng: &mut impl Rng) -> String {
 /// Pick a random famous programming quote from the built-in list, split into
 /// whitespace-separated words.
 pub fn random_quote() -> Vec<String> {
-    let mut rng = thread_rng();
+    let mut rng = rand::rng();
     let quote = quotes::QUOTES.choose(&mut rng).copied().unwrap_or("");
     quote.split_whitespace().map(|s| s.to_string()).collect()
 }
@@ -111,7 +111,7 @@ pub fn random_quote() -> Vec<String> {
 /// Pick a random short code snippet for the given language, split into
 /// whitespace-separated words.
 pub fn random_code_snippet(lang: CodeLang) -> Vec<String> {
-    let mut rng = thread_rng();
+    let mut rng = rand::rng();
     let pool: &[&str] = match lang {
         CodeLang::Rust => quotes::CODE_RUST,
         CodeLang::Python => quotes::CODE_PYTHON,
@@ -377,7 +377,7 @@ mod tests {
     #[test]
     fn random_number_avoids_leading_zero_for_multi_digit() {
         // Generate many random numbers and ensure no multi-digit one starts with 0.
-        let mut rng = rand::thread_rng();
+        let mut rng = rand::rng();
         for _ in 0..200 {
             let n = random_number(&mut rng);
             if n.len() > 1 {
