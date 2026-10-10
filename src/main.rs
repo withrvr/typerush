@@ -587,10 +587,17 @@ fn is_altgr(typed_char: char, mods: KeyModifiers) -> bool {
 ///
 /// A fast typist is still typing when the run ends, so the next few keys
 /// land here. Only keys nobody presses while typing act — Enter or F5
-/// restart, Esc goes to the menu, Tab to stats, F1 opens help, Ctrl+C quits —
+/// (or Ctrl+R, as while typing) restart, Esc goes to the menu, Tab to
+/// stats, F1 opens help, Ctrl+C quits —
 /// so those stray letters, spaces and `?` can't skip the results.
-fn handle_results_key(app: &mut App, code: KeyCode, _mods: KeyModifiers) {
+fn handle_results_key(app: &mut App, code: KeyCode, mods: KeyModifiers) {
+    let ctrl_r = code == KeyCode::Char('r') && mods.contains(KeyModifiers::CONTROL);
     match code {
+        _ if ctrl_r => {
+            if let Err(e) = app.restart() {
+                app.show_error(&e);
+            }
+        }
         KeyCode::Enter | KeyCode::F(5) => {
             if let Err(e) = app.restart() {
                 app.show_error(&e);
@@ -1380,6 +1387,10 @@ mod tests {
         assert_eq!(app.screen, Screen::Menu);
         app.screen = Screen::Results;
         handle_key(&mut app, KeyCode::F(5), KeyModifiers::NONE);
+        assert_eq!(app.screen, Screen::Typing);
+        // Ctrl+R restarts here too, as while typing; a plain r doesn't.
+        app.screen = Screen::Results;
+        handle_key(&mut app, KeyCode::Char('r'), KeyModifiers::CONTROL);
         assert_eq!(app.screen, Screen::Typing);
     }
 

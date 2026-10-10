@@ -166,9 +166,17 @@ fn render_summary_and_heatmap(
     // Two columns on the first rows, one below: every value in the left
     // column starts at the shared label width, and the right column's values
     // line up with each other too.
-    let value = |text: String, style: Style| Span::styled(format!("{text:<10}"), style);
-    let right_label =
-        |text: &str| Span::styled(format!("{text:<10}"), Style::default().fg(theme.pending));
+    // Width of a left-column value and of a right-column label: the right
+    // column starts LABEL_WIDTH + VALUE_WIDTH cells in, and its values line
+    // up VALUE_WIDTH after that.
+    const VALUE_WIDTH: usize = 10;
+    let value = |text: String, style: Style| Span::styled(format!("{text:<VALUE_WIDTH$}"), style);
+    let right_label = |text: &str| {
+        Span::styled(
+            format!("{text:<VALUE_WIDTH$}"),
+            Style::default().fg(theme.pending),
+        )
+    };
     let streak_style = if streak > 0 {
         Style::default()
             .fg(theme.secondary)

@@ -21,11 +21,12 @@ use crate::{app::App, storage};
 pub fn render(f: &mut Frame, app: &App, area: Rect) -> &'static [super::Hint] {
     let theme = &app.theme;
     // Title row and a blank row (as on every screen), the results box sized
-    // to its six lines, then the trend takes the rest.
+    // to its six lines, then a compact trend strip.
     let layout = Layout::vertical([
         Constraint::Length(2),
         Constraint::Length(8),
-        Constraint::Min(5),
+        Constraint::Length(6),
+        Constraint::Min(0),
     ])
     .split(area);
 

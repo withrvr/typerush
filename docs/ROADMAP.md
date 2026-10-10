@@ -138,6 +138,17 @@ one pull request:
    they were built) and a contributor skill file that points to it
 9. ✅ Review, end-to-end test, docs, version 0.4.1
 
+**Added to v0.4.1 after using it:**
+
+- ✅ Results ignores keys you're still typing when a run ends (only Enter,
+  F5, Esc, Tab, F1 and Ctrl+C act there)
+- ✅ Key hints on the bottom row of every screen, worded the same way
+- ✅ One layout grid: title row, blank row, full-width box; text two cells
+  in; values in one column; the menu in the same frame with the banner
+  inside
+- ✅ Stats opens on the run you just finished; `[all]` button; a title row
+  whose buttons and counter never move
+
 ---
 
 ## 🔲 Planned

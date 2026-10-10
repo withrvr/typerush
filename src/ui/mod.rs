@@ -34,11 +34,16 @@ pub fn render(frame: &mut Frame, app: &App) {
     // 0. Click targets are rebuilt from scratch by whatever draws this frame.
     app.click_targets.borrow_mut().clear();
 
-    // 1. Paint every cell in the frame with the theme background.
+    // 1. Paint every cell in the frame with the theme background. Themes
+    //    that paint their own background also get their foreground, so any
+    //    text drawn without a color (a box title) is never the terminal's
+    //    own default — light-on-white on the light theme in a dark terminal.
     let area = frame.area();
-    frame
-        .buffer_mut()
-        .set_style(area, Style::default().bg(app.theme.background));
+    let mut base = Style::default().bg(app.theme.background);
+    if app.theme.background != Color::Reset {
+        base = base.fg(app.theme.neutral);
+    }
+    frame.buffer_mut().set_style(area, base);
 
     // 2. Render the active screen above the footer row, then the footer:
     //    every screen's key hints sit on the last row, in the same place.
@@ -510,6 +515,52 @@ mod tests {
         assert!(
             columns.windows(2).all(|pair| pair[0] == pair[1]),
             "{columns:?}"
+        );
+    }
+
+    /// Review fixes: a box title on the light theme is drawn in a theme
+    /// color, never the terminal's own (light-on-white in a dark terminal); a box too narrow for the compact banner shows none
+    /// rather than a clipped one; the typing gauge starts at column 2, in
+    /// line with the title.
+    #[test]
+    fn titles_readable_banner_never_clipped_gauge_in_line() {
+        use crate::app::Screen;
+        let render_to = |app: &App, width: u16, height: u16| {
+            let mut terminal = Terminal::new(TestBackend::new(width, height)).unwrap();
+            terminal.draw(|f| render(f, app)).unwrap();
+            terminal.backend().buffer().clone()
+        };
+
+        let app = App::new(None, builtin::LIGHT, Mode::Time(15));
+        let buffer = render_to(&app, 80, 24);
+        let row: String = (0..80)
+            .map(|x| buffer[(x, 2)].symbol().to_string())
+            .collect();
+        let x = row.find("modes").unwrap() as u16;
+        assert_ne!(
+            buffer[(x, 2)].fg,
+            Color::Reset,
+            "title in the terminal's own color"
+        );
+
+        let app = App::new(None, builtin::DARK, Mode::Time(15));
+        let buffer = render_to(&app, 30, 24);
+        let all: String = buffer.content().iter().map(|c| c.symbol()).collect();
+        assert!(!all.contains('▀') && !all.contains('▄'), "clipped banner");
+
+        let mut app = App::new(None, builtin::DARK, Mode::Time(15));
+        app.start_game(Mode::Words(10)).unwrap();
+        app.screen = Screen::Typing;
+        let buffer = render_to(&app, 80, 24);
+        let gauge: Vec<_> = (0..80)
+            .map(|x| buffer[(x, 2)].symbol().to_string())
+            .collect();
+        let first = gauge.iter().position(|c| c.trim() != "");
+        let label = (0..80).find(|&x| gauge[x..].concat().starts_with("0 / 10"));
+        assert!(label.is_some(), "gauge label missing: {gauge:?}");
+        assert!(
+            first.is_some_and(|x| x >= 2),
+            "gauge starts left of column 2"
         );
     }
 }

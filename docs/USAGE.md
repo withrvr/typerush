@@ -189,7 +189,7 @@ for the whole list does it scroll, and then the border shows `▲ more` /
 
 | Key             | Action                            |
 | --------------- | --------------------------------- |
-| `Enter` / `F5`  | Restart the same mode             |
+| `Enter` / `F5` / `Ctrl+R` | Restart the same mode   |
 | `Tab`           | Open the stats history            |
 | `Esc`           | Back to the menu                  |
 | `F1`            | Help                              |

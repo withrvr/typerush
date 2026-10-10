@@ -38,7 +38,8 @@ pub fn render(f: &mut Frame, app: &App, area: Rect) -> &'static [super::Hint] {
     .split(area);
 
     render_header(f, app, layout[0]);
-    render_progress(f, app, layout[1]);
+    // Inset like the title and the box text, so the bar starts in line.
+    render_progress(f, app, layout[1].inner(Margin::new(2, 0)));
     render_words(f, app, layout[3]);
     const HINTS: &[super::Hint] = &[
         ("Ctrl+R / F5 restart", super::key(KeyCode::F(5))),

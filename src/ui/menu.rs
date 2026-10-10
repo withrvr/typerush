@@ -16,6 +16,9 @@ use crate::words::WordPool;
 
 /// The big banner's width; narrower boxes get the compact one.
 const BANNER_WIDTH: u16 = 70;
+/// The compact banner's width; narrower boxes get none rather than a
+/// clipped one.
+const COMPACT_WIDTH: u16 = 31;
 
 /// How the name is drawn at the top of the menu box. The menu picks the
 /// biggest that still lets every option fit on screen (see [`render`]).
@@ -103,7 +106,7 @@ pub fn render(f: &mut Frame, app: &App, area: Rect) -> &'static [super::Hint] {
     let text_width = box_area.width.saturating_sub(2) as usize;
     // Box borders.
     const CHROME: usize = 2;
-    let spaced = menu_lines(app, text_width, 0);
+    let spaced = menu_lines(app, text_width, true);
     let dense_rows = spaced.lines.len() - spaced.gaps;
     // Blank lines that fit with `banner` above the list (`None`: not even
     // the list without any fits).
@@ -115,17 +118,19 @@ pub fn render(f: &mut Frame, app: &App, area: Rect) -> &'static [super::Hint] {
     {
         (Banner::Full, spaced)
     } else {
-        let banner = [Banner::Compact, Banner::Hidden]
-            .into_iter()
-            .find(|banner| gaps_that_fit(*banner).is_some())
-            .unwrap_or(Banner::Hidden);
+        let banner =
+            if text_width >= COMPACT_WIDTH as usize && gaps_that_fit(Banner::Compact).is_some() {
+                Banner::Compact
+            } else {
+                Banner::Hidden
+            };
         let fit = gaps_that_fit(banner).unwrap_or(0);
         // All the gaps between categories, or none: a mix (dense at the
         // top, spaced below) reads as misaligned.
         let menu = if fit >= spaced.gaps {
             spaced
         } else {
-            menu_lines(app, text_width, spaced.gaps)
+            menu_lines(app, text_width, false)
         };
         (banner, menu)
     };
@@ -268,9 +273,9 @@ fn word_settings(app: &App) -> (Line<'static>, Vec<(u16, u16, char)>) {
 }
 
 /// Lay out the mode list for a box `width` cells wide (inside the border).
-/// A blank line separates categories (see below), except the first
-/// `skip_gaps` of them — dropped when the screen is too short for all.
-fn menu_lines(app: &App, width: usize, skip_gaps: usize) -> MenuLines {
+/// With `gaps`, a blank line separates categories (see below); without, the
+/// list is dense — for screens too short for all of them.
+fn menu_lines(app: &App, width: usize, gaps_wanted: bool) -> MenuLines {
     let theme = &app.theme;
     // Selected option: the theme background on accent. On the light theme that
     // is off-white on deep blue (~5.3:1, WCAG AA); black would be ~3.8:1. The
@@ -293,7 +298,6 @@ fn menu_lines(app: &App, width: usize, skip_gaps: usize) -> MenuLines {
     let mut selected_line = 0;
     let mut previous_row: Option<std::ops::Range<usize>> = None;
     let mut gaps = 0;
-    let mut skipped = 0;
     // A row gets a heading line when it has several options, or when its one
     // option is a file (a single custom file or snippet — even one named
     // `custom.txt` must not look like the bare "nothing yet" placeholder).
@@ -312,13 +316,9 @@ fn menu_lines(app: &App, width: usize, skip_gaps: usize) -> MenuLines {
                     && app.menu[index].action != MenuAction::Quit
             };
             let same_kind = starts_game(previous.start) == starts_game(start);
-            if has_heading(previous) || has_heading(&row) || !same_kind {
-                if skipped < skip_gaps {
-                    skipped += 1;
-                } else {
-                    lines.push(Line::raw(""));
-                    gaps += 1;
-                }
+            if gaps_wanted && (has_heading(previous) || has_heading(&row) || !same_kind) {
+                lines.push(Line::raw(""));
+                gaps += 1;
             }
         }
 
