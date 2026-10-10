@@ -31,7 +31,7 @@ pub fn render(f: &mut Frame, app: &App) {
         Line::from("  ↑/↓  j/k         menu: pick a category"),
         Line::from("  ←/→  h/l         menu: pick an option"),
         Line::from("  Enter  Space     start the selected mode"),
-        Line::from("  Enter  r         restart (results screen)"),
+        Line::from("  Enter  F5        restart (results screen)"),
         Line::from("  Ctrl+R  F5       restart while typing"),
         Line::from("  Esc              finish session / back"),
         Line::from("  Ctrl+Bksp Ctrl+W delete word"),

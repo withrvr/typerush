@@ -37,6 +37,11 @@ mode at a time.
 
 ### Fixed
 
+- **Keys typed after the run ends no longer skip the results.** A fast
+  typist is still typing when the last word is done, and a stray `r`, `m`,
+  `s` or `q` used to restart, leave or quit before the results could be
+  read. On the Results screen only keys you never press while typing act now:
+  `Enter` / `F5` restart, `Esc` menu, `Tab` stats, `F1` help, `Ctrl+C` quit.
 - **The cursor no longer runs off the bottom of the typing box.** In a long
   run, after about one screenful of words (≈180 at 80×24) you were typing
   blind. The box now scrolls so the cursor's line stays second from the top.

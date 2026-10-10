@@ -115,7 +115,7 @@ typerush --list-snippets      # see every snippet in ~/.typerush/snippets/
 | `Enter`         | start / restart a session       |
 | `Esc`           | back to menu / end session      |
 | `Ctrl+R` / `F5` | restart the current mode        |
-| `Tab` / `s`     | jump to your stats history      |
+| `Tab`           | jump to your stats history      |
 | `?` / `F1`      | open the keybindings overlay    |
 | `Ctrl+C`        | quit                            |
 

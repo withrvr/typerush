@@ -186,10 +186,15 @@ for the whole list does it scroll, and then the border shows `▲ more` /
 
 | Key             | Action                            |
 | --------------- | --------------------------------- |
-| `Enter` / `r`   | Restart the same mode             |
-| `Tab` / `s`     | Open the stats history            |
-| `m` / `Esc`     | Back to the menu                  |
-| `q`             | Quit                              |
+| `Enter` / `F5`  | Restart the same mode             |
+| `Tab`           | Open the stats history            |
+| `Esc`           | Back to the menu                  |
+| `F1`            | Help                              |
+| `Ctrl+C`        | Quit                              |
+
+Only keys you never press while typing work here: if you're still typing
+when the run ends, those last letters, spaces and `?` are ignored instead of
+skipping past your results.
 
 ### Stats history
 
@@ -246,7 +251,7 @@ Each file is written atomically, so a crash mid-save never leaves a broken file.
 
 ### What the Stats screen shows
 
-Open the Stats screen from the menu (`Tab`) or results screen (`s`). The
+Open the Stats screen from the menu (`Tab` or `s`) or results screen (`Tab`). The
 title shows the **category** (`‹ all ›`); `←` / `→` moves through them:
 
 - **all** — every session.

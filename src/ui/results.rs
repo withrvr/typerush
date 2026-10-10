@@ -11,7 +11,7 @@ use ratatui::{
     widgets::{Block, Borders, Paragraph, Sparkline},
 };
 
-use ratatui::crossterm::event::KeyCode;
+use ratatui::crossterm::event::{KeyCode, KeyModifiers};
 
 use super::key;
 use crate::{app::App, storage};
@@ -187,11 +187,14 @@ pub fn render(f: &mut Frame, app: &App) {
         app,
         layout[4],
         &[
-            ("Enter / r restart", key(KeyCode::Enter)),
-            ("m / esc menu", key(KeyCode::Char('m'))),
-            ("s / tab stats", key(KeyCode::Char('s'))),
-            ("q quit", key(KeyCode::Char('q'))),
-            ("? help", key(KeyCode::Char('?'))),
+            ("Enter / F5 restart", key(KeyCode::Enter)),
+            ("Esc menu", key(KeyCode::Esc)),
+            ("Tab stats", key(KeyCode::Tab)),
+            ("F1 help", key(KeyCode::F(1))),
+            (
+                "Ctrl+C quit",
+                Some((KeyCode::Char('c'), KeyModifiers::CONTROL)),
+            ),
         ],
     );
 }

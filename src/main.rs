@@ -374,9 +374,11 @@ fn handle_key(app: &mut App, code: KeyCode, mods: KeyModifiers) {
         app.should_quit = true;
         return;
     }
-    // '?' (or F1) toggles the help overlay everywhere except during typing
-    // (where '?' is a valid character to type).
-    if matches!(code, KeyCode::Char('?') | KeyCode::F(1)) && app.screen != Screen::Typing {
+    // '?' (or F1) toggles the help overlay. Not '?' while typing (it is a
+    // character to type) or on Results (a fast typist's last keys land
+    // there; see `handle_results_key`) — F1 works everywhere.
+    let typed_screen = matches!(app.screen, Screen::Typing | Screen::Results);
+    if code == KeyCode::F(1) || (code == KeyCode::Char('?') && !typed_screen) {
         toggle_help(app);
         return;
     }
@@ -578,16 +580,20 @@ fn is_altgr(typed_char: char, mods: KeyModifiers) -> bool {
 }
 
 /// Keymap for the post-session results screen.
+///
+/// A fast typist is still typing when the run ends, so the next few keys
+/// land here. Only keys nobody presses while typing act — Enter or F5
+/// restart, Esc goes to the menu, Tab to stats, F1 opens help, Ctrl+C quits —
+/// so those stray letters, spaces and `?` can't skip the results.
 fn handle_results_key(app: &mut App, code: KeyCode, _mods: KeyModifiers) {
     match code {
-        KeyCode::Enter | KeyCode::Char('r') => {
+        KeyCode::Enter | KeyCode::F(5) => {
             if let Err(e) = app.restart() {
                 app.show_error(&e);
             }
         }
-        KeyCode::Char('m') | KeyCode::Esc => app.screen = Screen::Menu,
-        KeyCode::Tab | KeyCode::Char('s') => app.screen = Screen::Stats,
-        KeyCode::Char('q') => app.should_quit = true,
+        KeyCode::Esc => app.screen = Screen::Menu,
+        KeyCode::Tab => app.screen = Screen::Stats,
         _ => {}
     }
 }
@@ -1311,6 +1317,37 @@ mod tests {
             overrides(&["--punctuation", "--no-punctuation", "--no-big", "--big"]),
             (Some(WordPool::Extended), Some(false), None)
         );
+    }
+
+    /// Keys a typist is still pressing when the run ends land on Results:
+    /// letters, space, digits and `?` do nothing there. Only Enter / F5,
+    /// Esc, Tab and F1 act.
+    #[test]
+    fn stray_typing_keys_do_not_leave_results() {
+        let mut app = make_typing_app();
+        for ch in "hello world".chars() {
+            app.handle_char(ch);
+        }
+        assert_eq!(app.screen, Screen::Results);
+        for ch in "rmsq? the quick brown 123".chars() {
+            handle_key(&mut app, KeyCode::Char(ch), KeyModifiers::NONE);
+            handle_key(&mut app, KeyCode::Char(ch), KeyModifiers::SHIFT);
+        }
+        handle_key(&mut app, KeyCode::Backspace, KeyModifiers::NONE);
+        assert_eq!(app.screen, Screen::Results);
+        assert!(!app.should_quit);
+
+        handle_key(&mut app, KeyCode::F(1), KeyModifiers::NONE);
+        assert_eq!(app.screen, Screen::Help);
+        handle_key(&mut app, KeyCode::F(1), KeyModifiers::NONE);
+        handle_key(&mut app, KeyCode::Tab, KeyModifiers::NONE);
+        assert_eq!(app.screen, Screen::Stats);
+        app.screen = Screen::Results;
+        handle_key(&mut app, KeyCode::Esc, KeyModifiers::NONE);
+        assert_eq!(app.screen, Screen::Menu);
+        app.screen = Screen::Results;
+        handle_key(&mut app, KeyCode::F(5), KeyModifiers::NONE);
+        assert_eq!(app.screen, Screen::Typing);
     }
 
     // ── saving ───────────────────────────────────────────────────────────────
