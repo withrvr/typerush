@@ -139,7 +139,7 @@ pub fn render(f: &mut Frame, app: &App) {
                 option_style
             };
             // Pad to 4 so the time and words options line up in columns.
-            let span = Span::styled(format!(" {:<4} ", chip_text(&app.menu[index].label)), style);
+            let span = Span::styled(format!(" {:<4} ", app.menu[index].label), style);
             // Wrap onto an indented continuation line rather than letting a
             // long row (7 code languages, many snippets) run off the border.
             if width > INDENT.len() && width + span.width() > menu_area.width as usize {
@@ -208,62 +208,6 @@ pub fn render(f: &mut Frame, app: &App) {
     );
 }
 
-/// Widest option text shown in full, in terminal cells. Longer snippet or
-/// file names are shortened in the middle — `quarterly-r…nal-draft-q1` — so one
-/// name can't take over the row, and the end (which usually tells similar
-/// names apart, or carries a " (2)") stays visible. Measured in display
-/// width, not characters: a CJK character is two cells.
-const MAX_CHIP_WIDTH: usize = 24;
-
-/// Option text as drawn: `label`, shortened to `MAX_CHIP_WIDTH` cells.
-///
-/// Control characters (a Linux file name may contain ESC) are shown as `?`
-/// so a file name can never send escape sequences to the terminal. Cuts fall
-/// on grapheme boundaries, so an accent never loses its letter — macOS often
-/// stores names decomposed, as `e` + U+0301.
-fn chip_text(label: &str) -> std::borrow::Cow<'_, str> {
-    use std::borrow::Cow;
-    use unicode_segmentation::UnicodeSegmentation;
-    use unicode_width::UnicodeWidthStr;
-
-    let clean: Cow<str> = if label.contains(char::is_control) {
-        Cow::Owned(
-            label
-                .chars()
-                .map(|c| if c.is_control() { '?' } else { c })
-                .collect(),
-        )
-    } else {
-        Cow::Borrowed(label)
-    };
-    if clean.width() <= MAX_CHIP_WIDTH {
-        return clean;
-    }
-    let text: &str = &clean;
-    // One cell for the ellipsis; the rest split between start and end.
-    let head_budget = (MAX_CHIP_WIDTH - 1) / 2;
-    let (mut head_end, mut head_width) = (0, 0);
-    for (index, grapheme) in text.grapheme_indices(true) {
-        let width = grapheme.width();
-        if head_width + width > head_budget {
-            break;
-        }
-        head_width += width;
-        head_end = index + grapheme.len();
-    }
-    let tail_budget = MAX_CHIP_WIDTH - 1 - head_width;
-    let (mut tail_start, mut tail_width) = (text.len(), 0);
-    for (index, grapheme) in text.grapheme_indices(true).rev() {
-        let width = grapheme.width();
-        if tail_width + width > tail_budget || index < head_end {
-            break;
-        }
-        tail_width += width;
-        tail_start = index;
-    }
-    Cow::Owned(format!("{}…{}", &text[..head_end], &text[tail_start..]))
-}
-
 fn centered_rect(percent_x: u16, percent_y: u16, r: Rect) -> Rect {
     let popup_layout = Layout::vertical([
         Constraint::Percentage((100 - percent_y) / 2),
@@ -277,63 +221,4 @@ fn centered_rect(percent_x: u16, percent_y: u16, r: Rect) -> Rect {
         Constraint::Percentage((100 - percent_x) / 2),
     ])
     .split(popup_layout[1])[1]
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use unicode_width::UnicodeWidthStr;
-
-    #[test]
-    fn short_labels_are_untouched() {
-        assert_eq!(chip_text("rust"), "rust");
-        let exactly = "a".repeat(MAX_CHIP_WIDTH);
-        assert_eq!(chip_text(&exactly), exactly);
-    }
-
-    /// Long names keep their start and end: the end is what usually tells
-    /// similar files apart (and where a " (2)" lives).
-    #[test]
-    fn long_labels_are_shortened_in_the_middle() {
-        let text = chip_text("rust-borrow-checker-error-messages (2)");
-        assert_eq!(text.width(), MAX_CHIP_WIDTH);
-        assert!(text.starts_with("rust-borrow"), "{text}");
-        assert!(text.ends_with("messages (2)"), "{text}");
-        assert!(text.contains('…'));
-        assert_ne!(
-            chip_text("quarterly-report-final-draft-q1"),
-            chip_text("quarterly-report-final-draft-q2")
-        );
-    }
-
-    /// A decomposed accent (`e` + U+0301) is never split from its letter.
-    #[test]
-    fn cuts_fall_on_grapheme_boundaries() {
-        let label = "e\u{301}".repeat(30); // 30 cells of "é", decomposed
-        let text = chip_text(&label);
-        assert!(text.width() <= MAX_CHIP_WIDTH);
-        let (head, tail) = text.split_once('…').unwrap();
-        for part in [head, tail] {
-            assert!(!part.starts_with('\u{301}'), "orphaned accent in {part:?}");
-            assert_eq!(part.matches('e').count(), part.matches('\u{301}').count());
-        }
-    }
-
-    /// Control characters are never passed through to the terminal.
-    #[test]
-    fn control_characters_are_replaced() {
-        assert_eq!(chip_text("evil\u{1b}[2Jname"), "evil?[2Jname");
-        let long = format!("{}\u{7}{}", "a".repeat(20), "b".repeat(20));
-        assert!(!chip_text(&long).contains(char::is_control));
-    }
-
-    /// Wide characters count two cells each: 20 CJK characters are 40 cells,
-    /// over the limit even though they are fewer than 24 characters.
-    #[test]
-    fn wide_characters_are_measured_in_cells() {
-        let label = "漢".repeat(20);
-        let text = chip_text(&label);
-        assert!(text.contains('…'));
-        assert!(text.width() <= MAX_CHIP_WIDTH);
-    }
 }

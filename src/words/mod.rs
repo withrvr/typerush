@@ -140,15 +140,39 @@ pub enum CodeLang {
 /// Read a user-supplied text file and split it into words on whitespace.
 /// A missing or unreadable file surfaces as `Err` naming the path — a stale
 /// remembered file or deleted snippet otherwise shows a bare OS error.
+///
+/// Control and bidi-override characters are dropped: they can't be typed,
+/// and drawn as-is they could send escape sequences to the terminal.
 pub fn words_from_file(path: &Path) -> anyhow::Result<Vec<String>> {
     let content =
         std::fs::read_to_string(path).with_context(|| format!("can't read {}", path.display()))?;
-    Ok(content.split_whitespace().map(|s| s.to_string()).collect())
+    Ok(content
+        .split_whitespace()
+        .map(|word| {
+            word.chars()
+                .filter(|c| !crate::text::is_unsafe(*c))
+                .collect::<String>()
+        })
+        .filter(|word| !word.is_empty())
+        .collect())
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Escape sequences and other control characters in a custom file never
+    /// reach the typing screen; words made only of them disappear.
+    #[test]
+    fn file_words_drop_unsafe_characters() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("t.txt");
+        std::fs::write(&path, "plain \u{1b}[2Jclear \u{7} na\u{202E}me").unwrap();
+        assert_eq!(
+            words_from_file(&path).unwrap(),
+            ["plain", "[2Jclear", "name"]
+        );
+    }
 
     #[test]
     fn common_pool_returns_requested_count() {

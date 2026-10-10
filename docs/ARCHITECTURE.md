@@ -117,6 +117,9 @@ flowchart LR
     src --> state["state.rs
     ~/.typerush/state.json: the last custom file
     (atomic writes, path passed in)"]
+    src --> text["text.rs
+    printable / shorten: safe, width-aware display
+    of user-supplied names, paths and file text"]
     src --> theme["theme/"]
     theme --> theme_mod["mod.rs
     ThemePalette (10 color slots) + per-slot overrides"]
@@ -238,7 +241,11 @@ starts, so visiting Help from Results can't save the session again.
 
 The menu's `custom` row is built by `app::build_menu(snippets, last_file)`:
 the last custom file first (skipped when it is one of the snippets), then each
-snippet, or a single placeholder option when there is neither. `App::new`
+snippet, or a single placeholder option when there is neither. Its labels come
+from `app::custom_labels`, already terminal-safe and shortened, and all
+distinct as drawn: snippets are labelled from the snippet set alone (so the
+remembered file never changes them), the remembered file falls back to
+`folder/name`, and repeats get the first free " (n)". `App::new`
 never touches disk; `main.rs` discovers snippets and loads `state.json`, then
 hands both to `App::load_custom_sources` together with the path to save to.
 Tests leave that path `None`, so they can never write to a real home

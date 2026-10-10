@@ -68,6 +68,9 @@ straight from the menu.
 
 - `--time 0`, `--words 0` and `--symbols 0` are rejected with a clear error.
   They used to start a session with nothing to type that only Esc could end.
+- Control characters in a custom file, a file name or an error message can
+  no longer reach the terminal as escape sequences: they are dropped from the
+  text you type and shown as `?` in names and messages.
 
 ### Compatibility
 

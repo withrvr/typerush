@@ -51,6 +51,10 @@ typerush --numbers            # mix in 1–4 digit numbers (~1 word in 8)
   in `~/.typerush/state.json` as an absolute path, and only once it has loaded.
 - With no file and no snippets yet, the custom row shows `custom`; picking it
   explains how to add one.
+- Every option in the row has a different label: long names are shortened in
+  the middle (`quarterly-r…nal-draft-q1`), two snippets with the same name
+  show their full file names, and a remembered file whose name a snippet
+  already uses shows its folder too (`me/notes.txt`).
 
 Text is split on whitespace, so a file's line breaks become plain spaces.
 

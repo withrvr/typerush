@@ -276,63 +276,108 @@ pub fn build_menu(snippets: &[Snippet], last_custom_file: Option<&Path>) -> Vec<
     menu
 }
 
+/// Widest custom option label, in terminal cells. Longer snippet or file
+/// names are shortened in the middle so one name can't take over the row.
+pub const MAX_OPTION_WIDTH: usize = 24;
+
+/// Menu labels for `snippets` on their own (what `--list-snippets` prints),
+/// exactly as the custom row shows them when no other file is remembered.
+pub fn snippet_labels(snippets: &[Snippet]) -> Vec<String> {
+    custom_labels(snippets, None).0
+}
+
 /// Labels for the custom row: one per snippet, plus one for the remembered
-/// file unless it is one of the snippets (`None` then). All labels differ, so
-/// every option can be told apart.
+/// file unless it is one of the snippets (`None` then).
 ///
-/// Snippets are labelled from the snippet set alone — their name, or their
-/// full file name when two share a name (`notes.txt` / `notes.TXT`) — so a
-/// snippet's label never changes because a different file is remembered.
-/// The remembered file is labelled with its file name. Anything still
-/// repeated gets the first free " (2)", " (3)", … suffix.
+/// Labels are exactly what is drawn — unsafe characters shown as `?` and
+/// long names shortened to `MAX_OPTION_WIDTH` — and no two are the same, so
+/// every option can be told apart on screen:
+///
+/// - a snippet is labelled by its name, or its full file name when two
+///   snippets share a name (`notes.txt` / `notes.TXT`), using the snippet set
+///   alone — so which file is remembered never changes a snippet's label;
+/// - the remembered file is labelled by its file name, or `folder/name` when
+///   a snippet already uses that;
+/// - labels that still clash: the first keeps it, the rest take the first
+///   " (n)" not already used — natural names are claimed before any number,
+///   so a real `notes (2).txt` keeps its name.
 fn custom_labels(snippets: &[Snippet], last: Option<&Path>) -> (Vec<String>, Option<String>) {
+    use crate::text::{printable, shorten};
     use std::collections::HashSet;
+
+    let display = |label: &str| shorten(&printable(label), MAX_OPTION_WIDTH).into_owned();
     let file_name = |path: &Path| {
         path.file_name().map_or_else(
             || path.display().to_string(),
             |name| name.to_string_lossy().into_owned(),
         )
     };
-    let mut used: HashSet<String> = HashSet::new();
-    let mut claim = |base: String| {
-        let mut label = base.clone();
-        let mut n = 2;
-        while used.contains(&label) {
-            label = format!("{base} ({n})");
-            n += 1;
-        }
-        used.insert(label.clone());
-        label
-    };
 
     let mut name_count: HashMap<&str, usize> = HashMap::new();
     for snippet in snippets {
         *name_count.entry(snippet.name.as_str()).or_insert(0) += 1;
     }
-    let snippet_labels = snippets
+    let mut bases: Vec<String> = snippets
         .iter()
         .map(|snippet| {
-            claim(if name_count[snippet.name.as_str()] > 1 {
+            if name_count[snippet.name.as_str()] > 1 {
                 file_name(&snippet.path)
             } else {
                 snippet.name.clone()
-            })
+            }
         })
         .collect();
 
-    let last_label = last
-        .filter(|last| {
-            // Compare canonical forms too, so `./notes.txt` or a symlink
-            // still matches its snippet. Paths that can't be canonicalized
-            // (missing) only match when literally equal.
-            let canonical = std::fs::canonicalize(last).ok();
-            !snippets
-                .iter()
-                .any(|s| s.path == *last || (canonical.is_some() && s.canonical_path == canonical))
-        })
-        .map(|last| claim(file_name(last)));
+    let last = last.filter(|last| {
+        // Compare canonical forms too, so `./notes.txt` or a symlink still
+        // matches its snippet. Paths that can't be canonicalized (missing)
+        // only match when literally equal.
+        let canonical = std::fs::canonicalize(last).ok();
+        !snippets
+            .iter()
+            .any(|s| s.path == *last || (canonical.is_some() && s.canonical_path == canonical))
+    });
+    if let Some(last) = last {
+        let name = file_name(last);
+        let taken = bases.iter().any(|base| display(base) == display(&name));
+        let folder = last.parent().and_then(Path::file_name);
+        bases.push(match folder {
+            Some(folder) if taken => format!(
+                "{}{}{}",
+                folder.to_string_lossy(),
+                std::path::MAIN_SEPARATOR,
+                name
+            ),
+            _ => name,
+        });
+    }
 
-    (snippet_labels, last_label)
+    // Every natural label is reserved before any number is handed out, so a
+    // generated "notes (2)" can never take a name another option has.
+    let displays: Vec<String> = bases.iter().map(|base| display(base)).collect();
+    let mut used: HashSet<String> = displays.iter().cloned().collect();
+    let mut claimed: HashSet<&str> = HashSet::new();
+    let mut labels: Vec<String> = Vec::with_capacity(bases.len());
+    for (base, text) in bases.iter().zip(&displays) {
+        if claimed.insert(text) {
+            labels.push(text.clone());
+            continue;
+        }
+        // A repeat: the first free " (n)".
+        let mut n = 2;
+        let label = loop {
+            let candidate = display(&format!("{base} ({n})"));
+            if !used.contains(&candidate) {
+                break candidate;
+            }
+            n += 1;
+        };
+        used.insert(label.clone());
+        labels.push(label);
+    }
+
+    let last_label = last.and_then(|_| labels.pop());
+    (labels, last_label)
 }
 
 /// `path` made absolute against the current directory, so a remembered file
@@ -1441,10 +1486,14 @@ mod tests {
         ];
         let menu = build_menu(&snippets, Some(Path::new("/home/me/notes.txt")));
         let labels: Vec<&str> = custom_options(&menu).iter().map(|(l, _)| *l).collect();
+        // The remembered file's name is taken by a snippet: its folder tells
+        // it apart. "notes (2)" is a real file and keeps its name; the
+        // repeated "notes.txt" gets the first number not already in use.
+        let remembered = format!("me{}notes.txt", std::path::MAIN_SEPARATOR);
         assert_eq!(
             labels,
             [
-                "notes.txt (3)", // the remembered file, numbered last
+                remembered.as_str(),
                 "notes.txt",
                 "notes (2)",
                 "notes.TXT",
@@ -1453,6 +1502,28 @@ mod tests {
         );
         let unique: std::collections::HashSet<_> = labels.iter().collect();
         assert_eq!(unique.len(), labels.len());
+    }
+
+    /// Two long names that differ only in the middle would look identical
+    /// once shortened; the shown labels must still differ.
+    #[test]
+    fn shortened_labels_stay_distinct() {
+        let snippets = [
+            snippet("project-alpha-meeting-notes-final", "/s/a.txt"),
+            snippet("project-alpha-sprint-notes-final", "/s/b.txt"),
+        ];
+        let labels = snippet_labels(&snippets);
+        assert_ne!(labels[0], labels[1]);
+        for label in &labels {
+            assert!(unicode_width::UnicodeWidthStr::width(label.as_str()) <= MAX_OPTION_WIDTH);
+        }
+    }
+
+    /// Unsafe characters in a snippet name are shown as `?` in the menu.
+    #[test]
+    fn labels_are_terminal_safe() {
+        let labels = snippet_labels(&[snippet("evil\u{1b}[2J", "/s/e.txt")]);
+        assert_eq!(labels, ["evil?[2J"]);
     }
 
     /// Which file is remembered never changes a snippet's label.

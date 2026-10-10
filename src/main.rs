@@ -15,6 +15,7 @@ mod config;
 mod game;
 mod state;
 mod storage;
+mod text;
 mod theme;
 mod ui;
 mod words;
@@ -153,22 +154,16 @@ fn print_snippets_and_exit() -> ! {
             words::snippets::snippets_dir().display()
         );
     }
-    for snippet in snippets {
+    // The labels the menu shows, so the two always match; names are made
+    // safe for the terminal like everywhere else.
+    for (snippet, label) in snippets.iter().zip(app::snippet_labels(&snippets)) {
         println!(
             "{}\t{}",
-            printable(&snippet.name),
-            printable(&snippet.path.display().to_string())
+            label,
+            text::printable(&snippet.path.display().to_string())
         );
     }
     std::process::exit(0);
-}
-
-/// `text` with control characters shown as `?`: a file name (Linux allows
-/// ESC in one) must never send escape sequences to the user's terminal.
-fn printable(text: &str) -> String {
-    text.chars()
-        .map(|c| if c.is_control() { '?' } else { c })
-        .collect()
 }
 
 /// Type alias to keep function signatures readable.
@@ -873,12 +868,6 @@ mod tests {
         }
         let err = code_lang_from_cli("cobol").unwrap_err().to_string();
         assert!(err.contains("cobol"), "{err}");
-    }
-
-    #[test]
-    fn printable_replaces_control_characters() {
-        assert_eq!(printable("a\u{1b}[31mb\tc"), "a?[31mb?c");
-        assert_eq!(printable("plain name"), "plain name");
     }
 
     /// Index of the menu option with this group and label.
