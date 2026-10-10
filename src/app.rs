@@ -22,7 +22,7 @@ use ratatui::crossterm::event::{KeyCode, KeyModifiers};
 use ratatui::layout::Rect;
 
 use crate::state::{self, AppState};
-use crate::storage::{ResultsComparison, SessionRecord, StatsSummary};
+use crate::storage::{ResultsComparison, SessionRecord, StatsView};
 use crate::theme::ThemePalette;
 use crate::words::{snippets::Snippet, WordDecor, WordPool};
 
@@ -426,9 +426,10 @@ pub struct App {
     /// Results screen needs it and replaced by the updated list on every
     /// save. `None` until first needed (or after a failed save).
     pub stats_cache: Option<Vec<SessionRecord>>,
-    /// Summary figures for the Stats screen, computed from `stats_cache`
-    /// each time that screen is entered. `None` until the first Stats visit.
-    pub stats_summary: Option<StatsSummary>,
+    /// What the Stats screen shows (category, its summary, every mode's
+    /// best), built from `stats_cache` when that screen is entered and when
+    /// the category changes. `None` until the first Stats visit.
+    pub stats_view: Option<StatsView>,
     /// What the Results screen compares against, computed when that screen
     /// is entered (after the session is saved).
     pub results_comparison: Option<ResultsComparison>,
@@ -500,7 +501,7 @@ impl App {
             key_hits: HashMap::new(),
             key_misses: HashMap::new(),
             stats_cache: None,
-            stats_summary: None,
+            stats_view: None,
             results_comparison: None,
             session_just_saved: false,
             word_pool: WordPool::Common,

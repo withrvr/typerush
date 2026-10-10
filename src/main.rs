@@ -453,6 +453,12 @@ fn handle_mouse(app: &mut App, mouse: MouseEvent) {
     match mouse.kind {
         MouseEventKind::ScrollUp if app.screen == Screen::Menu => app.menu_move_row(false),
         MouseEventKind::ScrollDown if app.screen == Screen::Menu => app.menu_move_row(true),
+        MouseEventKind::ScrollUp if app.screen == Screen::Stats => {
+            handle_key(app, KeyCode::Up, KeyModifiers::NONE)
+        }
+        MouseEventKind::ScrollDown if app.screen == Screen::Stats => {
+            handle_key(app, KeyCode::Down, KeyModifiers::NONE)
+        }
         MouseEventKind::Down(MouseButton::Left) => {
             app.pressed_target = target;
             if let Some(ClickAction::Menu(index)) = target {
@@ -595,8 +601,23 @@ fn handle_results_key(app: &mut App, code: KeyCode, _mods: KeyModifiers) {
     }
 }
 
-/// Keymap for the historical stats screen.
+/// Keymap for the historical stats screen: ←/→ (h/l) pick a category,
+/// ↑/↓ (j/k), PgUp/PgDn and Home/End scroll the sessions list.
 fn handle_stats_key(app: &mut App, code: KeyCode, _mods: KeyModifiers) {
+    let history = app.stats_cache.as_deref().unwrap_or(&[]);
+    if let Some(view) = app.stats_view.as_mut() {
+        match code {
+            KeyCode::Left | KeyCode::Char('h') => return view.cycle(history, false),
+            KeyCode::Right | KeyCode::Char('l') => return view.cycle(history, true),
+            KeyCode::Up | KeyCode::Char('k') => return view.scroll_by(-1),
+            KeyCode::Down | KeyCode::Char('j') => return view.scroll_by(1),
+            KeyCode::PageUp => return view.scroll_by(-10),
+            KeyCode::PageDown => return view.scroll_by(10),
+            KeyCode::Home => return view.scroll.set(0),
+            KeyCode::End => return view.scroll_by(isize::MAX),
+            _ => {}
+        }
+    }
     match code {
         KeyCode::Char('m') | KeyCode::Esc | KeyCode::Tab => app.screen = Screen::Menu,
         KeyCode::Char('q') => app.should_quit = true,
@@ -634,9 +655,15 @@ fn after_input(app: &mut App, last_screen: Screen, session_saved: &mut bool, sta
             &app.session_label(),
         ));
     }
-    if app.screen == Screen::Stats && last_screen != Screen::Stats {
+    // Coming back from the help overlay keeps the category and scroll; any
+    // other way in rebuilds the view (a game may have been saved since),
+    // staying on the category that was showing.
+    if app.screen == Screen::Stats
+        && (app.stats_view.is_none() || !matches!(last_screen, Screen::Stats | Screen::Help))
+    {
         let sessions = app.stats_cache.as_deref().unwrap_or(&[]);
-        app.stats_summary = Some(storage::StatsSummary::new(sessions));
+        let category = app.stats_view.as_ref().map(|view| view.category_name());
+        app.stats_view = Some(storage::StatsView::new(sessions, category));
     }
 }
 

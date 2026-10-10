@@ -2,10 +2,10 @@
 //! (populated once on screen entry from `~/.typerush/stats.json`). No disk I/O
 //! in the render path.
 //!
-//! v0.3.0 additions:
-//!  - Daily streak counter (top summary card)
-//!  - Average WPM over the last 7 and 30 days (top summary card)
-//!  - Per-key accuracy heatmap (worst 5 keys, min 3 presses each)
+//! v0.3.0: daily streak, 7/30-day averages, per-key accuracy heatmap.
+//! v0.4.1: categories — ←/→ shows every session, a table of each mode's
+//! best, or one mode's own sessions, summary, trend and keys. Sessions that
+//! hold their mode's best are marked ★; the sessions list scrolls.
 
 use ratatui::{
     prelude::*,
@@ -24,11 +24,11 @@ pub fn render(f: &mut Frame, app: &App) {
     let theme = &app.theme;
 
     // Layout:
-    //   0 — title bar (2 rows)
+    //   0 — title bar with the category (2 rows)
     //   1 — summary (left) + key accuracy (right) (8 rows)
     //   2 — WPM sparkline (5 rows)
-    //   3 — recent sessions table (fills remaining space)
-    //   4 — footer (1 row — the table gets the rest, 5 sessions at 24 rows)
+    //   3 — sessions or bests table (fills remaining space)
+    //   4 — footer (1 row — the table gets the rest, 5 rows at 24 rows)
     let layout = Layout::vertical([
         Constraint::Length(2),
         Constraint::Length(8),
@@ -38,40 +38,70 @@ pub fn render(f: &mut Frame, app: &App) {
     ])
     .split(area);
 
-    let title = Paragraph::new(Span::styled(
-        "  ◆ stats history",
-        Style::default()
-            .fg(theme.accent)
-            .add_modifier(Modifier::BOLD),
-    ));
-    f.render_widget(title, layout[0]);
-
     let sessions: &[storage::SessionRecord] = app.stats_cache.as_deref().unwrap_or(&[]);
-    // Normally built once on screen entry (main loop); computed here only if
+    // Normally built on screen entry (main loop); built here only if
     // something renders Stats without going through it (e.g. tests).
     let fallback;
-    let summary = match &app.stats_summary {
-        Some(summary) => summary,
+    let view = match &app.stats_view {
+        Some(view) => view,
         None => {
-            fallback = storage::StatsSummary::new(sessions);
+            fallback = storage::StatsView::new(sessions, None);
             &fallback
         }
     };
 
-    render_summary_and_heatmap(f, app, layout[1], summary);
-    render_sparkline(f, app, layout[2], sessions);
-    render_sessions_table(f, app, layout[3], sessions);
+    let title = Paragraph::new(Line::from(vec![
+        Span::styled(
+            "  ◆ stats   ",
+            Style::default()
+                .fg(theme.accent)
+                .add_modifier(Modifier::BOLD),
+        ),
+        Span::styled("‹ ", Style::default().fg(theme.pending)),
+        Span::styled(
+            shorten(&printable(view.category_name()), 32).into_owned(),
+            Style::default()
+                .fg(theme.mode_tag)
+                .add_modifier(Modifier::BOLD),
+        ),
+        Span::styled(" ›", Style::default().fg(theme.pending)),
+        Span::styled(
+            format!("   {}/{}", view.category + 1, view.category_count()),
+            Style::default().fg(theme.pending),
+        ),
+    ]));
+    f.render_widget(title, layout[0]);
+
+    render_summary_and_heatmap(f, app, layout[1], &view.summary);
+    render_sparkline(f, app, layout[2], sessions, view);
+    if view.showing_bests() {
+        render_bests_table(f, app, layout[3], sessions, view);
+    } else {
+        render_sessions_table(f, app, layout[3], sessions, view);
+    }
 
     super::render_footer(
         f,
         app,
         layout[4],
         &[
+            ("←/→ category", key(KeyCode::Right)),
+            ("↑/↓ scroll", key(KeyCode::Down)),
             ("m / esc menu", key(KeyCode::Char('m'))),
             ("q quit", key(KeyCode::Char('q'))),
             ("? help", key(KeyCode::Char('?'))),
         ],
     );
+}
+
+/// `1h 05m`, `12m`, `45s`: time spent typing, at a glance.
+fn format_duration(secs: f64) -> String {
+    let secs = secs as u64;
+    match (secs / 3600, secs / 60 % 60) {
+        (0, 0) => format!("{secs}s"),
+        (0, minutes) => format!("{minutes}m"),
+        (hours, minutes) => format!("{hours}h {minutes:02}m"),
+    }
 }
 
 /// Renders the top row: summary card on the left, key-accuracy heatmap on the right.
@@ -163,6 +193,13 @@ fn render_summary_and_heatmap(
             Span::styled(
                 format!("{} wpm", fmt_avg(avg30)),
                 Style::default().fg(theme.accent),
+            ),
+        ]),
+        Line::from(vec![
+            Span::styled("  time typed   ", Style::default().fg(theme.pending)),
+            Span::styled(
+                format!("{:>6}", format_duration(summary.time_typed_secs)),
+                Style::default().fg(theme.neutral),
             ),
         ]),
     ];
@@ -257,15 +294,18 @@ fn render_key_heatmap(
     f.render_widget(table, area);
 }
 
-/// Render the WPM sparkline (last 20 sessions).
-fn render_sparkline(f: &mut Frame, app: &App, area: Rect, sessions: &[storage::SessionRecord]) {
+/// Render the WPM sparkline: the category's last 20 sessions.
+fn render_sparkline(
+    f: &mut Frame,
+    app: &App,
+    area: Rect,
+    sessions: &[storage::SessionRecord],
+    view: &storage::StatsView,
+) {
     let theme = &app.theme;
-    let recent: Vec<u64> = sessions
+    let recent: Vec<u64> = view.indices[view.indices.len().saturating_sub(20)..]
         .iter()
-        .rev()
-        .take(20)
-        .rev()
-        .map(|s| s.wpm.max(0.0) as u64)
+        .map(|&i| sessions[i].wpm.max(0.0) as u64)
         .collect();
     let spark = Sparkline::default()
         .block(
@@ -279,24 +319,63 @@ fn render_sparkline(f: &mut Frame, app: &App, area: Rect, sessions: &[storage::S
     f.render_widget(spark, area);
 }
 
-/// Render the recent sessions table (last 10 sessions, newest first).
-/// Width of the recent-sessions Mode column.
+/// Width of the Mode column in both tables.
 const MODE_WIDTH: usize = 18;
 
+/// Rows of a bordered table with a header that fit in `area`, and the first
+/// of `total` rows to show: the view's scroll, clamped so the last page is
+/// full (and written back, so scrolling back up responds at once).
+fn visible_rows(area: Rect, total: usize, view: &storage::StatsView) -> (usize, usize) {
+    let fits = area.height.saturating_sub(3) as usize;
+    let first = view.scroll.get().min(total.saturating_sub(fits));
+    view.scroll.set(first);
+    (first, fits)
+}
+
+/// A bordered table block titled with the rows shown: ` sessions · 1–5 of 42 `.
+fn table_block<'a>(app: &App, name: &str, first: usize, shown: usize, total: usize) -> Block<'a> {
+    let title = if total == 0 {
+        format!(" {name} · none yet ")
+    } else {
+        format!(" {name} · {}–{} of {total} ", first + 1, first + shown)
+    };
+    Block::default()
+        .borders(Borders::ALL)
+        .border_style(Style::default().fg(app.theme.pending))
+        .title(title)
+}
+
+/// The category's sessions, newest first, ★ on each mode's best.
 fn render_sessions_table(
     f: &mut Frame,
     app: &App,
     area: Rect,
     sessions: &[storage::SessionRecord],
+    view: &storage::StatsView,
 ) {
     let theme = &app.theme;
+    let total = view.indices.len();
+    let (first, fits) = visible_rows(area, total, view);
 
-    let recent_rows = sessions
+    let rows: Vec<Row> = view
+        .indices
         .iter()
         .rev()
-        .take(10)
-        .map(|s| {
+        .skip(first)
+        .take(fits)
+        .map(|&i| {
+            let s = &sessions[i];
+            let star = if view.best_indices.contains(&i) {
+                "★"
+            } else {
+                ""
+            };
             Row::new(vec![
+                Cell::from(star).style(
+                    Style::default()
+                        .fg(theme.secondary)
+                        .add_modifier(Modifier::BOLD),
+                ),
                 // Date column: neutral so it renders cleanly on all themes.
                 Cell::from(s.timestamp.format("%Y-%m-%d %H:%M").to_string())
                     .style(Style::default().fg(theme.neutral)),
@@ -310,18 +389,19 @@ fn render_sessions_table(
                     .style(Style::default().fg(theme.accent)),
             ])
         })
-        .collect::<Vec<_>>();
+        .collect();
+    let shown = rows.len();
 
-    let header = Row::new(vec!["Date", "Mode", "WPM", "Acc", "Time"]).style(
+    let header = Row::new(vec!["", "Date", "Mode", "WPM", "Acc", "Time"]).style(
         Style::default()
             .fg(theme.pending)
             .add_modifier(Modifier::BOLD),
     );
-
     let table = Table::new(
-        recent_rows,
+        rows,
         [
-            Constraint::Length(18),
+            Constraint::Length(1),
+            Constraint::Length(16),
             Constraint::Length(MODE_WIDTH as u16), // fits "words-100+10k+p+n"
             Constraint::Length(8),
             Constraint::Length(8),
@@ -329,11 +409,66 @@ fn render_sessions_table(
         ],
     )
     .header(header)
-    .block(
-        Block::default()
-            .borders(Borders::ALL)
-            .border_style(Style::default().fg(theme.pending))
-            .title(" recent sessions "),
+    .block(table_block(app, "sessions", first, shown, total));
+    f.render_widget(table, area);
+}
+
+/// One row per mode: its best (with that run's accuracy and date), average
+/// and number of runs.
+fn render_bests_table(
+    f: &mut Frame,
+    app: &App,
+    area: Rect,
+    sessions: &[storage::SessionRecord],
+    view: &storage::StatsView,
+) {
+    let theme = &app.theme;
+    let total = view.bests.len();
+    let (first, fits) = visible_rows(area, total, view);
+
+    let rows: Vec<Row> = view
+        .bests
+        .iter()
+        .skip(first)
+        .take(fits)
+        .map(|best| {
+            let record = &sessions[best.best_index];
+            Row::new(vec![
+                Cell::from(shorten(&printable(&best.mode), MODE_WIDTH).into_owned())
+                    .style(Style::default().fg(theme.mode_tag)),
+                Cell::from(format!("★ {:.1}", record.wpm)).style(
+                    Style::default()
+                        .fg(theme.secondary)
+                        .add_modifier(Modifier::BOLD),
+                ),
+                Cell::from(format!("{:.1}%", record.accuracy))
+                    .style(Style::default().fg(theme.correct)),
+                Cell::from(format!("{:.1}", best.avg_wpm)).style(Style::default().fg(theme.accent)),
+                Cell::from(best.sessions.to_string()).style(Style::default().fg(theme.neutral)),
+                Cell::from(record.timestamp.format("%Y-%m-%d").to_string())
+                    .style(Style::default().fg(theme.neutral)),
+            ])
+        })
+        .collect();
+    let shown = rows.len();
+
+    let header = Row::new(vec!["Mode", "Best", "Acc", "Avg", "Runs", "Set on"]).style(
+        Style::default()
+            .fg(theme.pending)
+            .add_modifier(Modifier::BOLD),
     );
+    let table = Table::new(
+        rows,
+        [
+            Constraint::Length(MODE_WIDTH as u16),
+            Constraint::Length(9),
+            Constraint::Length(7),
+            Constraint::Length(7),
+            Constraint::Length(5),
+            Constraint::Length(10),
+        ],
+    )
+    .header(header)
+    .block(table_block(app, "bests per mode", first, shown, total));
     f.render_widget(table, area);
 }

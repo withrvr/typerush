@@ -251,4 +251,77 @@ mod tests {
         assert!(!text.contains('\x1b'));
         assert!(text.contains("custom-?…nal-draft "), "{text}");
     }
+
+    /// Draw the Stats screen for `sessions` at 80×24 and return its rows.
+    fn stats_rows(app: &App) -> Vec<String> {
+        let mut terminal = Terminal::new(TestBackend::new(80, 24)).unwrap();
+        terminal.draw(|f| render(f, app)).unwrap();
+        terminal
+            .backend()
+            .buffer()
+            .content()
+            .chunks(80)
+            .map(|row| row.iter().map(|c| c.symbol()).collect())
+            .collect()
+    }
+
+    fn record(wpm: f64, mode: &str) -> crate::storage::SessionRecord {
+        crate::storage::SessionRecord {
+            wpm,
+            accuracy: 97.0,
+            mode: mode.into(),
+            word_count: 10,
+            correct_chars: 50,
+            total_chars: 52,
+            duration_secs: 30.0,
+            timestamp: chrono::Local::now(),
+            key_hits: Default::default(),
+            key_misses: Default::default(),
+        }
+    }
+
+    /// The session holding a mode's best is starred in the sessions list,
+    /// the list scrolls (clamped to a full last page), and the bests
+    /// category lists one row per mode.
+    #[test]
+    fn stats_screen_stars_bests_scrolls_and_lists_bests() {
+        let mut app = App::new(None, builtin::DARK, Mode::Time(15));
+        let mut history: Vec<_> = (0..12)
+            .map(|i| record(40.0 + f64::from(i), "time-30s"))
+            .collect();
+        history.push(record(55.0, "words-25"));
+        app.stats_cache = Some(history);
+        app.screen = crate::app::Screen::Stats;
+        let sessions = app.stats_cache.as_deref().unwrap();
+        app.stats_view = Some(crate::storage::StatsView::new(sessions, None));
+
+        let rows = stats_rows(&app);
+        let dump = rows.join("\n");
+        assert!(
+            rows.iter()
+                .any(|r| r.contains("★") && r.contains("words-25")),
+            "{dump}"
+        );
+        assert!(
+            rows.iter().any(|r| r.contains("★") && r.contains("51.0")),
+            "{dump}"
+        );
+        assert!(dump.contains("sessions · 1–"), "{dump}");
+        assert!(dump.contains("‹ all ›"), "{dump}");
+
+        // Scrolling far past the end shows the last page, oldest at the bottom.
+        app.stats_view.as_ref().unwrap().scroll_by(1000);
+        let dump = stats_rows(&app).join("\n");
+        assert!(dump.contains("of 13 "), "{dump}");
+        assert!(dump.contains("40.0"), "{dump}");
+        let first = app.stats_view.as_ref().unwrap().scroll.get();
+        assert!(first > 0 && first < 12, "clamped scroll {first}");
+
+        let sessions = app.stats_cache.as_deref().unwrap();
+        app.stats_view.as_mut().unwrap().cycle(sessions, true);
+        let dump = stats_rows(&app).join("\n");
+        assert!(dump.contains("bests per mode"), "{dump}");
+        assert!(dump.contains("★ 51.0"), "{dump}");
+        assert!(dump.contains("★ 55.0"), "{dump}");
+    }
 }
