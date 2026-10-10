@@ -3,7 +3,8 @@
 # Copy this file to `~/.typerush/config.toml` and edit to taste.
 # TypeRush works fine without a config file — every setting below is optional.
 #
-# Precedence: CLI flags > this file > built-in defaults.
+# Precedence: menu keys p / n / b (while open) > CLI flags > this file >
+# built-in defaults.
 
 # -----------------------------------------------------------------------------
 # Theme — pick one of the built-in palettes by name.

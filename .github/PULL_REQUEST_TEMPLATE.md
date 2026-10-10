@@ -31,7 +31,7 @@ Please fill in the sections below — it makes review much faster.
 ## Checklist
 
 - [ ] I ran `cargo fmt`.
-- [ ] I ran `cargo clippy -- -D warnings` and got a clean run.
+- [ ] I ran `cargo clippy --all-targets -- -D warnings` and got a clean run.
 - [ ] I ran `cargo test` and all tests pass.
 - [ ] I updated docs (`README.md`, `docs/`, `CHANGELOG.md`) where relevant.
 - [ ] If this introduces a breaking change, I called it out explicitly above.

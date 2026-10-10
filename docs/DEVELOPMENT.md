@@ -147,10 +147,10 @@ Run these before committing — CI runs the exact same set on Linux, macOS,
 and Windows:
 
 ```bash
-cargo build                     # type-check
-cargo test                      # unit tests
-cargo clippy -- -D warnings     # lints (warnings → errors)
-cargo fmt --check               # formatting
+cargo fmt --all -- --check                 # formatting
+cargo check --all-targets                  # type-check, tests included
+cargo test --all-targets                   # unit tests
+cargo clippy --all-targets -- -D warnings  # lints (warnings → errors)
 ```
 
 To auto-fix formatting:
