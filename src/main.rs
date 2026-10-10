@@ -40,29 +40,20 @@ use ratatui::crossterm::{
 use ratatui::{backend::CrosstermBackend, Terminal};
 
 use crate::app::{App, ClickAction, MenuAction, Mode, Screen};
-use crate::config::load::{code_lang, CliOverrides};
+use crate::config::load::{check_count, code_lang, CliOverrides, MAX_COUNT, MAX_SECONDS};
 use crate::storage::SessionRecord;
 use crate::theme::builtin;
 use crate::words::{CodeLang, WordPool};
 
-/// Value parser for counts from 1 to `MAX`. A zero count would start a
-/// session with nothing to type that can only be left with Esc; a huge one
-/// would try to build billions of words before the first frame.
+/// Value parser for run lengths: a whole number from 1 to `MAX` (see
+/// `config::load::check_count`, which the config uses too).
 fn count<T, const MAX: u16>(value: &str) -> Result<T, String>
 where
     T: std::str::FromStr + PartialOrd + From<u16>,
 {
-    match value.parse::<T>() {
-        Ok(count) if count >= T::from(1) && count <= T::from(MAX) => Ok(count),
-        Ok(_) => Err(format!("must be between 1 and {MAX}")),
-        Err(_) => Err("not a whole number".into()),
-    }
+    let count = value.parse::<T>().map_err(|_| "not a whole number")?;
+    check_count(count, MAX)
 }
-
-/// Longest `--time` run: an hour.
-const MAX_SECONDS: u16 = 3600;
-/// Most words or symbol tokens in one `--words` / `--symbols` run.
-const MAX_COUNT: u16 = 10_000;
 
 /// Command-line interface. Run with no args to open the interactive menu; pass
 /// any of the mode flags to skip the menu and jump straight into a session.
@@ -850,6 +841,25 @@ mod tests {
     fn click(app: &mut App, cell: (u16, u16)) {
         handle_mouse(app, mouse(MouseEventKind::Down(MouseButton::Left), cell));
         handle_mouse(app, mouse(MouseEventKind::Up(MouseButton::Left), cell));
+    }
+
+    /// The ‹ › around the Stats category are clickable in both directions;
+    /// the two-way footer hints are not (a click there can only go one way).
+    #[test]
+    fn clicking_stats_arrows_changes_category_both_ways() {
+        let mut app = App::new(None, ThemePalette::default(), Mode::Time(15));
+        app.stats_cache = Some(Vec::new());
+        app.screen = Screen::Stats;
+        after_input(&mut app, Screen::Menu, &mut false, Path::new("unused"));
+        draw(&app);
+        let next = target_cell(&app, ClickAction::Key(KeyCode::Right, KeyModifiers::NONE));
+        click(&mut app, next);
+        assert_eq!(app.stats_view.as_ref().unwrap().category_name(), "bests");
+        draw(&app);
+        let previous = target_cell(&app, ClickAction::Key(KeyCode::Left, KeyModifiers::NONE));
+        click(&mut app, previous);
+        assert_eq!(app.stats_view.as_ref().unwrap().category_name(), "all");
+        assert_eq!(previous.1, 0, "arrows sit on the title row");
     }
 
     #[test]

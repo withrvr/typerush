@@ -12,11 +12,15 @@ use ratatui::{
     widgets::{Block, Borders, Cell, Paragraph, Row, Sparkline, Table},
 };
 
-use ratatui::crossterm::event::KeyCode;
+use ratatui::crossterm::event::{KeyCode, KeyModifiers};
+use unicode_width::UnicodeWidthStr;
 
 use super::key;
 use crate::text::{printable, shorten};
-use crate::{app::App, storage};
+use crate::{
+    app::{App, ClickAction},
+    storage,
+};
 
 /// Render the stats history screen.
 pub fn render(f: &mut Frame, app: &App) {
@@ -50,6 +54,16 @@ pub fn render(f: &mut Frame, app: &App) {
         }
     };
 
+    // ‹ and › are clickable: previous / next category.
+    let category = shorten(&printable(view.category_name()), 32).into_owned();
+    let (row, left) = (layout[0].y, layout[0].x + 12);
+    let right = left + 3 + category.width() as u16;
+    let mut targets = app.click_targets.borrow_mut();
+    for (x, code) in [(left, KeyCode::Left), (right, KeyCode::Right)] {
+        let cell = Rect::new(x, row, 1, 1).intersection(layout[0]);
+        targets.push((cell, ClickAction::Key(code, KeyModifiers::NONE)));
+    }
+    drop(targets);
     let title = Paragraph::new(Line::from(vec![
         Span::styled(
             "  ◆ stats   ",
@@ -57,14 +71,14 @@ pub fn render(f: &mut Frame, app: &App) {
                 .fg(theme.accent)
                 .add_modifier(Modifier::BOLD),
         ),
-        Span::styled("‹ ", Style::default().fg(theme.pending)),
+        Span::styled("‹ ", Style::default().fg(theme.accent)),
         Span::styled(
-            shorten(&printable(view.category_name()), 32).into_owned(),
+            category,
             Style::default()
                 .fg(theme.mode_tag)
                 .add_modifier(Modifier::BOLD),
         ),
-        Span::styled(" ›", Style::default().fg(theme.pending)),
+        Span::styled(" ›", Style::default().fg(theme.accent)),
         Span::styled(
             format!("   {}/{}", view.category + 1, view.category_count()),
             Style::default().fg(theme.pending),
@@ -85,8 +99,10 @@ pub fn render(f: &mut Frame, app: &App) {
         app,
         layout[4],
         &[
-            ("←/→ category", key(KeyCode::Right)),
-            ("↑/↓ scroll", key(KeyCode::Down)),
+            // Two-way navigation hints aren't clickable: ‹ › in the title
+            // and the mouse wheel do it with the mouse.
+            ("←/→ category", None),
+            ("↑/↓ scroll", None),
             ("m / esc menu", key(KeyCode::Char('m'))),
             ("q quit", key(KeyCode::Char('q'))),
             ("? help", key(KeyCode::Char('?'))),
@@ -327,6 +343,10 @@ const MODE_WIDTH: usize = 18;
 /// full (and written back, so scrolling back up responds at once).
 fn visible_rows(area: Rect, total: usize, view: &storage::StatsView) -> (usize, usize) {
     let fits = area.height.saturating_sub(3) as usize;
+    if fits == 0 {
+        // Too short to show a row (a tiny window): keep the scroll as it is.
+        return (view.scroll.get(), 0);
+    }
     let first = view.scroll.get().min(total.saturating_sub(fits));
     view.scroll.set(first);
     (first, fits)
@@ -336,6 +356,8 @@ fn visible_rows(area: Rect, total: usize, view: &storage::StatsView) -> (usize, 
 fn table_block<'a>(app: &App, name: &str, first: usize, shown: usize, total: usize) -> Block<'a> {
     let title = if total == 0 {
         format!(" {name} · none yet ")
+    } else if shown == 0 {
+        format!(" {name} · {total} ")
     } else {
         format!(" {name} · {}–{} of {total} ", first + 1, first + shown)
     };

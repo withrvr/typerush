@@ -28,8 +28,9 @@ typerush --list-snippets      # print your snippets (name<TAB>path) and exit
 ```
 
 Counts must be at least 1: `--time` goes up to 3600 seconds, `--words` and
-`--symbols` up to 10,000. A custom file (`--file` or a snippet) must be a
-regular text file of at most 1 MiB.
+`--symbols` up to 10,000 (the same limits apply to `time_seconds`,
+`word_count` and `symbol_count` in the config). A custom file (`--file` or a snippet) must be a
+regular UTF-8 text file of at most 1 MiB.
 
 These switches make random words harder, and combine with any of the above
 (they apply to time and words modes; zen always stays plain):
@@ -200,7 +201,8 @@ for the whole list does it scroll, and then the border shows `▲ more` /
 | `m` / `Esc` / `Tab`         | Back to the menu                             |
 | `q`                         | Quit                                         |
 
-The mouse wheel scrolls the list too, and the footer hints are clickable.
+The mouse wheel scrolls the list too; click `‹` / `›` in the title to change
+category.
 
 ---
 

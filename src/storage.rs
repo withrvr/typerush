@@ -53,9 +53,14 @@ pub struct SessionRecord {
 }
 
 /// Directory we write to: `$HOME/.typerush`. Falls back to the current
-/// directory if `$HOME` can't be resolved.
+/// directory if no home directory can be found. An empty or relative
+/// `$HOME` (some cron and sandbox setups) counts as none — with it, a
+/// relative path would silently change meaning with every working directory.
+/// (The old `dirs` crate also looked up the passwd entry when `$HOME` was
+/// empty; for an interactive terminal app that case isn't worth a crate.)
 pub fn data_dir() -> PathBuf {
     std::env::home_dir()
+        .filter(|home| home.is_absolute())
         .unwrap_or_else(|| PathBuf::from("."))
         .join(".typerush")
 }

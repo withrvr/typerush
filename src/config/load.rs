@@ -188,8 +188,11 @@ fn apply_color_overrides(
     overrides: &Colors,
     warnings: &mut Vec<String>,
 ) -> ThemePalette {
-    // `extra` is accepted (old configs set it) but no longer drawn.
+    // `extra` is accepted (old configs set it) and still checked, but no
+    // longer drawn.
+    let mut extra = palette.background;
     let slots = [
+        ("extra", &overrides.extra, &mut extra),
         ("accent", &overrides.accent, &mut palette.accent),
         ("secondary", &overrides.secondary, &mut palette.secondary),
         ("correct", &overrides.correct, &mut palette.correct),
@@ -211,14 +214,62 @@ fn apply_color_overrides(
     palette
 }
 
+/// Longest time run, in seconds: an hour.
+pub const MAX_SECONDS: u16 = 3600;
+/// Most words or symbol tokens in one run.
+pub const MAX_COUNT: u16 = 10_000;
+
+/// `count` if it is from 1 to `max` — the one rule for run lengths, used by
+/// the command line and the config alike. A zero count would start a session
+/// with nothing to type; a huge one would build billions of words.
+pub fn check_count<T: PartialOrd + From<u16>>(count: T, max: u16) -> Result<T, String> {
+    if count >= T::from(1) && count <= T::from(max) {
+        Ok(count)
+    } else {
+        Err(format!("must be between 1 and {max}"))
+    }
+}
+
+/// A config count: `default` when unset, or with a warning when out of range.
+fn config_count<T>(
+    name: &str,
+    value: Option<T>,
+    max: u16,
+    default: T,
+    warnings: &mut Vec<String>,
+) -> T
+where
+    T: PartialOrd + From<u16> + std::fmt::Display + Copy,
+{
+    let Some(value) = value else {
+        return default;
+    };
+    check_count(value, max).unwrap_or_else(|problem| {
+        warnings.push(format!("{name} {problem}, using {default}"));
+        default
+    })
+}
+
 fn resolve_default_mode(defaults: Option<&super::Defaults>, warnings: &mut Vec<String>) -> Mode {
     let Some(defaults) = defaults else {
         return Mode::Time(15);
     };
     let mode_name = defaults.mode.as_deref().unwrap_or("time");
     match mode_name.to_lowercase().as_str() {
-        "time" => Mode::Time(defaults.time_seconds.unwrap_or(15)),
-        "words" => Mode::Words(defaults.word_count.unwrap_or(25)),
+        "time" => Mode::Time(config_count(
+            "time_seconds",
+            defaults.time_seconds,
+            MAX_SECONDS,
+            15,
+            warnings,
+        )),
+        "words" => Mode::Words(config_count(
+            "word_count",
+            defaults.word_count,
+            MAX_COUNT,
+            25,
+            warnings,
+        )),
         "quote" => Mode::Quote,
         "code" => {
             let name = defaults.code_lang.as_deref().unwrap_or("rust");
@@ -231,19 +282,25 @@ fn resolve_default_mode(defaults: Option<&super::Defaults>, warnings: &mut Vec<S
             }))
         }
         "zen" => Mode::Zen,
-        "symbols" => Mode::Symbols(match defaults.symbol_count {
-            Some(0) => {
-                warnings.push("symbol_count must be at least 1, using 25".to_string());
-                25
-            }
-            count => count.unwrap_or(25),
-        }),
+        "symbols" => Mode::Symbols(config_count(
+            "symbol_count",
+            defaults.symbol_count,
+            MAX_COUNT,
+            25,
+            warnings,
+        )),
         other => {
             warnings.push(format!(
                 "unknown default mode '{}', falling back to 'time'",
                 other
             ));
-            Mode::Time(defaults.time_seconds.unwrap_or(15))
+            Mode::Time(config_count(
+                "time_seconds",
+                defaults.time_seconds,
+                MAX_SECONDS,
+                15,
+                warnings,
+            ))
         }
     }
 }
@@ -458,6 +515,72 @@ mod tests {
         let (resolved, warnings) = resolve(raw, None);
         assert!(warnings.is_empty());
         assert_eq!(resolved.default_mode, Mode::Symbols(40));
+    }
+
+    /// Config counts follow the same 1..=max rule as the command line: out
+    /// of range warns and uses the default.
+    #[test]
+    fn out_of_range_config_counts_warn_and_use_defaults() {
+        use crate::config::Defaults;
+        for (mode, defaults, expected) in [
+            (
+                "words",
+                Defaults {
+                    word_count: Some(0),
+                    ..Default::default()
+                },
+                Mode::Words(25),
+            ),
+            (
+                "time",
+                Defaults {
+                    time_seconds: Some(99_999_999),
+                    ..Default::default()
+                },
+                Mode::Time(15),
+            ),
+            (
+                "symbols",
+                Defaults {
+                    symbol_count: Some(10_001),
+                    ..Default::default()
+                },
+                Mode::Symbols(25),
+            ),
+        ] {
+            let raw = Config {
+                defaults: Some(Defaults {
+                    mode: Some(mode.into()),
+                    ..defaults
+                }),
+                ..Default::default()
+            };
+            let (resolved, warnings) = resolve(raw, None);
+            assert_eq!(resolved.default_mode, expected);
+            assert_eq!(warnings.len(), 1, "{warnings:?}");
+            assert!(
+                warnings[0].contains("must be between 1 and"),
+                "{warnings:?}"
+            );
+        }
+    }
+
+    /// `extra` isn't drawn any more, but a bad value is still reported.
+    #[test]
+    fn bad_extra_color_still_warns() {
+        let raw = Config {
+            colors: Some(Colors {
+                extra: Some("#ZZZ".into()),
+                ..Default::default()
+            }),
+            ..Default::default()
+        };
+        let (resolved, warnings) = resolve(raw, None);
+        assert_eq!(resolved.palette, builtin::DARK);
+        assert!(
+            warnings.iter().any(|w| w.contains("'extra'")),
+            "{warnings:?}"
+        );
     }
 
     /// Zero tokens would be a session with nothing to type (the CLI rejects

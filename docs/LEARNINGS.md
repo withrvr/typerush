@@ -48,9 +48,15 @@ rule that keeps it fixed).
   or words run, after about one screenful (≈180 words at 80×24) you typed
   blind. Cause: the words paragraph was laid out from the first word and
   never scrolled. Fix: lay out line numbers first, keep the cursor's line
-  second from the top, and style only the visible lines (which also made
-  every redraw cost the same at word 10 and word 1000). Guard:
-  `ui::typing::tests::cursor_stays_visible_deep_into_a_long_run`.
+  second from the top, and style only the visible lines. Review found the
+  first version still counted characters, not cells, and let the widget
+  wrap over-long words behind its back — so CJK text or a long URL could
+  still push the cursor out. Now the layout measures cells, breaks long
+  words itself, and one laid-out line is exactly one screen row. Guards:
+  `cursor_stays_visible_deep_into_a_long_run`,
+  `cursor_stays_visible_with_wide_and_overlong_words` (`ui::typing`).
+  Cost, measured: a full frame takes ~0.08 ms at 100 words and ~0.29 ms at
+  10,000.
 - **Time and zen runs ran out of words.** Symptom: past 300 (time) or 500
   (zen) words every key was ignored until the clock ran out. Cause: a fixed
   word list sized by guess. Fix: `App::top_up_words` keeps 100 words ahead
@@ -59,9 +65,20 @@ rule that keeps it fixed).
   `read_to_string` on whatever path was given. Fix: only regular files, at
   most 1 MiB, read through `take` so a growing file is still bounded.
   Guard: `words::tests::file_words_refuse_non_files_and_huge_files`.
-- **`--words 1000000000000` tried to build a trillion words.** Fix: CLI
-  counts are bounded (time ≤ 3600 s, words/symbols ≤ 10,000) in one value
-  parser. Guard: `tests::out_of_range_counts_are_rejected`.
+- **`--words 1000000000000` tried to build a trillion words.** Fix: run
+  lengths are bounded (time ≤ 3600 s, words/symbols ≤ 10,000) by one rule,
+  `config::load::check_count`, used by the CLI parser *and* the config —
+  the first version only bounded the CLI, so `word_count = 0` in the config
+  slipped through. Guards: `tests::out_of_range_counts_are_rejected`,
+  `out_of_range_config_counts_warn_and_use_defaults`.
+- **A file growing past the 1 MiB limit mid-read could be cut inside a
+  character** and reported as unreadable. Fix: a character cut at the end
+  is dropped; a file that isn't UTF-8 at all says so. Guard:
+  `file_words_drop_a_cut_character_and_refuse_non_utf8`.
+- **Two-way footer hints were clickable one way** ("←/→ category" clicked
+  as →). Rule restated: navigation hints carry no click; the title's ‹ ›
+  are the mouse targets. Guard:
+  `tests::clicking_stats_arrows_changes_category_both_ways`.
 - **Untyped text was hard to read on monokai and dracula** (≈3.0:1), and the
   gauge label was yellow on cyan. Fix: palettes tuned to ≥ 4.5:1 per text
   color, untyped text kept dimmer than typed text, gauge label drawn on the

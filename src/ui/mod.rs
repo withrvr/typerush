@@ -324,4 +324,28 @@ mod tests {
         assert!(dump.contains("★ 51.0"), "{dump}");
         assert!(dump.contains("★ 55.0"), "{dump}");
     }
+
+    /// A window too short for any table row (three rows tall: the table's
+    /// minimum gives way only there) says how many sessions there are instead
+    /// of an impossible range, and keeps the scroll.
+    #[test]
+    fn stats_table_too_short_for_rows() {
+        let mut app = App::new(None, builtin::DARK, Mode::Time(15));
+        app.stats_cache = Some((0..13).map(|_| record(50.0, "time-30s")).collect());
+        app.screen = crate::app::Screen::Stats;
+        let view = crate::storage::StatsView::new(app.stats_cache.as_deref().unwrap(), None);
+        view.scroll.set(3);
+        app.stats_view = Some(view);
+        let mut terminal = Terminal::new(TestBackend::new(80, 3)).unwrap();
+        terminal.draw(|f| render(f, &app)).unwrap();
+        let text: String = terminal
+            .backend()
+            .buffer()
+            .content()
+            .iter()
+            .map(|c| c.symbol())
+            .collect();
+        assert!(text.contains("sessions · 13 "), "{text}");
+        assert_eq!(app.stats_view.as_ref().unwrap().scroll.get(), 3);
+    }
 }

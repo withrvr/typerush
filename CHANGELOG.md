@@ -27,6 +27,8 @@ mode at a time.
   accuracy, WPM trend and every one of its sessions.
 - **★ on record runs.** In the sessions list, the session holding its
   mode's best is marked with a star.
+- **Click `‹` / `›`** around the category name to change category with
+  the mouse.
 - **The sessions list scrolls** with `↑` / `↓` (`k` / `j`), `PgUp` /
   `PgDn`, `Home` / `End` or the mouse wheel, and its title says which rows
   are showing (`1–5 of 42`). It used to show only the last 10 sessions.
@@ -38,6 +40,8 @@ mode at a time.
 - **The cursor no longer runs off the bottom of the typing box.** In a long
   run, after about one screenful of words (≈180 at 80×24) you were typing
   blind. The box now scrolls so the cursor's line stays second from the top.
+  Lines are measured in terminal cells, so wide (CJK) characters and words
+  longer than the box (a URL in a custom file) can't push it off either.
 - **Time and zen runs never run out of words.** A fast typist used to reach
   the end of the 300 (time) or 500 (zen) generated words, after which every
   key was ignored. Words are now added as you go.
@@ -53,6 +57,10 @@ mode at a time.
   or a named pipe used to hang, and a huge file was read into memory whole.
 - **`--words` and `--symbols` go up to 10,000, `--time` up to 3600.** A huge
   count used to try to build billions of words before the first frame.
+  `word_count`, `time_seconds` and `symbol_count` in the config follow the
+  same rule (out of range: a warning and the default).
+- A custom file that isn't UTF-8 now says so ("is not UTF-8 text") instead
+  of a generic read error.
 
 ### Changed
 
@@ -65,7 +73,7 @@ mode at a time.
   a keystroke costs the same at word 10 and word 1000.
 - **Leaner code:** duplicate config enums, dead counters and an unused
   theme slot removed (about 150 fewer lines). The `[colors] extra` key is
-  still accepted so old configs load.
+  still accepted (and a bad value still warned about) so old configs load.
 - **CI:** a weekly and on-change `cargo audit`, Dependabot for crates and
   Actions, read-only workflow tokens, `--locked` builds and a Rust 1.88
   (MSRV, now declared in `Cargo.toml`) check.

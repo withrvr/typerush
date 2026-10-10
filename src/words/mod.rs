@@ -163,11 +163,20 @@ pub fn words_from_file(path: &Path) -> anyhow::Result<Vec<String>> {
     if metadata.len() > MAX_FILE_BYTES {
         anyhow::bail!("{} is too big to type (over 1 MiB)", shown());
     }
-    // `take` still bounds the read if the file grows after the size check.
-    let mut content = String::new();
+    // `take` still bounds the read if the file grows after the size check;
+    // a character cut in half at that limit is dropped, not an error.
+    let mut bytes = Vec::new();
     std::fs::File::open(path)
-        .and_then(|file| file.take(MAX_FILE_BYTES).read_to_string(&mut content))
+        .and_then(|file| file.take(MAX_FILE_BYTES).read_to_end(&mut bytes))
         .with_context(|| format!("can't read {}", shown()))?;
+    let content = match String::from_utf8(bytes) {
+        Ok(text) => text,
+        Err(err) if err.utf8_error().error_len().is_none() => {
+            let valid = err.utf8_error().valid_up_to();
+            String::from_utf8_lossy(&err.as_bytes()[..valid]).into_owned()
+        }
+        Err(_) => anyhow::bail!("{} is not UTF-8 text", shown()),
+    };
     Ok(content
         .split_whitespace()
         .map(|word| {
@@ -212,6 +221,21 @@ mod tests {
             let err = words_from_file(Path::new("/dev/zero")).unwrap_err();
             assert!(err.to_string().contains("not a regular file"), "{err}");
         }
+    }
+
+    /// A character cut in half at the end (as the size limit can do to a
+    /// file that grows while it is read) is dropped; text that isn't UTF-8
+    /// at all is refused by name.
+    #[test]
+    fn file_words_drop_a_cut_character_and_refuse_non_utf8() {
+        let dir = tempfile::tempdir().unwrap();
+        let cut = dir.path().join("cut.txt");
+        std::fs::write(&cut, b"hello wor\xE2\x82").unwrap();
+        assert_eq!(words_from_file(&cut).unwrap(), ["hello", "wor"]);
+        let latin1 = dir.path().join("latin1.txt");
+        std::fs::write(&latin1, b"caf\xE9 au lait").unwrap();
+        let err = words_from_file(&latin1).unwrap_err();
+        assert!(err.to_string().contains("not UTF-8"), "{err}");
     }
 
     /// A UTF-8 byte-order mark (some Windows editors write one) must not
