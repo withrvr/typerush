@@ -117,6 +117,29 @@ in v0.3, as the category-grouped menu.)
 
 ---
 
+## 🚧 v0.4.1 — Polish, speed and stats by category
+
+Worked in this order, one commit (or a few) per step, on one branch and
+one pull request:
+
+1. 🚧 Plan (this section) and the future-features list below
+2. 🔲 Dependencies on their latest versions; code moved to the new APIs
+3. 🔲 Leaner code: duplicate types, dead fields and hand-rolled helpers
+   removed (nothing the standard library or an existing crate already does)
+4. 🔲 Security: custom files read with a size limit, never from a device
+   or pipe; a dependency vulnerability check in CI
+5. 🔲 Typing screen: the cursor line never scrolls off screen, time mode
+   never runs out of words, and only the visible lines are laid out
+6. 🔲 Themes: every built-in theme meets a contrast minimum (checked by a
+   test), so text is easy on the eye in each one
+7. 🔲 Stats by category: a personal best per mode, each category's own
+   sessions, averages and time typed, and a ★ on sessions that set a best
+8. 🔲 A learnings log (bugs found and how they were fixed, features and how
+   they were built) and a contributor skill file that points to it
+9. 🔲 Review, end-to-end test, docs, version 0.4.1
+
+---
+
 ## 🔲 Planned
 
 ### v0.5 — Quality of life
@@ -130,12 +153,37 @@ in v0.3, as the category-grouped menu.)
 
 ---
 
+### v0.6 — Profile and deeper results
+- 🔲 Profile screen: best per time and per word count side by side,
+  sessions started vs finished, total time typed, account-style summary
+- 🔲 Activity calendar: a year of days shaded by how much you practised
+- 🔲 Results chart: WPM and errors second by second for the session you
+  just finished ([#4](https://github.com/withrvr/typerush/issues/4))
+- 🔲 Raw WPM (every keystroke, errors included) and consistency (how even
+  your speed was) on Results and in history
+- 🔲 History filters: by mode, date range and word settings, sortable
+- 🔲 Character breakdown on Results: correct / incorrect / missed
+- 🔲 Level and experience points earned from time spent typing
+
+### v0.7 — Practice modes
+- 🔲 Practise missed words: a run built from the words you got wrong
+- 🔲 Repeat the same test (same words) to compare runs fairly
+- 🔲 Stop-on-error and strict modes (must fix a mistake before moving on)
+- 🔲 Blind mode (no red/green while typing; results only at the end)
+- 🔲 Pace cursor: a ghost cursor at your PB or a target WPM
+- 🔲 Quick restart on `Tab`, and hide-live-WPM option
+- 🔲 Cursor styles (underline, block, bar) and an optional key-click sound
+- 🔲 Custom themes from a file in `~/.typerush/themes/`
+- 🔲 AFK detection: a run idle for too long is not saved
+
+---
+
 ## 💡 Ideas (not committed)
 
 - 💡 Multiplayer race over a LAN
 - 💡 Per-finger heatmap (left vs right hand, weak fingers)
 - 💡 Adaptive practice: re-roll words containing your worst keys
-- 💡 Webhook to post your PB to Discord/Slack
+- 💡 Webhook to post your PB to a chat channel
 - 💡 Voice-over for accessibility
 - 💡 Chart of the session you just finished on the Results screen
   ([#4](https://github.com/withrvr/typerush/issues/4))
