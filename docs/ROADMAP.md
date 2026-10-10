@@ -110,8 +110,10 @@ in v0.3, as the category-grouped menu.)
 
 ## 🚧 In progress
 
-- 🚧 Pre-built binary releases on GitHub
-- 🚧 First publish to crates.io
+- 🚧 Release v0.2.1, v0.3.0 and v0.4.0: git tags, GitHub release binaries,
+  crates.io. The latest published release is v0.2.0 — pre-built binaries on
+  the [Releases page](https://github.com/withrvr/typerush/releases) and
+  `cargo install typerush` both started with v0.1.1 / v0.2.0.
 
 ---
 
@@ -135,5 +137,9 @@ in v0.3, as the category-grouped menu.)
 - 💡 Adaptive practice: re-roll words containing your worst keys
 - 💡 Webhook to post your PB to Discord/Slack
 - 💡 Voice-over for accessibility
+- 💡 Chart of the session you just finished on the Results screen
+  ([#4](https://github.com/withrvr/typerush/issues/4))
+- 💡 Animated on-screen keyboard for learning to touch-type
+  ([#5](https://github.com/withrvr/typerush/issues/5))
 
 Got an idea that should be on this list? [Open an issue](https://github.com/withrvr/typerush/issues/new/choose).

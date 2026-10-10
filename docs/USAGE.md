@@ -173,7 +173,7 @@ for the whole list does it scroll, and then the border shows `▲ more` /
 | any printable    | Type that character                             |
 | `Space`          | Type a space — correct only where the text has one |
 | `Backspace`      | Delete the previous character                   |
-| `Ctrl+Backspace` | Delete the entire current word                  |
+| `Ctrl+Backspace` | Delete the entire current word (`Alt+Backspace` too) |
 | `Ctrl+W`         | Same — delete the entire current word            |
 | `Ctrl+H`         | Same — most terminals send this when you press `Ctrl+Backspace` |
 | `Ctrl+R` / `F5`  | Restart the same mode with a new word list      |

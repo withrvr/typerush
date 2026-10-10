@@ -47,12 +47,15 @@ use crate::words::{CodeLang, WordPool};
 
 /// Value parser for counts that must be at least 1. A zero count would start
 /// a session with nothing to type that can only be left with Esc.
-fn positive<T>() -> clap::builder::RangedU64ValueParser<T>
+fn positive<T>(value: &str) -> Result<T, String>
 where
-    T: TryFrom<u64> + Clone + Send + Sync + 'static,
-    <T as TryFrom<u64>>::Error: std::fmt::Display,
+    T: std::str::FromStr + PartialOrd + From<u8>,
 {
-    clap::builder::RangedU64ValueParser::<T>::new().range(1..)
+    match value.parse::<T>() {
+        Ok(count) if count >= T::from(1) => Ok(count),
+        Ok(_) => Err("must be at least 1".into()),
+        Err(_) => Err("not a whole number".into()),
+    }
 }
 
 /// Command-line interface. Run with no args to open the interactive menu; pass
@@ -70,11 +73,11 @@ struct Cli {
     file: Option<PathBuf>,
 
     /// Start directly in time mode for N seconds (15/30/60/120).
-    #[arg(long, value_parser = positive::<u64>())]
+    #[arg(long, value_parser = positive::<u64>)]
     time: Option<u64>,
 
     /// Start directly in words mode for N words.
-    #[arg(long, value_parser = positive::<usize>())]
+    #[arg(long, value_parser = positive::<usize>)]
     words: Option<usize>,
 
     /// Skip the menu and start a quote session.
@@ -90,7 +93,7 @@ struct Cli {
     zen: bool,
 
     /// Skip the menu and start a programming-symbols drill of N tokens (25/50).
-    #[arg(long, value_parser = positive::<usize>())]
+    #[arg(long, value_parser = positive::<usize>)]
     symbols: Option<usize>,
 
     /// Use the 10,000-word English pool (time and words modes).
@@ -934,10 +937,8 @@ mod tests {
     #[test]
     fn zero_counts_are_rejected() {
         for flag in ["--time", "--words", "--symbols"] {
-            assert!(
-                Cli::try_parse_from(["typerush", flag, "0"]).is_err(),
-                "{flag} 0"
-            );
+            let err = Cli::try_parse_from(["typerush", flag, "0"]).unwrap_err();
+            assert!(err.to_string().contains("at least 1"), "{flag} 0: {err}");
             assert!(
                 Cli::try_parse_from(["typerush", flag, "25"]).is_ok(),
                 "{flag} 25"

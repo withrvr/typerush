@@ -36,7 +36,7 @@ The `Screen` enum in `src/app.rs` is the application's high-level state:
 ```mermaid
 stateDiagram-v2
     [*] --> Menu
-    [*] --> Typing: mode flag (--time, --words, --quote, --code, --zen, --file)
+    [*] --> Typing: mode flag (--time, --words, --quote, --code, --zen, --symbols, --file)
     Menu --> Typing: Enter / Space / click an option
     Typing --> Typing: Ctrl+R / F5 restart
     Typing --> Results: mode finishes / Esc

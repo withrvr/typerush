@@ -12,7 +12,7 @@ git clone https://github.com/withrvr/typerush
 cd typerush
 cargo run                       # try it
 cargo test                      # run the tests
-cargo clippy -- -D warnings     # lint
+cargo clippy --all-targets -- -D warnings     # lint
 ```
 
 If your change builds, passes tests, and is clippy-clean — open a PR. We'll
@@ -25,12 +25,16 @@ take it from there.
 See [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) for the full breakdown.
 The TL;DR:
 
-- `src/main.rs` — entry point + event loop
+- `src/main.rs` — entry point, CLI flags, event loop, key + mouse dispatch
 - `src/app.rs` — application state machine
 - `src/game.rs` — character matcher
 - `src/storage.rs` — JSON stats persistence
+- `src/state.rs` — `state.json` (the last custom file)
+- `src/text.rs` — safe display of user-supplied names and text
+- `src/config/*.rs` — `config.toml` loading and CLI overrides
+- `src/theme/*.rs` — built-in themes and colour parsing
 - `src/ui/*.rs` — one file per screen
-- `src/words/*.rs` — word sources
+- `src/words/*.rs` — word sources (pools, quotes, code, symbols, snippets)
 
 ---
 
@@ -40,7 +44,8 @@ The TL;DR:
 
 You need:
 
-- **Rust 1.75 or newer.** Install via [rustup](https://rustup.rs).
+- **Rust 1.88 or newer** (the oldest toolchain the locked dependencies
+  build with). Install via [rustup](https://rustup.rs).
 - A terminal that supports 256 colors / UTF-8 (anything modern works).
 
 Optional but useful:
@@ -157,7 +162,7 @@ Keep one logical change per commit when you can — it makes review easier.
 3. Run the full check:
    ```bash
    cargo fmt --check
-   cargo clippy -- -D warnings
+   cargo clippy --all-targets -- -D warnings
    cargo test
    ```
 4. Push and [open a PR](https://github.com/withrvr/typerush/pulls).
