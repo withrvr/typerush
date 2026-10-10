@@ -13,6 +13,7 @@ readme = "README.md"
 exclude = [
     "assets/",
     "docs/",
+    ".claude/",
     ".github/",
     "*.mp4",
     "*.gif",

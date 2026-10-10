@@ -147,11 +147,16 @@ Run these before committing — CI runs the exact same set on Linux, macOS,
 and Windows:
 
 ```bash
-cargo fmt --all -- --check                 # formatting
-cargo check --all-targets                  # type-check, tests included
-cargo test --all-targets                   # unit tests
-cargo clippy --all-targets -- -D warnings  # lints (warnings → errors)
+cargo fmt --all -- --check                          # formatting
+cargo check --all-targets --locked                  # type-check, tests included
+cargo test --all-targets --locked                   # unit tests
+cargo clippy --all-targets --locked -- -D warnings  # lints (warnings → errors)
+cargo +1.88.0 check --locked                        # oldest supported Rust
+cargo audit                                         # known vulnerabilities
 ```
+
+`cargo audit` comes from `cargo install cargo-audit`; CI runs it whenever
+`Cargo.toml` or `Cargo.lock` change and once a week.
 
 To auto-fix formatting:
 
