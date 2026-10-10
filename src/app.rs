@@ -334,9 +334,8 @@ fn custom_labels(snippets: &[Snippet], last: Option<&Path>) -> (Vec<String>, Opt
     });
     if let Some(last) = last {
         let name = file_name(last);
-        // The folder of the absolute path, so a relative `--file notes.txt`
-        // still has one.
-        let folder = absolute(last.to_path_buf())
+        // `last` is absolute (see `offered_custom_file`), so it has a folder.
+        let folder = last
             .parent()
             .and_then(Path::file_name)
             .map(|folder| folder.to_string_lossy().into_owned());
@@ -600,9 +599,14 @@ impl App {
     /// The file the custom row offers first: `--file` / the current pick,
     /// else the one remembered from a previous run.
     fn offered_custom_file(&self) -> Option<PathBuf> {
-        self.custom_file
-            .clone()
-            .or_else(|| self.app_state.last_custom_file.as_ref().map(PathBuf::from))
+        // `custom_file` is already absolute; a hand-edited state.json might
+        // not be, so normalize the remembered path the same way.
+        self.custom_file.clone().or_else(|| {
+            self.app_state
+                .last_custom_file
+                .as_ref()
+                .map(|path| absolute(PathBuf::from(path)))
+        })
     }
 
     /// Rebuild the menu (custom row contents changed) keeping the highlight
@@ -1514,18 +1518,22 @@ mod tests {
         custom_labels(snippets, None).0
     }
 
-    /// A relative remembered path still gets its folder when its name is
-    /// taken by a snippet.
+    /// A relative path in a hand-edited state.json is made absolute, so it
+    /// still gets its folder when a snippet uses its name.
     #[test]
     fn relative_remembered_file_gets_its_folder() {
-        let menu = build_menu(
-            &[snippet("notes.txt", "/s/notes.txt.txt")],
-            Some(Path::new("notes.txt")),
+        let mut app = menu_app();
+        app.load_custom_sources(
+            vec![snippet("notes.txt", "/s/notes.txt.txt")],
+            AppState {
+                last_custom_file: Some("notes.txt".into()),
+            },
+            None,
         );
         let cwd = std::env::current_dir().unwrap();
         let folder = cwd.file_name().unwrap().to_string_lossy();
         assert_eq!(
-            custom_options(&menu)[0].0,
+            custom_options(&app.menu)[0].0,
             format!("{folder}{}notes.txt", std::path::MAIN_SEPARATOR)
         );
     }

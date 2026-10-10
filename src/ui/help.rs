@@ -95,7 +95,13 @@ fn centered(r: Rect, width: u16, height: u16) -> Rect {
 /// the main loop. Tall enough for the wrapped message plus the hint line.
 pub fn render_error(f: &mut Frame, theme: &ThemePalette, message: &str) {
     // Messages can carry file paths, which may contain control characters.
-    let message = crate::text::printable(message);
+    // Made safe line by line: multi-line messages (a TOML parse error points
+    // at the bad line with a caret) keep their layout.
+    let message = message
+        .lines()
+        .map(crate::text::printable)
+        .collect::<Vec<_>>()
+        .join("\n");
     const WIDTH: u16 = 60;
     let text_width = WIDTH.min(f.area().width).saturating_sub(4).max(1) as usize;
     // Rough wrapped-line count; slightly over is fine, the box just has a gap.

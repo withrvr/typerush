@@ -173,9 +173,9 @@ fn print_snippets_and_exit() -> ! {
         println!(
             "{}\t{}",
             text::printable(&snippet.name),
-            // Kept a real path (only control characters replaced) so scripts
-            // can open it.
-            text::without_controls(&snippet.path.display().to_string())
+            // Kept a real path (only control and bidi characters replaced) so
+            // scripts can open it.
+            text::path_text(&snippet.path.display().to_string())
         );
     }
     std::process::exit(0);
@@ -456,7 +456,7 @@ fn handle_menu_key(app: &mut App, code: KeyCode, _mods: KeyModifiers) {
                 MenuAction::Start => {
                     if let Some(m) = mode {
                         if let Err(e) = app.start_game(m) {
-                            app.error_message = Some(e.to_string());
+                            app.error_message = Some(format!("{e:#}"));
                         }
                     }
                 }
@@ -487,12 +487,12 @@ pub(crate) fn handle_typing_key(app: &mut App, code: KeyCode, mods: KeyModifiers
         }
         KeyCode::F(5) => {
             if let Err(e) = app.restart() {
-                app.error_message = Some(e.to_string());
+                app.error_message = Some(format!("{e:#}"));
             }
         }
         KeyCode::Char('r') if mods.contains(KeyModifiers::CONTROL) => {
             if let Err(e) = app.restart() {
-                app.error_message = Some(e.to_string());
+                app.error_message = Some(format!("{e:#}"));
             }
         }
         KeyCode::Backspace => {
@@ -527,7 +527,7 @@ fn handle_results_key(app: &mut App, code: KeyCode, _mods: KeyModifiers) {
     match code {
         KeyCode::Enter | KeyCode::Char('r') => {
             if let Err(e) = app.restart() {
-                app.error_message = Some(e.to_string());
+                app.error_message = Some(format!("{e:#}"));
             }
         }
         KeyCode::Char('m') | KeyCode::Esc => app.screen = Screen::Menu,

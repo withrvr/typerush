@@ -6,80 +6,84 @@ use std::borrow::Cow;
 use unicode_segmentation::UnicodeSegmentation;
 use unicode_width::UnicodeWidthStr;
 
+/// The bidirectional controls: they make text display in a different order
+/// than it is stored, so a name can look like something it isn't.
+fn is_bidi_control(c: char) -> bool {
+    matches!(
+        c,
+        '\u{061C}' | '\u{200E}' | '\u{200F}' | '\u{202A}'..='\u{202E}' | '\u{2066}'..='\u{2069}'
+    )
+}
+
 /// Characters that must never be drawn as-is: control characters (a Linux
 /// file name may contain ESC, which starts a terminal escape sequence) and
-/// the bidirectional controls that make text display in a different order
-/// than it is stored.
+/// bidirectional controls.
 pub fn is_unsafe(c: char) -> bool {
-    c.is_control()
-        || matches!(
-            c,
-            '\u{061C}' | '\u{200E}' | '\u{200F}' | '\u{202A}'..='\u{202E}' | '\u{2066}'..='\u{2069}'
-        )
+    c.is_control() || is_bidi_control(c)
 }
 
 /// Characters with no visible form of their own: Unicode's
 /// Default_Ignorable_Code_Point set (the byte-order mark some Windows editors
-/// write at the start of a UTF-8 file, zero-width spaces and joiners, word
-/// joiners, variation selectors, soft hyphens, Hangul fillers, tags, …) plus
-/// the interlinear-annotation controls.
+/// write at the start of a UTF-8 file, zero-width spaces, joiners and
+/// non-joiners, word joiners, variation selectors, soft hyphens, Hangul
+/// fillers, tags, the bidi controls, …) plus the interlinear-annotation
+/// controls.
 pub fn is_invisible(c: char) -> bool {
-    matches!(
-        c,
-        '\u{00AD}'
-            | '\u{034F}'
-            | '\u{061C}'
-            | '\u{115F}'..='\u{1160}'
-            | '\u{17B4}'..='\u{17B5}'
-            | '\u{180B}'..='\u{180F}'
-            | '\u{200B}'..='\u{200F}'
-            | '\u{202A}'..='\u{202E}'
-            | '\u{2060}'..='\u{206F}'
-            | '\u{3164}'
-            | '\u{FE00}'..='\u{FE0F}'
-            | '\u{FEFF}'
-            | '\u{FFA0}'
-            | '\u{FFF0}'..='\u{FFFB}'
-            | '\u{1BCA0}'..='\u{1BCA3}'
-            | '\u{1D173}'..='\u{1D17A}'
-            | '\u{E0000}'..='\u{E0FFF}'
-    )
+    is_bidi_control(c)
+        || matches!(
+            c,
+            '\u{00AD}'
+                | '\u{034F}'
+                | '\u{115F}'..='\u{1160}'
+                | '\u{17B4}'..='\u{17B5}'
+                | '\u{180B}'..='\u{180F}'
+                | '\u{200B}'..='\u{200D}'
+                | '\u{2060}'..='\u{206F}'
+                | '\u{3164}'
+                | '\u{FE00}'..='\u{FE0F}'
+                | '\u{FEFF}'
+                | '\u{FFA0}'
+                | '\u{FFF0}'..='\u{FFFB}'
+                | '\u{1BCA0}'..='\u{1BCA3}'
+                | '\u{1D173}'..='\u{1D17A}'
+                | '\u{E0000}'..='\u{E0FFF}'
+        )
 }
 
-/// Characters a typing target must not contain: [`is_unsafe`] ones, and
-/// [`is_invisible`] ones — the typing screen draws one cell per character, so
-/// an invisible one would be a character the user can't see but has to type
-/// (a byte-order mark used to make a file's first word impossible).
+/// Characters a typing target must not contain: control characters and
+/// [`is_invisible`] ones. The typing screen draws one cell per character and
+/// zero-width ones aren't drawn at all, so an invisible character would be
+/// one the user can't see but has to type (a byte-order mark used to make a
+/// file's first word impossible). That includes the zero-width non-joiner a
+/// Persian keyboard types on Shift+Space: such words are typed without it.
 pub fn is_untypeable(c: char) -> bool {
-    is_unsafe(c) || is_invisible(c)
+    c.is_control() || is_invisible(c)
+}
+
+/// `text` with every character matching `replace` shown as `?`.
+fn replace_matching(text: &str, replace: fn(char) -> bool) -> Cow<'_, str> {
+    if !text.contains(replace) {
+        return Cow::Borrowed(text);
+    }
+    Cow::Owned(
+        text.chars()
+            .map(|c| if replace(c) { '?' } else { c })
+            .collect(),
+    )
 }
 
 /// `text` with every [`is_untypeable`] character shown as `?`: nothing that
 /// could disturb the terminal, and nothing invisible — so two names that
 /// differ only by a hidden character also look different.
 pub fn printable(text: &str) -> Cow<'_, str> {
-    if !text.contains(is_untypeable) {
-        return Cow::Borrowed(text);
-    }
-    Cow::Owned(
-        text.chars()
-            .map(|c| if is_untypeable(c) { '?' } else { c })
-            .collect(),
-    )
+    replace_matching(text, is_untypeable)
 }
 
-/// `text` with control characters shown as `?` and everything else kept —
-/// for output that must still name a real file (`--list-snippets` paths),
-/// where a soft hyphen or zero-width space is part of the name.
-pub fn without_controls(text: &str) -> Cow<'_, str> {
-    if !text.contains(char::is_control) {
-        return Cow::Borrowed(text);
-    }
-    Cow::Owned(
-        text.chars()
-            .map(|c| if c.is_control() { '?' } else { c })
-            .collect(),
-    )
+/// `text` with only [`is_unsafe`] characters shown as `?` — for output that
+/// must still name a real file (`--list-snippets` paths), where a soft hyphen
+/// or zero-width space is part of the name.
+pub fn path_text(text: &str) -> Cow<'_, str> {
+    replace_matching(text, is_unsafe)
 }
 
 /// `text` cut to at most `max_width` terminal cells by replacing its middle
@@ -159,9 +163,10 @@ mod tests {
     }
 
     #[test]
-    fn without_controls_keeps_invisible_but_real_characters() {
-        assert_eq!(without_controls("re\u{00AD}port"), "re\u{00AD}port");
-        assert_eq!(without_controls("a\u{1b}b\nc"), "a?b?c");
+    fn path_text_keeps_invisible_but_real_characters() {
+        assert_eq!(path_text("re\u{00AD}port"), "re\u{00AD}port");
+        assert_eq!(path_text("a\u{1b}b\nc"), "a?b?c");
+        assert_eq!(path_text("report\u{202E}txt.exe"), "report?txt.exe");
     }
 
     /// A name that differs from another only by a hidden character must
