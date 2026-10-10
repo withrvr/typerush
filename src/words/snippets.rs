@@ -53,7 +53,10 @@ pub fn discover_in(dir: &Path) -> Vec<Snippet> {
             if !is_txt || !path.is_file() {
                 return None;
             }
-            let name = path.file_stem()?.to_str()?.to_string();
+            // A name that isn't valid UTF-8 (possible on Linux) is still a
+            // file that can be typed: show it with U+FFFD for the bad bytes.
+            // `path` stays the real path, so opening it still works.
+            let name = path.file_stem()?.to_string_lossy().into_owned();
             if name.is_empty() {
                 return None;
             }
@@ -167,6 +170,24 @@ mod tests {
         assert_eq!(
             snippet.canonical_path,
             Some(fs::canonicalize(&snippet.path).unwrap())
+        );
+    }
+
+    /// A file name that isn't valid UTF-8 is still offered (with a
+    /// replacement character for the bad bytes) and opens the real file.
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn non_utf8_file_name_is_still_found() {
+        use std::os::unix::ffi::OsStrExt;
+        let dir = tempfile::tempdir().unwrap();
+        let name = std::ffi::OsStr::from_bytes(b"notes\xff.txt");
+        fs::write(dir.path().join(name), "typed words").unwrap();
+        let found = discover_in(dir.path());
+        assert_eq!(found.len(), 1);
+        assert_eq!(found[0].name, "notes\u{FFFD}");
+        assert_eq!(
+            crate::words::words_from_file(&found[0].path).unwrap(),
+            ["typed", "words"]
         );
     }
 

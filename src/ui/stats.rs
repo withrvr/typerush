@@ -15,6 +15,7 @@ use ratatui::{
 use crossterm::event::KeyCode;
 
 use super::key;
+use crate::text::{printable, shorten};
 use crate::{app::App, storage};
 
 /// Render the stats history screen.
@@ -279,6 +280,9 @@ fn render_sparkline(f: &mut Frame, app: &App, area: Rect, sessions: &[storage::S
 }
 
 /// Render the recent sessions table (last 10 sessions, newest first).
+/// Width of the recent-sessions Mode column.
+const MODE_WIDTH: usize = 18;
+
 fn render_sessions_table(
     f: &mut Frame,
     app: &App,
@@ -296,7 +300,10 @@ fn render_sessions_table(
                 // Date column: neutral so it renders cleanly on all themes.
                 Cell::from(s.timestamp.format("%Y-%m-%d %H:%M").to_string())
                     .style(Style::default().fg(theme.neutral)),
-                Cell::from(s.mode.clone()).style(Style::default().fg(theme.mode_tag)),
+                // stats.json can be hand-edited, and custom labels carry file
+                // names: made safe, and long ones shortened to the column.
+                Cell::from(shorten(&printable(&s.mode), MODE_WIDTH).into_owned())
+                    .style(Style::default().fg(theme.mode_tag)),
                 Cell::from(format!("{:.1}", s.wpm)).style(Style::default().fg(theme.secondary)),
                 Cell::from(format!("{:.1}%", s.accuracy)).style(Style::default().fg(theme.correct)),
                 Cell::from(format!("{:.1}s", s.duration_secs))
@@ -315,7 +322,7 @@ fn render_sessions_table(
         recent_rows,
         [
             Constraint::Length(18),
-            Constraint::Length(18), // fits "words-100+10k+p+n"
+            Constraint::Length(MODE_WIDTH as u16), // fits "words-100+10k+p+n"
             Constraint::Length(8),
             Constraint::Length(8),
             Constraint::Length(8),

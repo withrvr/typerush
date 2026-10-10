@@ -42,8 +42,8 @@ with a quote — TypeRush meets you where you already work: the command line.
 - 🎨 **Themes built-in** — `dark`, `light`, `monokai`, `dracula`, or roll your own colors
 - ⏱ **Seven built-in modes** — Time, Words, Quote, Code, Symbols, Zen, and Custom-file
 - 🔤 **Seven code languages** — Rust, Python, JavaScript, Go, Java, SQL, Shell
-- 📚 **10k-word pool & punctuation/number drills** — opt in when you want a tougher session
-- 🗂  **Personal snippet library** — drop `.txt` files in `~/.typerush/snippets/`
+- 📚 **10k-word pool & punctuation/number drills** — toggle them with `b` / `p` / `n` in the menu when you want a tougher session
+- 🗂  **Personal snippet library** — drop `.txt` files in `~/.typerush/snippets/`, each with its own personal best
 - 💾 **Tracks your progress** — every session saved locally, with charts and a personal best
 - 🌍 **Runs everywhere** — Linux · macOS · Windows · WSL · Git Bash
 - 📦 **One binary, zero setup** — `cargo install typerush` and you're done
@@ -86,6 +86,7 @@ typerush --file my_text.txt   # type anything you want
 typerush --big                # use the 10,000-word English pool
 typerush --punctuation        # sprinkle punctuation onto random words
 typerush --numbers            # mix number tokens into random words
+typerush --no-punctuation     # plain run, even if your config turns it on
 typerush --theme monokai      # try a different theme
 typerush --list-themes        # see all built-in themes
 typerush --list-snippets      # see every snippet in ~/.typerush/snippets/

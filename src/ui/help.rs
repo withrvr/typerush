@@ -10,7 +10,7 @@ use ratatui::{
 
 use crate::{app::App, theme::ThemePalette};
 
-/// Render the keybindings overlay. Sized to its content (21 rows, so it fits
+/// Render the keybindings overlay. Sized to its content (23 rows, so it fits
 /// an 80×24 window whole). On a smaller terminal the box shrinks and the
 /// bottom of the list is cut, but the close hint lives in the bottom border
 /// and is always visible.
@@ -36,6 +36,8 @@ pub fn render(f: &mut Frame, app: &App) {
         Line::from("  Ctrl+R  F5       restart while typing"),
         Line::from("  Esc              finish session / back"),
         Line::from("  Ctrl+Bksp Ctrl+W delete word"),
+        Line::from("  p  n  b          menu: punctuation, numbers,"),
+        Line::from("                   10k words (time & words runs)"),
         Line::from("  Tab  s           stats history"),
         Line::from("  ?  F1            toggle this help"),
         Line::from("  Ctrl+C           quit"),

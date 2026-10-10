@@ -36,7 +36,13 @@ These switches make random words harder, and combine with any of the above
 typerush --big                # 10,000-word pool instead of the ~430 common words
 typerush --punctuation        # commas, periods, quotes, brackets on ~1 word in 4
 typerush --numbers            # mix in 1–4 digit numbers (~1 word in 8)
+typerush --no-punctuation     # off for this run, even if config.toml turns it on
 ```
+
+Each has a `--no-` twin (`--no-big`, `--no-punctuation`, `--no-numbers`) for a
+plain run when your config turns it on; if both are given, the last one wins.
+In the menu, `p`, `n` and `b` toggle the same three settings (see
+[Main menu](#main-menu)).
 
 `--code` also accepts `rs`, `py`, `javascript`, `golang`, `sh` and `bash`.
 
@@ -51,6 +57,9 @@ typerush --numbers            # mix in 1–4 digit numbers (~1 word in 8)
   in `~/.typerush/state.json` as an absolute path, and only once it has loaded.
 - With no file and no snippets yet, the custom row shows `custom`; picking it
   explains how to add one.
+- Each file keeps its own personal best: a session is saved as `custom-`
+  plus the file name without its extension (`custom-notes` for `notes.txt`),
+  so a five-word drill never sets the bar for a long essay.
 - Every option in the row has a different label: long names are shortened in
   the middle (`quarterly-r…nal-draft-q1`), two snippets with the same name
   show their full file names, and a remembered file whose name a snippet
@@ -133,12 +142,27 @@ flowchart TD
     time ~~~ words ~~~ code ~~~ quote ~~~ zen ~~~ symbols ~~~ custom ~~~ stats ~~~ quit
 ```
 
+The bottom border of the list shows the three word settings — `p
+punctuation`, `n numbers`, `b 10k words` — each spelled out as `on` or `off`
+and clickable. They apply to time and words runs, whose saved label follows
+them (`time-30s+p`).
+
+The menu fits itself to the terminal. With room to spare it shows the big
+banner and a blank line between categories. On a standard 80×24 terminal it
+switches to a two-line banner and drops only as many of those blank lines as
+it must, so every option is on screen at launch. Only on a terminal too short
+for the whole list does it scroll, and then the border shows `▲ more` /
+`▼ more`.
+
 
 | Key                | Action                                         |
 | ------------------ | ---------------------------------------------- |
 | `↑ / ↓` or `j / k` | Previous / next category (keeps the column)    |
 | `← / →` or `h / l` | Previous / next option in the category         |
 | `Enter` / `Space`  | Start the selected mode                        |
+| `p`                | Punctuation on / off (time and words runs)     |
+| `n`                | Numbers on / off (time and words runs)         |
+| `b`                | 10k-word pool on / off (time and words runs)   |
 | `Tab` / `s`        | Jump to the historical stats view              |
 | `q`                | Quit                                           |
 
@@ -306,7 +330,11 @@ punctuation = true       # commas, periods, quotes, brackets on ~1 word in 4
 numbers = true           # 1–4 digit numbers mixed in (~1 word in 8)
 ```
 
-`--big`, `--punctuation` and `--numbers` turn these on for one run.
+`--big`, `--punctuation` and `--numbers` turn these on for one run, and
+`--no-big`, `--no-punctuation` and `--no-numbers` turn them off. In the menu,
+`p`, `n` and `b` toggle them for as long as TypeRush stays open; the config
+and the command line only set where they start. Your config file is never
+rewritten.
 
 Runs with any of these settings keep their own personal bests: the mode label
 gets `+10k`, `+p` and/or `+n` (`time-30s+p`, `words-50+10k+p+n`), so a
@@ -316,7 +344,7 @@ harder run is only ever compared with runs played the same way.
 
 ```mermaid
 flowchart LR
-    cli["CLI flag (--theme, --time, --big, …)"] -- "wins over" --> file["config.toml"] -- "wins over" --> default["built-in default"]
+    menu["menu keys p / n / b (while open)"] -- "wins over" --> cli["CLI flag (--theme, --time, --big, --no-big, …)"] -- "wins over" --> file["config.toml"] -- "wins over" --> default["built-in default"]
 ```
 
 A malformed config file does not crash TypeRush — it falls back to defaults

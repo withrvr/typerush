@@ -219,4 +219,36 @@ mod tests {
         assert!(text.contains("0 / 2"), "gauge missing");
         assert!(text.contains("symbols-2"), "mode tag missing");
     }
+
+    /// Mode labels in the history table are made safe (stats.json can be
+    /// hand-edited; custom labels carry file names) and long ones shortened
+    /// to the column instead of being cut off.
+    #[test]
+    fn stats_table_mode_labels_are_safe_and_shortened() {
+        let mut app = App::new(None, builtin::DARK, DefaultMode::Time(15));
+        app.stats_cache = Some(vec![crate::storage::SessionRecord {
+            wpm: 80.0,
+            accuracy: 97.0,
+            mode: "custom-\u{1b}[2Jquarterly-report-final-draft".into(),
+            word_count: 10,
+            correct_chars: 50,
+            total_chars: 52,
+            duration_secs: 30.0,
+            timestamp: chrono::Local::now(),
+            key_hits: Default::default(),
+            key_misses: Default::default(),
+        }]);
+        app.screen = crate::app::Screen::Stats;
+        let mut terminal = Terminal::new(TestBackend::new(100, 40)).unwrap();
+        terminal.draw(|f| render(f, &app)).unwrap();
+        let text: String = terminal
+            .backend()
+            .buffer()
+            .content()
+            .iter()
+            .map(|c| c.symbol())
+            .collect();
+        assert!(!text.contains('\x1b'));
+        assert!(text.contains("custom-?…nal-draft "), "{text}");
+    }
 }

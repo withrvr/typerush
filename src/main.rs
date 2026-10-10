@@ -93,17 +93,29 @@ struct Cli {
     #[arg(long, value_parser = positive::<usize>())]
     symbols: Option<usize>,
 
-    /// Use the 10,000-word English pool instead of the default common words.
-    #[arg(long)]
+    /// Use the 10,000-word English pool (time and words modes).
+    #[arg(long, overrides_with = "no_big")]
     big: bool,
 
+    /// Use the common-word pool even if the config picks the 10k one.
+    #[arg(long, overrides_with = "big")]
+    no_big: bool,
+
     /// Add punctuation to random words (time and words modes).
-    #[arg(long)]
+    #[arg(long, overrides_with = "no_punctuation")]
     punctuation: bool,
 
+    /// No punctuation, even if the config turns it on.
+    #[arg(long, overrides_with = "punctuation")]
+    no_punctuation: bool,
+
     /// Mix numbers in with random words (time and words modes).
-    #[arg(long)]
+    #[arg(long, overrides_with = "no_numbers")]
     numbers: bool,
+
+    /// No numbers, even if the config turns them on.
+    #[arg(long, overrides_with = "numbers")]
+    no_numbers: bool,
 
     /// One-shot theme override: dark | light | monokai | dracula.
     /// Takes precedence over the `theme` setting in `~/.typerush/config.toml`.
@@ -117,6 +129,31 @@ struct Cli {
     /// Print the snippets found in ~/.typerush/snippets/ and exit.
     #[arg(long)]
     list_snippets: bool,
+}
+
+impl Cli {
+    /// The settings the command line overrides. A switch pair left alone
+    /// (neither `--punctuation` nor `--no-punctuation`) keeps the config's
+    /// value; when both are given, the last one wins.
+    fn overrides(&self) -> CliOverrides<'_> {
+        let switch = |on: bool, off: bool| match (on, off) {
+            (true, _) => Some(true),
+            (_, true) => Some(false),
+            _ => None,
+        };
+        CliOverrides {
+            theme: self.theme.as_deref(),
+            word_pool: switch(self.big, self.no_big).map(|big| {
+                if big {
+                    WordPool::Extended
+                } else {
+                    WordPool::Common
+                }
+            }),
+            punctuation: switch(self.punctuation, self.no_punctuation),
+            numbers: switch(self.numbers, self.no_numbers),
+        }
+    }
 }
 
 fn main() -> Result<()> {
@@ -232,13 +269,7 @@ fn install_panic_hook() {
 /// enough that we're not busy-looping. `event::poll` blocks for the remainder
 /// of the tick interval so keystrokes are still handled instantly.
 fn run_app(terminal: &mut Tui, cli: Cli) -> Result<()> {
-    // CLI switches only ever turn a setting on; leaving one off keeps config.
-    let (resolved, warnings) = config::load::load_or_default_with(CliOverrides {
-        theme: cli.theme.as_deref(),
-        word_pool: cli.big.then_some(WordPool::Extended),
-        punctuation: cli.punctuation.then_some(true),
-        numbers: cli.numbers.then_some(true),
-    });
+    let (resolved, warnings) = config::load::load_or_default_with(cli.overrides());
     let mut app = App::new(cli.file.clone(), resolved.palette, resolved.default_mode);
     app.set_word_source(resolved.word_pool, resolved.word_decor);
     let state_file = state::state_path();
@@ -440,7 +471,9 @@ fn handle_mouse(app: &mut App, mouse: MouseEvent) {
 }
 
 /// Keymap for the main menu: ↑/↓ (j/k) pick a category row, ←/→ (h/l) pick
-/// an option within it, Enter (or Space) to act.
+/// an option within it, Enter (or Space) to act. `p` / `n` / `b` toggle the
+/// word settings (punctuation, numbers, 10k pool) for time and words runs,
+/// for this run of TypeRush; the config and CLI set where they start.
 fn handle_menu_key(app: &mut App, code: KeyCode, _mods: KeyModifiers) {
     match code {
         KeyCode::Up | KeyCode::Char('k') => app.menu_move_row(false),
@@ -469,6 +502,14 @@ fn handle_menu_key(app: &mut App, code: KeyCode, _mods: KeyModifiers) {
                 }
                 MenuAction::ShowStats => app.screen = Screen::Stats,
                 MenuAction::Quit => app.should_quit = true,
+            }
+        }
+        KeyCode::Char('p') => app.word_decor.punctuation ^= true,
+        KeyCode::Char('n') => app.word_decor.numbers ^= true,
+        KeyCode::Char('b') => {
+            app.word_pool = match app.word_pool {
+                WordPool::Common => WordPool::Extended,
+                WordPool::Extended => WordPool::Common,
             }
         }
         KeyCode::Tab | KeyCode::Char('s') => app.screen = Screen::Stats,
@@ -511,14 +552,23 @@ pub(crate) fn handle_typing_key(app: &mut App, code: KeyCode, mods: KeyModifiers
         }
         KeyCode::Char(typed_char) => {
             // Ignore other control chords like Ctrl+A — we never want those
-            // to be counted as typed characters.
-            if mods.contains(KeyModifiers::CONTROL) {
+            // to be counted as typed characters. AltGr is not one of them.
+            if mods.contains(KeyModifiers::CONTROL) && !is_altgr(typed_char, mods) {
                 return;
             }
             app.handle_char(typed_char);
         }
         _ => {}
     }
+}
+
+/// Whether a Ctrl-modified character is really AltGr. Windows reports AltGr
+/// as Ctrl+Alt, and on German, French, Spanish, Polish… layouts AltGr is how
+/// `{ } [ ] | @ ~ \` (and letters like `ą`) are typed — the symbols drill and
+/// code modes are built on them. A Ctrl+Alt chord that gives an ASCII letter
+/// or digit is a real chord (Linux reports Ctrl+Alt+A as `a`), not AltGr.
+fn is_altgr(typed_char: char, mods: KeyModifiers) -> bool {
+    mods.contains(KeyModifiers::CONTROL | KeyModifiers::ALT) && !typed_char.is_ascii_alphanumeric()
 }
 
 /// Keymap for the post-session results screen.
@@ -708,6 +758,34 @@ mod tests {
         handle_typing_key(&mut app, KeyCode::Char('a'), KeyModifiers::CONTROL);
         handle_typing_key(&mut app, KeyCode::Char('z'), KeyModifiers::CONTROL);
         assert_eq!(app.words[0].typed, "hel");
+    }
+
+    /// Windows reports AltGr as Ctrl+Alt: on a German layout `{` is
+    /// AltGr+7 and arrives as `Char('{')` with CONTROL | ALT. It must type.
+    #[test]
+    fn altgr_characters_are_typed() {
+        let mut app = App::new(None, ThemePalette::default(), DefaultMode::Time(15));
+        app.screen = Screen::Typing;
+        app.mode = Mode::Symbols(1);
+        app.words = vec![Word::new("{@ą}".into())];
+        let altgr = KeyModifiers::CONTROL | KeyModifiers::ALT;
+        for ch in ['{', '@', 'ą'] {
+            handle_typing_key(&mut app, KeyCode::Char(ch), altgr);
+        }
+        // Shift+AltGr works too.
+        handle_typing_key(&mut app, KeyCode::Char('}'), altgr | KeyModifiers::SHIFT);
+        assert_eq!(app.correct_chars, 4);
+        assert_eq!(app.screen, Screen::Results);
+    }
+
+    /// Ctrl+Alt with a letter or digit is a chord, not AltGr: ignored.
+    #[test]
+    fn ctrl_alt_letter_chords_are_ignored() {
+        let mut app = make_typing_app();
+        let chord = KeyModifiers::CONTROL | KeyModifiers::ALT;
+        handle_typing_key(&mut app, KeyCode::Char('a'), chord);
+        handle_typing_key(&mut app, KeyCode::Char('1'), chord);
+        assert_eq!(app.total_typed_chars, 0);
     }
 
     // ── mouse ────────────────────────────────────────────────────────────────
@@ -966,28 +1044,111 @@ mod tests {
         assert_eq!(state::load_from_path(&state_file), remembered);
     }
 
-    /// At 80×24 the seven code options don't fit on one line: they wrap,
-    /// every one stays inside the menu box and is clickable, and clicking
-    /// the last one starts it.
+    /// Draw `app` at `width`×`height`; returns the screen as text rows.
+    fn screen(app: &App, width: u16, height: u16) -> Vec<String> {
+        let mut terminal =
+            Terminal::new(ratatui::backend::TestBackend::new(width, height)).unwrap();
+        terminal.draw(|f| ui::render(f, app)).unwrap();
+        terminal
+            .backend()
+            .buffer()
+            .content()
+            .chunks(width as usize)
+            .map(|row| row.iter().map(|cell| cell.symbol()).collect())
+            .collect()
+    }
+
+    /// Every menu option is clickable in the frame just drawn.
+    fn all_options_clickable(app: &App) -> bool {
+        let targets = app.click_targets.borrow();
+        (0..app.menu.len()).all(|i| targets.iter().any(|(_, a)| *a == ClickAction::Menu(i)))
+    }
+
+    /// A menu as a returning v0.4 user sees it: a remembered file and a few
+    /// snippets in the custom row.
+    fn full_menu_app() -> App {
+        let mut app = App::new(None, ThemePalette::default(), DefaultMode::Time(15));
+        let snippet = |name: &str| words::snippets::Snippet {
+            name: name.into(),
+            path: PathBuf::from(format!("/s/{name}.txt")),
+            canonical_path: None,
+        };
+        app.load_custom_sources(
+            vec![snippet("drill"), snippet("essay"), snippet("hello")],
+            state::AppState {
+                last_custom_file: Some("/home/me/notes.txt".into()),
+            },
+            None,
+        );
+        app
+    }
+
+    /// Regression: v0.4's extra rows pushed custom, stats and quit off a
+    /// standard 80×24 terminal at launch, with no sign there was more. Now
+    /// the whole menu is on screen at launch — the plain one and one with a
+    /// remembered file and snippets — with the banner and no "more" hint.
     #[test]
-    fn code_row_wraps_and_every_option_is_clickable() {
+    fn whole_menu_fits_80x24_at_launch() {
+        for app in [
+            App::new(None, ThemePalette::default(), DefaultMode::Time(15)),
+            full_menu_app(),
+        ] {
+            let rows = screen(&app, 80, 24);
+            let dump = rows.join("\n");
+            assert!(all_options_clickable(&app), "{dump}");
+            assert!(!dump.contains("more"), "{dump}");
+            assert!(dump.contains("▀█▀"), "compact banner missing:\n{dump}");
+            for text in ["stats", "quit", "symbols", "custom", "punctuation off"] {
+                assert!(dump.contains(text), "{text:?} missing:\n{dump}");
+            }
+        }
+    }
+
+    /// With room to spare the menu looks like v0.3: the big banner, and a
+    /// blank line between categories.
+    #[test]
+    fn tall_terminal_gets_big_banner_and_gaps() {
+        let app = full_menu_app();
+        let rows = screen(&app, 100, 40);
+        let dump = rows.join("\n");
+        assert!(rows[1].contains("████████"), "{dump}");
+        let time = rows.iter().position(|r| r.contains("➤  time")).unwrap();
+        assert!(rows[time + 2].trim_matches(['│', ' ']).is_empty(), "{dump}");
+        assert!(rows[time + 3].contains("words"), "{dump}");
+        assert!(all_options_clickable(&app), "{dump}");
+    }
+
+    /// At 80 columns the seven code options fit on one line. On a narrow
+    /// terminal they wrap, every one stays inside the box and clickable, and
+    /// clicking the last one starts it.
+    #[test]
+    fn code_row_fits_at_80_and_wraps_when_narrow() {
         let mut app = App::new(None, ThemePalette::default(), DefaultMode::Time(15));
         app.menu_index = option(&app, "code", "rust");
-        draw(&app);
-        let targets = app.click_targets.borrow().clone();
-        let code: Vec<_> = app
-            .menu
-            .iter()
-            .enumerate()
-            .filter(|(_, m)| m.group == "code")
-            .map(|(i, _)| {
-                targets
-                    .iter()
-                    .find(|(_, a)| *a == ClickAction::Menu(i))
-                    .map(|(area, _)| *area)
-                    .unwrap_or_else(|| panic!("code option {i} not clickable"))
-            })
-            .collect();
+        let code_lines = |app: &App| -> Vec<ratatui::layout::Rect> {
+            let targets = app.click_targets.borrow();
+            app.menu
+                .iter()
+                .enumerate()
+                .filter(|(_, m)| m.group == "code")
+                .map(|(i, _)| {
+                    targets
+                        .iter()
+                        .find(|(_, a)| *a == ClickAction::Menu(i))
+                        .map(|(area, _)| *area)
+                        .unwrap_or_else(|| panic!("code option {i} not clickable"))
+                })
+                .collect()
+        };
+        screen(&app, 80, 24);
+        let code = code_lines(&app);
+        assert!(
+            code.iter().all(|a| a.y == code[0].y),
+            "code row wrapped at 80"
+        );
+
+        screen(&app, 50, 40);
+        let code = code_lines(&app);
         let lines: std::collections::BTreeSet<u16> = code.iter().map(|a| a.y).collect();
         assert!(lines.len() > 1, "expected the code row to wrap");
         // Chips on one line never overlap.
@@ -1006,12 +1167,95 @@ mod tests {
     /// 80×24 terminal, including the new rows below zen.
     #[test]
     fn every_option_reachable_at_80x24() {
-        let mut app = App::new(None, ThemePalette::default(), DefaultMode::Time(15));
+        let mut app = full_menu_app();
         for index in 0..app.menu.len() {
             app.menu_index = index;
             draw(&app);
             target_cell(&app, ClickAction::Menu(index));
         }
+    }
+
+    /// Too short for the whole list: it scrolls to the selection, and the
+    /// border says which way there is more — nothing is hidden silently.
+    #[test]
+    fn short_terminal_scrolls_with_more_hints() {
+        let mut app = full_menu_app();
+        let rows = screen(&app, 80, 12);
+        let dump = rows.join("\n");
+        assert!(
+            dump.contains("▼ more") && !dump.contains("▲ more"),
+            "{dump}"
+        );
+        assert!(!dump.contains("▀█▀"), "no room for a banner:\n{dump}");
+
+        app.menu_index = app.menu.len() - 1; // quit
+        let rows = screen(&app, 80, 12);
+        let dump = rows.join("\n");
+        assert!(
+            dump.contains("▲ more") && !dump.contains("▼ more"),
+            "{dump}"
+        );
+        target_cell(&app, ClickAction::Menu(app.menu_index));
+    }
+
+    /// `p`, `n`, `b` toggle the word settings, the border shows each one's
+    /// state in words, and the next run's label follows.
+    #[test]
+    fn menu_keys_toggle_word_settings() {
+        let mut app = App::new(None, ThemePalette::default(), DefaultMode::Time(30));
+        for code in ['p', 'n', 'b'] {
+            handle_key(&mut app, KeyCode::Char(code), KeyModifiers::NONE);
+        }
+        assert!(app.word_decor.punctuation && app.word_decor.numbers);
+        assert_eq!(app.word_pool, WordPool::Extended);
+        let dump = screen(&app, 80, 24).join("\n");
+        for text in ["punctuation on", "numbers on", "10k words on"] {
+            assert!(dump.contains(text), "{text:?} missing:\n{dump}");
+        }
+        handle_key(&mut app, KeyCode::Enter, KeyModifiers::NONE);
+        assert_eq!(app.session_label(), "time-30s+10k+p+n");
+
+        // And back off again.
+        app.screen = Screen::Menu;
+        for code in ['p', 'n', 'b'] {
+            handle_key(&mut app, KeyCode::Char(code), KeyModifiers::NONE);
+        }
+        handle_key(&mut app, KeyCode::Enter, KeyModifiers::NONE);
+        assert_eq!(app.session_label(), "time-30s");
+    }
+
+    /// The settings on the border are clickable and act like their keys.
+    #[test]
+    fn clicking_a_word_setting_toggles_it() {
+        let mut app = App::new(None, ThemePalette::default(), DefaultMode::Time(15));
+        draw(&app);
+        let numbers = ClickAction::Key(KeyCode::Char('n'), KeyModifiers::NONE);
+        let cell = target_cell(&app, numbers);
+        click(&mut app, cell);
+        assert!(app.word_decor.numbers);
+        assert_eq!(app.screen, Screen::Menu);
+    }
+
+    #[test]
+    fn cli_switch_pairs_resolve_last_one_wins() {
+        let overrides = |args: &[&str]| {
+            let cli = Cli::try_parse_from([&["typerush"], args].concat()).unwrap();
+            let o = cli.overrides();
+            (o.word_pool, o.punctuation, o.numbers)
+        };
+        assert_eq!(overrides(&[]), (None, None, None));
+        assert_eq!(
+            overrides(&["--big", "--punctuation", "--numbers"]),
+            (Some(WordPool::Extended), Some(true), Some(true))
+        );
+        assert_eq!(
+            overrides(&["--no-big", "--no-punctuation", "--no-numbers"]),
+            (Some(WordPool::Common), Some(false), Some(false))
+        );
+        assert_eq!(
+            overrides(&["--punctuation", "--no-punctuation", "--no-big", "--big"]),
+            (Some(WordPool::Extended), Some(false), None)
+        );
     }
 
     // ── saving ───────────────────────────────────────────────────────────────

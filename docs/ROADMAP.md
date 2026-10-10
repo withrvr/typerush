@@ -95,7 +95,11 @@ KEY:  ✅ done    🚧 in progress    🔲 planned    💡 idea
 - ✅ Bigger English word pool (10k) — `--big` or `[words] pool = "extended"`
 - ✅ Programming-symbols mode (focus on `(){};=>` etc.) — `symbols` menu row, `--symbols N`
 - ✅ More languages: Go, Java, SQL, Shell
-- ✅ Punctuation / numbers toggle — `--punctuation`, `--numbers`, or `[words]`
+- ✅ Punctuation / numbers toggle — `--punctuation`, `--numbers`, or `[words]`;
+  `p` / `n` / `b` in the menu, `--no-…` switches to turn them off
+- ✅ Menu fits a standard 80×24 terminal (compact banner, `▲/▼ more` when it
+  can't)
+- ✅ A personal best per custom file (`custom-notes`)
 - ✅ Custom snippet library: drop `.txt` files in `~/.typerush/snippets/` (`--list-snippets`)
 - ✅ "custom" menu row + last-picked-file memory in `~/.typerush/state.json`
 

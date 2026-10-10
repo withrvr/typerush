@@ -76,7 +76,9 @@ fn render_header(f: &mut Frame, app: &App, area: Rect) {
             Span::styled(timer_text, Style::default().fg(theme.accent)),
             Span::raw("   "),
             Span::styled(
-                format!("[{}]", app.session_label()),
+                // A custom label carries the file name: keep it to a size
+                // that leaves the stats on the line readable.
+                format!("[{}]", crate::text::shorten(&app.session_label(), 32)),
                 Style::default().fg(theme.mode_tag),
             ),
         ])

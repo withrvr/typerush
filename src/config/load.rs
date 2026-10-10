@@ -1,11 +1,11 @@
 //! Disk I/O for the config file plus the "resolve everything" entry point.
 //!
 //! `load_or_default_with(CliOverrides)` is the single function the rest of the
-//! app calls. It returns a fully-resolved `ResolvedConfig` and a list of
+//! app calls (`load_from` is the same for any path, for tests). It returns a fully-resolved `ResolvedConfig` and a list of
 //! human-readable warnings — never an error. The caller (typically `main.rs`)
 //! can choose to surface the first warning via the error modal.
 
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 use ratatui::style::Color;
 
@@ -82,61 +82,56 @@ pub fn config_path() -> PathBuf {
 }
 
 /// CLI settings that take precedence over the config file. `None` falls
-/// through to the config value (or its built-in default). The switches only
-/// ever turn something on, like `--theme` picks a theme: there is no flag to
-/// turn off a decoration the config enabled.
+/// through to the config value (or its built-in default); `Some` wins either
+/// way, so `--no-punctuation` turns off what the config turned on.
 #[derive(Debug, Default, Clone)]
 pub struct CliOverrides<'a> {
     /// `--theme <name>`.
     pub theme: Option<&'a str>,
-    /// `--big` → `Some(WordPool::Extended)`.
+    /// `--big` → `Some(Extended)`, `--no-big` → `Some(Common)`.
     pub word_pool: Option<WordPool>,
-    /// `--punctuation` → `Some(true)`.
+    /// `--punctuation` → `Some(true)`, `--no-punctuation` → `Some(false)`.
     pub punctuation: Option<bool>,
-    /// `--numbers` → `Some(true)`.
+    /// `--numbers` → `Some(true)`, `--no-numbers` → `Some(false)`.
     pub numbers: Option<bool>,
 }
 
-/// Read and resolve the config from disk, then apply CLI overrides on top.
-///
-/// Always succeeds:
-///   - missing file        → defaults, no warnings
-///   - unparseable file    → defaults, one warning
-///   - unknown theme name  → fall back to dark, one warning
-///   - bad color override  → keep the theme's slot, one warning per bad slot
+/// Read and resolve `~/.typerush/config.toml`, then apply CLI overrides on
+/// top. See [`load_from`].
 pub fn load_or_default_with(cli: CliOverrides<'_>) -> (ResolvedConfig, Vec<String>) {
-    let path = config_path();
-    let raw_config = if path.exists() {
-        match std::fs::read_to_string(&path) {
-            Ok(text) => match toml::from_str::<Config>(&text) {
-                Ok(parsed) => parsed,
-                Err(err) => {
-                    let warning = format!("could not parse {}: {}", path.display(), err);
-                    return (ResolvedConfig::default(), vec![warning]);
-                }
-            },
-            Err(err) => {
-                let warning = format!("could not read {}: {}", path.display(), err);
-                return (ResolvedConfig::default(), vec![warning]);
-            }
-        }
-    } else {
-        Config::default()
-    };
-    resolve_with(raw_config, cli)
+    load_from(&config_path(), cli)
 }
 
-/// Pure resolver — easier to unit-test than the disk-touching variant.
-/// Compat shim: takes a single `--theme` override only.
-#[cfg(test)]
-fn resolve(raw: Config, cli_theme_override: Option<&str>) -> (ResolvedConfig, Vec<String>) {
-    resolve_with(
-        raw,
-        CliOverrides {
-            theme: cli_theme_override,
-            ..Default::default()
+/// Read and resolve the config at `path`, then apply CLI overrides on top.
+///
+/// Always succeeds, and the CLI overrides always apply:
+///   - missing file        → defaults, no warnings
+///   - unreadable or unparseable file → defaults, one warning
+///   - unknown theme name  → fall back to dark, one warning
+///   - bad color override  → keep the theme's slot, one warning per bad slot
+pub fn load_from(path: &Path, cli: CliOverrides<'_>) -> (ResolvedConfig, Vec<String>) {
+    // The path is shown in the error modal: made safe like every other path.
+    let shown = || crate::text::printable(&path.display().to_string()).into_owned();
+    let (raw_config, file_warning) = match std::fs::read_to_string(path) {
+        Ok(text) => match toml::from_str::<Config>(&text) {
+            Ok(parsed) => (parsed, None),
+            Err(err) => (
+                Config::default(),
+                Some(format!("could not parse {}: {}", shown(), err)),
+            ),
         },
-    )
+        Err(err) if err.kind() == std::io::ErrorKind::NotFound => (Config::default(), None),
+        Err(err) => (
+            Config::default(),
+            Some(format!("could not read {}: {}", shown(), err)),
+        ),
+    };
+    let (resolved, mut warnings) = resolve_with(raw_config, cli);
+    // The file problem comes first: it explains everything after it.
+    if let Some(warning) = file_warning {
+        warnings.insert(0, warning);
+    }
+    (resolved, warnings)
 }
 
 /// Full pure resolver. Applies CLI overrides after the file-derived defaults.
@@ -308,6 +303,17 @@ pub fn code_lang_kind(name: &str) -> Option<CodeLangKind> {
 mod tests {
     use super::*;
     use crate::config::{Colors, Defaults};
+
+    /// Resolve `raw` with only a `--theme` override (most tests need no more).
+    fn resolve(raw: Config, theme: Option<&str>) -> (ResolvedConfig, Vec<String>) {
+        resolve_with(
+            raw,
+            CliOverrides {
+                theme,
+                ..Default::default()
+            },
+        )
+    }
 
     #[test]
     fn default_when_config_is_empty() {
@@ -638,5 +644,82 @@ mod tests {
                 alias
             );
         }
+    }
+
+    /// A config.toml with a typo must not swallow the command line: the
+    /// warning is shown first, and `--big --punctuation --theme` still apply.
+    #[test]
+    fn broken_config_still_applies_cli_overrides() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("config.toml");
+        std::fs::write(&path, "theme = \"light\"\n[words\npool = 1").unwrap();
+        let (resolved, warnings) = load_from(
+            &path,
+            CliOverrides {
+                theme: Some("monokai"),
+                word_pool: Some(WordPool::Extended),
+                punctuation: Some(true),
+                numbers: Some(true),
+            },
+        );
+        assert_eq!(warnings.len(), 1, "{warnings:?}");
+        assert!(warnings[0].starts_with("could not parse"), "{warnings:?}");
+        assert_eq!(resolved.palette, builtin::MONOKAI);
+        assert_eq!(resolved.word_pool, WordPool::Extended);
+        assert!(resolved.word_decor.punctuation && resolved.word_decor.numbers);
+    }
+
+    /// Same for a config that can't be read at all (here: a directory).
+    /// The file warning comes before the warnings it causes.
+    #[test]
+    fn unreadable_config_still_applies_cli_overrides() {
+        let dir = tempfile::tempdir().unwrap();
+        let (resolved, warnings) = load_from(
+            dir.path(),
+            CliOverrides {
+                theme: Some("nope"),
+                numbers: Some(true),
+                ..Default::default()
+            },
+        );
+        assert_eq!(warnings.len(), 2, "{warnings:?}");
+        assert!(warnings[0].starts_with("could not read"), "{warnings:?}");
+        assert!(warnings[1].contains("nope"), "{warnings:?}");
+        assert!(resolved.word_decor.numbers);
+    }
+
+    #[test]
+    fn missing_config_is_silent_defaults() {
+        let dir = tempfile::tempdir().unwrap();
+        let (resolved, warnings) =
+            load_from(&dir.path().join("config.toml"), CliOverrides::default());
+        assert!(warnings.is_empty());
+        assert_eq!(resolved, ResolvedConfig::default());
+    }
+
+    /// `--no-big`, `--no-punctuation`, `--no-numbers` turn off what the
+    /// config turned on, so a plain run never needs a config edit.
+    #[test]
+    fn cli_off_switches_beat_config() {
+        use crate::config::Words;
+        let raw = Config {
+            words: Some(Words {
+                pool: Some("extended".into()),
+                punctuation: Some(true),
+                numbers: Some(true),
+            }),
+            ..Default::default()
+        };
+        let (resolved, _) = resolve_with(
+            raw,
+            CliOverrides {
+                word_pool: Some(WordPool::Common),
+                punctuation: Some(false),
+                numbers: Some(false),
+                ..Default::default()
+            },
+        );
+        assert_eq!(resolved.word_pool, WordPool::Common);
+        assert_eq!(resolved.word_decor, WordDecor::default());
     }
 }

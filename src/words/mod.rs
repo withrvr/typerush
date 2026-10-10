@@ -22,7 +22,7 @@ use rand::{thread_rng, Rng};
 /// dictionary on top, which trades some smoothness for vocabulary breadth.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub enum WordPool {
-    /// The default pool: ~430 frequent words (`english::ENGLISH_1000`).
+    /// The default pool: ~430 frequent words (`english::ENGLISH_COMMON`).
     #[default]
     Common,
     /// Larger 10,000-word pool — includes the common words plus a wide
@@ -47,7 +47,7 @@ pub struct WordDecor {
 pub fn random_words_from(count: usize, pool: WordPool, decor: WordDecor) -> Vec<String> {
     let mut rng = thread_rng();
     let words: &[&str] = match pool {
-        WordPool::Common => english::ENGLISH_1000,
+        WordPool::Common => english::ENGLISH_COMMON,
         WordPool::Extended => english::ENGLISH_10000,
     };
     (0..count)
@@ -208,8 +208,97 @@ mod tests {
 
     #[test]
     fn extended_pool_is_larger_than_common() {
-        assert!(english::ENGLISH_10000.len() > english::ENGLISH_1000.len() * 5);
-        assert!(english::ENGLISH_10000.len() >= 10_000);
+        assert!(english::ENGLISH_10000.len() > english::ENGLISH_COMMON.len() * 5);
+        assert_eq!(english::ENGLISH_10000.len(), 10_000);
+    }
+
+    /// Both pools are drawn from at random, in classrooms and on streamed
+    /// screens: no profanity, slurs or sexual terms. Every common word is in
+    /// the extended pool too, and neither pool repeats a word (a repeat would
+    /// be picked twice as often).
+    #[test]
+    fn word_pools_are_family_friendly() {
+        use std::collections::HashSet;
+        const BLOCKED: &[&str] = &[
+            "anal",
+            "bastard",
+            "bitch",
+            "bitchiest",
+            "bondage",
+            "boob",
+            "bullshit",
+            "chinked",
+            "clit",
+            "cock",
+            "condom",
+            "cunt",
+            "cunts",
+            "cybersex",
+            "dick",
+            "dildo",
+            "fag",
+            "fagged",
+            "fagot",
+            "fetishist",
+            "fuck",
+            "fucks",
+            "genitalia",
+            "kinky",
+            "milf",
+            "morons",
+            "nigger",
+            "niggards",
+            "nipples",
+            "nudes",
+            "nudity",
+            "orgasms",
+            "panties",
+            "penis",
+            "piss",
+            "porn",
+            "pussy",
+            "rapist",
+            "redneck",
+            "retard",
+            "scrotums",
+            "sexiness",
+            "sexting",
+            "sexually",
+            "sexy",
+            "shit",
+            "shittiest",
+            "slut",
+            "spank",
+            "spanks",
+            "testicle",
+            "tit",
+            "tits",
+            "vagina",
+            "vibrator",
+            "wank",
+            "wanking",
+            "whore",
+            "xxx",
+        ];
+        let common: HashSet<&str> = english::ENGLISH_COMMON.iter().copied().collect();
+        let extended: HashSet<&str> = english::ENGLISH_10000.iter().copied().collect();
+        assert_eq!(
+            common.len(),
+            english::ENGLISH_COMMON.len(),
+            "repeat in common"
+        );
+        assert_eq!(
+            extended.len(),
+            english::ENGLISH_10000.len(),
+            "repeat in extended"
+        );
+        assert!(common.is_subset(&extended));
+        for word in BLOCKED {
+            assert!(!extended.contains(word), "{word:?} is in a word pool");
+        }
+        assert!(extended
+            .iter()
+            .all(|w| !w.is_empty() && w.chars().all(|c| c.is_ascii_lowercase())));
     }
 
     #[test]

@@ -141,8 +141,10 @@ flowchart LR
     render() dispatcher, background paint,
     clickable footer (render_footer)"]
     ui --> menu["menu.rs
-    ASCII banner + modes grouped by category
-    (long rows wrap onto a continuation line)"]
+    banner + modes grouped by category, sized to fit
+    (big or compact banner, blank lines dropped top-first,
+    then scrolling with more hints); word settings on
+    the bottom border; long rows wrap"]
     ui --> typing["typing.rs
     header, progress gauge, words"]
     ui --> results["results.rs
@@ -156,7 +158,7 @@ flowchart LR
     word source picker (random, quote, code, symbols, file);
     WordPool + WordDecor (punctuation / numbers)"]
     words --> english["english.rs
-    ENGLISH_1000 (~430 common words) and ENGLISH_10000"]
+    ENGLISH_COMMON (~430 common words) and ENGLISH_10000"]
     words --> quotes["quotes.rs
     programming quotes + Rust / Python / JS /
     Go / Java / SQL / Shell snippets"]
@@ -258,6 +260,19 @@ back, so neither a restart nor the remembered file ever points at the file
 that failed. `start_game` builds the word list before changing any state, so
 the screen, mode and words are untouched too. The saved path is made absolute
 so it works from any directory.
+
+`App::session_label` names a custom session after its file
+(`custom-notes`), so each file has its own personal best; time and words
+labels get the `+10k` / `+p` / `+n` suffixes of the word settings, which the
+menu's `p` / `n` / `b` keys toggle on `App::word_pool` / `App::word_decor`.
+
+### Config loading
+
+`config::load::load_from(path, cli)` never fails: a missing file means
+defaults, and an unreadable or unparseable one means defaults plus a warning
+(shown in the error modal). Either way the CLI overrides (`--theme`, `--big`,
+`--no-big`, `--punctuation`, …) are applied on top, so a typo in
+`config.toml` never silently drops a flag.
 
 ### Cross-platform
 crossterm handles Windows Console API, ANSI escape codes, and raw mode in one

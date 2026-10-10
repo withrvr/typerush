@@ -23,7 +23,9 @@ straight from the menu.
 
 - **10,000-word English pool.** `--big`, or `pool = "extended"` in a new
   `[words]` config section. The default pool (~430 frequent words) is
-  unchanged.
+  unchanged. The pool is family-friendly: profanity, slurs and sexual terms
+  were taken out (a test keeps them out), so it is safe in a classroom or on
+  a streamed screen.
 - **Programming-symbols mode.** A `symbols` row in the menu (25 or 50 tokens)
   drills the keys typists under-train: `=>`, `(){};`, `&&`, `?.`, `<T>` and
   friends, plus randomly composed punctuation runs. Also `--symbols N` and
@@ -36,10 +38,20 @@ straight from the menu.
   quotes and brackets to about a quarter of random words; `--numbers` mixes
   in 1–4 digit numbers. Also `punctuation = true` / `numbers = true` under
   `[words]`. They apply to time and words modes; zen stays plain.
+- **Word settings in the menu.** `p`, `n` and `b` toggle punctuation,
+  numbers and the 10k pool while TypeRush is open. Their state is shown —
+  as `on` / `off`, not by colour alone — on the menu's bottom border, where
+  each one is also clickable.
+- **Off switches.** `--no-big`, `--no-punctuation` and `--no-numbers` give a
+  plain run when the config turns a setting on; with both forms given, the
+  last one wins.
 - **Separate personal bests for harder settings.** A time or words run with
   `--big`, `--punctuation` or `--numbers` is saved under its own label —
   `time-30s+10k`, `words-50+p+n`, … — so it never competes with plain runs.
   Plain runs keep their usual labels.
+- **A personal best per custom file.** A custom session is saved as
+  `custom-` plus the file name (`custom-notes` for `notes.txt`), so a short
+  drill and a long essay no longer share one best or one Results comparison.
 - **Snippet library.** Every `.txt` file in `~/.typerush/snippets/` (any
   capitalisation of `.txt`) is an option in the menu's new `custom` row,
   sorted by name. `--list-snippets` prints them as `name<TAB>path`.
@@ -55,17 +67,37 @@ straight from the menu.
 
 ### Changed
 
-- Menu rows wider than the menu box (seven code languages, many snippets)
-  wrap onto an indented line below instead of running off the edge. Long
-  snippet names are shortened with `…`. Every option stays clickable.
+- The main menu fits itself to the terminal, so the whole menu — the new
+  `symbols` and `custom` rows, `stats` and `quit` included — is on screen at
+  launch on a standard 80×24 terminal. With room to spare it looks as in
+  v0.3 (big banner, a blank line between categories); with less, it uses a
+  two-line banner and drops only as many blank lines as it must, top first.
+  Only a terminal too short for the whole list scrolls, and the border then
+  says `▲ more` / `▼ more`.
+- The menu box is at least 64 columns wide, so the seven code languages fit
+  on one line at 80 columns. Rows still too wide (many snippets, a narrow
+  terminal) wrap onto an indented line below. Long snippet names are
+  shortened with `…`. Every option stays clickable.
 - Custom-file errors name the file (`can't read /home/you/notes.txt: No such file or
   directory`, `notes.txt is empty`) instead of a bare OS error.
-- The help overlay shows where snippets go.
+- The help overlay shows where snippets go and the `p` / `n` / `b` keys.
 - The Stats screen's Mode column is two cells wider, to fit labels such as
-  `words-100+10k+p+n`.
+  `words-100+10k+p+n`; longer labels are shortened with `…`.
 
 ### Fixed
 
+- **AltGr keys type on Windows.** Windows reports AltGr as Ctrl+Alt, and the
+  typing screen dropped every Ctrl chord — so on German, French, Spanish,
+  Polish and other layouts `{ } [ ] | @ ~ \` could not be typed at all.
+  Characters typed with AltGr now count; Ctrl+letter chords are still
+  ignored.
+- **A broken `config.toml` no longer drops your flags.** When the config
+  couldn't be read or parsed, `--theme` (since v0.2) and the new word
+  switches were silently ignored; they now apply on top of the defaults, and
+  the warning is still shown.
+- Snippets whose file name isn't valid UTF-8 (possible on Linux) were
+  silently left out of the menu and `--list-snippets`; they are listed now,
+  with `�` for the bad bytes.
 - `--time 0`, `--words 0` and `--symbols 0` are rejected with a clear error.
   They used to start a session with nothing to type that only Esc could end.
 - Control characters in a custom file, a file name or an error message can
@@ -82,7 +114,11 @@ straight from the menu.
   any path your OS allows.
 - `stats.json` is unchanged and old records load as before. Saved personal
   bests keep their mode labels (`code-javascript` included); only runs with
-  the new word settings get a suffix.
+  the new word settings get a suffix. Custom-file sessions saved before
+  v0.4 keep their plain `custom` label and still show in the history; new
+  custom sessions are saved per file (`custom-notes`).
+- Zen is exactly as in v0.3: the common words, never decorated, whatever
+  the word settings are.
 - `state.json` is new and optional; it is written atomically, like
   `stats.json`, and a missing or corrupt one is simply ignored.
 

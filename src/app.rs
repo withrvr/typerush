@@ -479,9 +479,11 @@ pub struct App {
     pub session_just_saved: bool,
 
     // --- word sources (v0.4.0) ---
-    /// English pool for Time / Words / Zen (`--big` or `[words] pool`).
+    /// English pool for Time / Words (`--big` / `--no-big`, `[words] pool`,
+    /// or `b` in the menu). Zen always uses the common pool.
     pub word_pool: WordPool,
-    /// Punctuation / numbers decoration for Time / Words (never Zen).
+    /// Punctuation / numbers decoration for Time / Words (`p` / `n` in the
+    /// menu, or the CLI / config switches). Never applied to Zen.
     pub word_decor: WordDecor,
     /// Snippet library found in `~/.typerush/snippets/` at startup. Kept so
     /// the menu can be rebuilt without rescanning the directory.
@@ -561,9 +563,25 @@ impl App {
     /// label, plus a suffix for each setting that makes time / words harder —
     /// `+10k` (extended pool), `+p` (punctuation), `+n` (numbers). A harder
     /// run therefore never competes with plain runs for a personal best.
+    ///
+    /// Custom sessions are labelled by the file they type (`custom-notes`
+    /// for `notes.txt`), so every snippet or file has its own personal best
+    /// rather than a 5-word drill and a long essay sharing one.
+    ///
     /// Plain runs, and every other mode, keep exactly their v0.3 labels.
     pub fn session_label(&self) -> String {
         let mut label = self.mode.label();
+        if self.mode == Mode::Custom {
+            // Lossy and made safe: the label is drawn on screen and stored
+            // in stats.json, and a file name can contain anything.
+            let name = self.custom_file.as_deref().and_then(Path::file_stem);
+            if let Some(name) = name.filter(|name| !name.is_empty()) {
+                label = format!(
+                    "{label}-{}",
+                    crate::text::printable(&name.to_string_lossy())
+                );
+            }
+        }
         if matches!(self.mode, Mode::Time(_) | Mode::Words(_)) {
             if self.word_pool == WordPool::Extended {
                 label.push_str("+10k");
@@ -584,7 +602,7 @@ impl App {
         self.error_message = Some(format!("{error:#}"));
     }
 
-    /// Choose the English pool and decoration for Time / Words / Zen.
+    /// Choose the English pool and decoration for Time / Words.
     pub fn set_word_source(&mut self, pool: WordPool, decor: WordDecor) {
         self.word_pool = pool;
         self.word_decor = decor;
@@ -809,8 +827,9 @@ impl App {
             Mode::Words(count) => words::random_words_from(count, pool, decor),
             Mode::Quote => words::random_quote(),
             Mode::Code(lang) => words::random_code_snippet(lang),
-            // Zen stays calm: the chosen pool, but never decoration.
-            Mode::Zen => words::random_words_from(500, pool, WordDecor::default()),
+            // Zen stays calm and plain: the word settings are for time and
+            // words runs, which are scored; zen never is.
+            Mode::Zen => words::random_words_from(500, WordPool::Common, WordDecor::default()),
             Mode::Symbols(count) => words::symbols::random_symbol_tokens(count),
             Mode::Custom => {
                 let Some(path) = &self.custom_file else {
@@ -1369,11 +1388,12 @@ mod tests {
             .words
             .iter()
             .any(|w| w.text.chars().any(|c| !c.is_ascii_alphabetic())));
+        // Zen ignores all three: plain words from the common pool.
         app.start_game(Mode::Zen).unwrap();
         assert!(app
             .words
             .iter()
-            .all(|w| w.text.chars().all(|c| c.is_ascii_alphabetic())));
+            .all(|w| crate::words::english::ENGLISH_COMMON.contains(&w.text.as_str())));
     }
 
     /// A custom file that fails to load leaves the app exactly as it was:
@@ -1629,10 +1649,34 @@ mod tests {
         );
         assert_eq!(app.session_label(), "words-100+n");
         // Settings that don't apply to a mode don't change its label.
-        for mode in [Mode::Quote, Mode::Symbols(25), Mode::Custom] {
+        for mode in [Mode::Quote, Mode::Symbols(25), Mode::Custom, Mode::Zen] {
             app.mode = mode;
             assert_eq!(app.session_label(), mode.label());
         }
+    }
+
+    /// Each custom file has its own label (and so its own personal best),
+    /// named after the file without its extension and made safe to draw.
+    #[test]
+    fn custom_sessions_are_labelled_by_file() {
+        let mut app = menu_app();
+        app.mode = Mode::Custom;
+        assert_eq!(app.session_label(), "custom", "no file yet");
+        app.custom_file = Some(PathBuf::from("/home/me/notes.txt"));
+        assert_eq!(app.session_label(), "custom-notes");
+        app.custom_file = Some(PathBuf::from("/s/long essay.TXT"));
+        assert_eq!(app.session_label(), "custom-long essay");
+        app.custom_file = Some(PathBuf::from("/s/evil\u{1b}[2J.txt"));
+        assert_eq!(app.session_label(), "custom-evil?[2J");
+        // Word settings never apply to custom text.
+        app.set_word_source(
+            WordPool::Extended,
+            WordDecor {
+                punctuation: true,
+                numbers: true,
+            },
+        );
+        assert_eq!(app.session_label(), "custom-evil?[2J");
     }
 
     /// Rebuilding the menu keeps a highlight on quit on quit — stats and
