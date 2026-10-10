@@ -7,13 +7,16 @@ use ratatui::{
     widgets::{Block, Borders, Clear, Paragraph, Wrap},
 };
 
+use ratatui::crossterm::event::KeyCode;
+
 use crate::{app::App, theme::ThemePalette};
 
 /// Render the keybindings overlay. Sized to its content (23 rows, so it fits
 /// an 80×24 window whole). On a smaller terminal the box shrinks and the
 /// bottom of the list is cut, but the close hint lives in the bottom border
 /// and is always visible.
-pub fn render(f: &mut Frame, app: &App) {
+/// Returns the footer hints.
+pub fn render(f: &mut Frame, app: &App, screen: Rect) -> &'static [super::Hint] {
     let theme = &app.theme;
     let heading = |text| {
         Line::from(Span::styled(
@@ -27,7 +30,6 @@ pub fn render(f: &mut Frame, app: &App) {
 
     let lines = vec![
         heading("  TypeRush — keybindings"),
-        Line::raw(""),
         Line::from("  ↑/↓  j/k         menu: pick a category"),
         Line::from("  ←/→  h/l         menu: pick an option"),
         Line::from("  Enter  Space     start the selected mode"),
@@ -53,14 +55,12 @@ pub fn render(f: &mut Frame, app: &App) {
     const WIDTH: u16 = 50;
     // Narrower than the box, lines wrap and need more rows: take the full
     // height instead of guessing how many.
-    let height = if f.area().width < WIDTH {
-        f.area().height
+    let height = if screen.width < WIDTH {
+        screen.height
     } else {
         lines.len() as u16 + 2
     };
-    let area = f
-        .area()
-        .centered(Constraint::Length(WIDTH), Constraint::Length(height));
+    let area = screen.centered(Constraint::Length(WIDTH), Constraint::Length(height));
     f.render_widget(Clear, area);
     let p = Paragraph::new(lines)
         // Plain Line::from(string) entries inherit this fg — otherwise they
@@ -82,6 +82,8 @@ pub fn render(f: &mut Frame, app: &App) {
                 )),
         );
     f.render_widget(p, area);
+    const HINTS: &[super::Hint] = &[("Esc / F1 close", super::key(KeyCode::Esc))];
+    HINTS
 }
 
 /// Render the transient error modal. Dismissed by any keypress or click from

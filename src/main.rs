@@ -374,11 +374,15 @@ fn handle_key(app: &mut App, code: KeyCode, mods: KeyModifiers) {
         app.should_quit = true;
         return;
     }
-    // '?' (or F1) toggles the help overlay. Not '?' while typing (it is a
-    // character to type) or on Results (a fast typist's last keys land
-    // there; see `handle_results_key`) — F1 works everywhere.
-    let typed_screen = matches!(app.screen, Screen::Typing | Screen::Results);
-    if code == KeyCode::F(1) || (code == KeyCode::Char('?') && !typed_screen) {
+    // '?' (or F1) toggles the help overlay, except while typing ('?' is a
+    // character to type, and help would cover the run). On Results only F1
+    // does: a fast typist's last keys land there (see `handle_results_key`).
+    let help_key = match code {
+        KeyCode::F(1) => app.screen != Screen::Typing,
+        KeyCode::Char('?') => !matches!(app.screen, Screen::Typing | Screen::Results),
+        _ => false,
+    };
+    if help_key {
         toggle_help(app);
         return;
     }
@@ -930,11 +934,13 @@ mod tests {
         click(&mut app, cell);
         assert_eq!(app.screen, Screen::Stats);
 
-        // Stats footer: "m / esc menu" goes back.
+        // Stats footer: "Esc / m menu" goes back — on the same last row as
+        // the menu's footer.
         draw(&app);
-        let menu = ClickAction::Key(KeyCode::Char('m'), KeyModifiers::NONE);
-        let cell = target_cell(&app, menu);
-        click(&mut app, cell);
+        let menu = ClickAction::Key(KeyCode::Esc, KeyModifiers::NONE);
+        let back = target_cell(&app, menu);
+        assert_eq!(back.1, cell.1, "footer row moved between screens");
+        click(&mut app, back);
         assert_eq!(app.screen, Screen::Menu);
     }
 

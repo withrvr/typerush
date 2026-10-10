@@ -23,22 +23,29 @@ use crate::{
     theme::ThemePalette,
 };
 
-/// Top-level entry point for the typing screen. Splits the area into four
-/// horizontal bands: header, progress bar, words, footer.
-pub fn render(f: &mut Frame, app: &App) {
-    let area = f.area();
+/// Top-level entry point for the typing screen. Splits the area into three
+/// horizontal bands: header, progress bar, words. Returns the footer hints —
+/// no help hint: `?` is a character you may need to type here.
+pub fn render(f: &mut Frame, app: &App, area: Rect) -> &'static [super::Hint] {
     let layout = Layout::vertical([
         Constraint::Length(3), // live stats header
         Constraint::Length(2), // progress gauge
         Constraint::Min(6),    // words to type
-        Constraint::Length(3), // keybinding footer
     ])
     .split(area);
 
     render_header(f, app, layout[0]);
     render_progress(f, app, layout[1]);
     render_words(f, app, layout[2]);
-    render_footer(f, app, layout[3]);
+    const HINTS: &[super::Hint] = &[
+        ("Ctrl+R / F5 restart", super::key(KeyCode::F(5))),
+        ("Esc finish", super::key(KeyCode::Esc)),
+        (
+            "Ctrl+C quit",
+            Some((KeyCode::Char('c'), KeyModifiers::CONTROL)),
+        ),
+    ];
+    HINTS
 }
 
 /// Renders the live WPM / accuracy / time / mode strip at the top of the screen.
@@ -313,24 +320,6 @@ fn style_for_char(state: CharState, is_zen_mode: bool, theme: &ThemePalette) -> 
     }
 }
 
-/// Tiny hint strip at the bottom of the screen. No help hint: `?` is a
-/// character you may need to type here.
-fn render_footer(f: &mut Frame, app: &App, area: Rect) {
-    super::render_footer(
-        f,
-        app,
-        area,
-        &[
-            ("ctrl+r / F5 restart", super::key(KeyCode::F(5))),
-            ("esc finish", super::key(KeyCode::Esc)),
-            (
-                "ctrl+c quit",
-                Some((KeyCode::Char('c'), KeyModifiers::CONTROL)),
-            ),
-        ],
-    );
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -341,7 +330,7 @@ mod tests {
     /// The cell the cursor is drawn on (accent + underline), if on screen.
     fn cursor_cell(app: &App, width: u16, height: u16) -> Option<(u16, u16)> {
         let mut terminal = Terminal::new(TestBackend::new(width, height)).unwrap();
-        terminal.draw(|f| render(f, app)).unwrap();
+        terminal.draw(|f| crate::ui::render(f, app)).unwrap();
         let buffer = terminal.backend().buffer();
         (0..height)
             .flat_map(|y| (0..width).map(move |x| (x, y)))
@@ -416,7 +405,7 @@ mod tests {
             })
             .collect();
         let mut terminal = Terminal::new(TestBackend::new(80, 24)).unwrap();
-        terminal.draw(|f| render(f, &app)).unwrap();
+        terminal.draw(|f| crate::ui::render(f, &app)).unwrap();
         let buffer = terminal.backend().buffer();
         // Every visible row, in order, spells out the start of the word list:
         // nothing cut off at a right edge.

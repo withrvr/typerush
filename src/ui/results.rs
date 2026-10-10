@@ -17,15 +17,14 @@ use super::key;
 use crate::{app::App, storage};
 
 /// Render the post-session results screen.
-pub fn render(f: &mut Frame, app: &App) {
-    let area = f.area();
+/// Returns the footer hints.
+pub fn render(f: &mut Frame, app: &App, area: Rect) -> &'static [super::Hint] {
     let theme = &app.theme;
     let layout = Layout::vertical([
         Constraint::Length(3),
         Constraint::Length(10),
         Constraint::Length(6),
         Constraint::Min(0),
-        Constraint::Length(3),
     ])
     .split(area);
 
@@ -182,19 +181,15 @@ pub fn render(f: &mut Frame, app: &App) {
         .style(Style::default().fg(theme.accent));
     f.render_widget(spark, layout[2]);
 
-    super::render_footer(
-        f,
-        app,
-        layout[4],
-        &[
-            ("Enter / F5 restart", key(KeyCode::Enter)),
-            ("Esc menu", key(KeyCode::Esc)),
-            ("Tab stats", key(KeyCode::Tab)),
-            ("F1 help", key(KeyCode::F(1))),
-            (
-                "Ctrl+C quit",
-                Some((KeyCode::Char('c'), KeyModifiers::CONTROL)),
-            ),
-        ],
-    );
+    const HINTS: &[super::Hint] = &[
+        ("Enter / F5 restart", key(KeyCode::Enter)),
+        ("Esc menu", key(KeyCode::Esc)),
+        ("Tab stats", key(KeyCode::Tab)),
+        ("F1 help", key(KeyCode::F(1))),
+        (
+            "Ctrl+C quit",
+            Some((KeyCode::Char('c'), KeyModifiers::CONTROL)),
+        ),
+    ];
+    HINTS
 }

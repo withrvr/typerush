@@ -23,8 +23,8 @@ use crate::{
 };
 
 /// Render the stats history screen.
-pub fn render(f: &mut Frame, app: &App) {
-    let area = f.area();
+/// Returns the footer hints.
+pub fn render(f: &mut Frame, app: &App, area: Rect) -> &'static [super::Hint] {
     let theme = &app.theme;
 
     // Layout:
@@ -32,13 +32,11 @@ pub fn render(f: &mut Frame, app: &App) {
     //   1 — summary (left) + key accuracy (right) (8 rows)
     //   2 — WPM sparkline (5 rows)
     //   3 — sessions or bests table (fills remaining space)
-    //   4 — footer (1 row — the table gets the rest, 5 rows at 24 rows)
     let layout = Layout::vertical([
         Constraint::Length(2),
         Constraint::Length(8),
         Constraint::Length(5),
         Constraint::Min(4),
-        Constraint::Length(1),
     ])
     .split(area);
 
@@ -95,20 +93,16 @@ pub fn render(f: &mut Frame, app: &App) {
         render_sessions_table(f, app, layout[3], sessions, view);
     }
 
-    super::render_footer(
-        f,
-        app,
-        layout[4],
-        &[
-            // Two-way navigation hints aren't clickable: ‹ › in the title
-            // and the mouse wheel do it with the mouse.
-            ("←/→ category", None),
-            ("↑/↓ scroll", None),
-            ("m / esc menu", key(KeyCode::Char('m'))),
-            ("q quit", key(KeyCode::Char('q'))),
-            ("? help", key(KeyCode::Char('?'))),
-        ],
-    );
+    const HINTS: &[super::Hint] = &[
+        // Two-way navigation hints aren't clickable: ‹ › in the title and
+        // the mouse wheel do it with the mouse.
+        ("←/→ category", None),
+        ("↑/↓ scroll", None),
+        ("Esc / m menu", key(KeyCode::Esc)),
+        ("? help", key(KeyCode::Char('?'))),
+        ("q quit", key(KeyCode::Char('q'))),
+    ];
+    HINTS
 }
 
 /// `1h 05m`, `12m`, `45s`: time spent typing, at a glance.

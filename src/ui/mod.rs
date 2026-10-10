@@ -40,14 +40,17 @@ pub fn render(frame: &mut Frame, app: &App) {
         .buffer_mut()
         .set_style(area, Style::default().bg(app.theme.background));
 
-    // 2. Render the active screen on top of the painted background.
-    match app.screen {
-        Screen::Menu => menu::render(frame, app),
-        Screen::Typing => typing::render(frame, app),
-        Screen::Results => results::render(frame, app),
-        Screen::Stats => stats::render(frame, app),
-        Screen::Help => help::render(frame, app),
-    }
+    // 2. Render the active screen above the footer row, then the footer:
+    //    every screen's key hints sit on the last row, in the same place.
+    let [body, footer] = Layout::vertical([Constraint::Min(0), Constraint::Length(1)]).areas(area);
+    let hints = match app.screen {
+        Screen::Menu => menu::render(frame, app, body),
+        Screen::Typing => typing::render(frame, app, body),
+        Screen::Results => results::render(frame, app, body),
+        Screen::Stats => stats::render(frame, app, body),
+        Screen::Help => help::render(frame, app, body),
+    };
+    render_footer(frame, app, footer, hints);
     // 3. Error overlay sits on top of everything else when present.
     if let Some(message) = &app.error_message {
         help::render_error(frame, &app.theme, message);
@@ -63,10 +66,11 @@ pub const fn key(code: KeyCode) -> Option<(KeyCode, KeyModifiers)> {
     Some((code, KeyModifiers::NONE))
 }
 
-/// Draw a one-line key-hint footer ("Enter start  ·  q quit") and register
-/// each actionable hint as a click target, so every footer action works with
-/// the keyboard *and* the mouse.
-pub fn render_footer(frame: &mut Frame, app: &App, area: Rect, hints: &[Hint]) {
+/// Draw the one-line key-hint footer ("Enter start  ·  q quit") on the last
+/// row and register each actionable hint as a click target, so every footer
+/// action works with the keyboard *and* the mouse. Each screen's `render`
+/// returns its hints; this is the only place they are drawn.
+fn render_footer(frame: &mut Frame, app: &App, area: Rect, hints: &[Hint]) {
     let style = Style::default().fg(app.theme.pending);
     let mut spans = vec![Span::raw("  ")];
     let mut x = area.x + 2;
@@ -347,5 +351,38 @@ mod tests {
             .collect();
         assert!(text.contains("sessions · 13 "), "{text}");
         assert_eq!(app.stats_view.as_ref().unwrap().scroll.get(), 3);
+    }
+
+    /// Every screen's key hints are on the last row, starting in the same
+    /// column, so they never jump around when the screen changes.
+    #[test]
+    fn footer_is_on_the_last_row_of_every_screen() {
+        use crate::app::Screen;
+        for (height, screen, first_hint) in [
+            (24, Screen::Menu, "↑/↓ category"),
+            (24, Screen::Typing, "Ctrl+R / F5 restart"),
+            (24, Screen::Results, "Enter / F5 restart"),
+            (24, Screen::Stats, "←/→ category"),
+            (24, Screen::Help, "Esc / F1 close"),
+            (40, Screen::Results, "Enter / F5 restart"),
+        ] {
+            let mut app = App::new(None, builtin::DARK, Mode::Time(15));
+            app.start_game(Mode::Words(5)).unwrap();
+            app.stats_cache = Some(Vec::new());
+            app.screen = screen;
+            let mut terminal = Terminal::new(TestBackend::new(80, height)).unwrap();
+            terminal.draw(|f| render(f, &app)).unwrap();
+            let last: String = (0..80)
+                .map(|x| {
+                    terminal.backend().buffer()[(x, height - 1)]
+                        .symbol()
+                        .to_string()
+                })
+                .collect();
+            assert!(
+                last.starts_with(&format!("  {first_hint}")),
+                "{screen:?}: {last:?}"
+            );
+        }
     }
 }

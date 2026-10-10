@@ -140,7 +140,8 @@ flowchart LR
     src --> ui["ui/"]
     ui --> ui_mod["mod.rs
     render() dispatcher, background paint,
-    clickable footer (render_footer)"]
+    one clickable footer on the last row for every
+    screen (each render returns its hints)"]
     ui --> menu["menu.rs
     banner + modes grouped by category, sized to fit
     (big or compact banner, blank lines dropped top-first,

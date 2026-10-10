@@ -10,7 +10,7 @@ use ratatui::{
 
 use ratatui::crossterm::event::{KeyCode, KeyModifiers};
 
-use super::{key, render_footer};
+use super::key;
 use crate::app::{menu_row, App, ClickAction, MenuAction};
 use crate::words::WordPool;
 
@@ -82,12 +82,12 @@ struct MenuLines {
 /// those blank lines as fit (the top ones go first), else no banner. Only
 /// when even that doesn't fit does the list scroll, with "more" hints in the
 /// border so nothing is hidden without a sign.
-pub fn render(f: &mut Frame, app: &App) {
-    let area = f.area();
+/// Returns the footer hints.
+pub fn render(f: &mut Frame, app: &App, area: Rect) -> &'static [super::Hint] {
     let box_width = (area.width * 3 / 5).max(MIN_BOX_WIDTH).min(area.width);
     let text_width = box_width.saturating_sub(2) as usize;
-    // Box borders and the footer.
-    const CHROME: usize = 3;
+    // Box borders.
+    const CHROME: usize = 2;
     let spaced = menu_lines(app, text_width, 0);
     let dense_rows = spaced.lines.len() - spaced.gaps;
     // Blank lines that fit with `banner` above the list (`None`: not even
@@ -116,7 +116,6 @@ pub fn render(f: &mut Frame, app: &App) {
     let layout = Layout::vertical([
         Constraint::Length(banner.rows()),
         Constraint::Min(0), // mode list
-        Constraint::Length(1),
     ])
     .split(area);
 
@@ -205,19 +204,15 @@ pub fn render(f: &mut Frame, app: &App) {
         .block(block);
     f.render_widget(list, inner);
 
-    render_footer(
-        f,
-        app,
-        layout[2],
-        &[
-            ("↑/↓ category", None),
-            ("←/→ option", None),
-            ("Enter start", key(KeyCode::Enter)),
-            ("s stats", key(KeyCode::Char('s'))),
-            ("q quit", key(KeyCode::Char('q'))),
-            ("? help", key(KeyCode::Char('?'))),
-        ],
-    );
+    const HINTS: &[super::Hint] = &[
+        ("↑/↓ category", None),
+        ("←/→ option", None),
+        ("Enter start", key(KeyCode::Enter)),
+        ("s stats", key(KeyCode::Char('s'))),
+        ("? help", key(KeyCode::Char('?'))),
+        ("q quit", key(KeyCode::Char('q'))),
+    ];
+    HINTS
 }
 
 /// The `p` / `n` / `b` word settings drawn on the menu's bottom border, and
