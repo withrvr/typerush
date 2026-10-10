@@ -1202,9 +1202,10 @@ mod tests {
         let app = full_menu_app();
         let rows = screen(&app, 100, 40);
         let dump = rows.join("\n");
-        // Title row, blank row, then the box with the banner at its top.
+        // Title row, blank row, then the box: a blank line, then the banner.
         assert!(rows[0].starts_with("  ◆ select mode"), "{dump}");
-        assert!(rows[3].contains("████████"), "{dump}");
+        assert!(rows[3].trim_matches(['│', ' ']).is_empty(), "{dump}");
+        assert!(rows[4].contains("████████"), "{dump}");
         let time = rows.iter().position(|r| r.contains("│➤ time")).unwrap();
         assert!(rows[time + 2].trim_matches(['│', ' ']).is_empty(), "{dump}");
         assert!(rows[time + 3].contains("words"), "{dump}");

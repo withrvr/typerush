@@ -21,9 +21,9 @@ const BANNER_WIDTH: u16 = 70;
 /// biggest that still lets every option fit on screen (see [`render`]).
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum Banner {
-    /// The five-row block-letter banner, then a blank row.
+    /// The five-row block-letter banner, a blank row above and below.
     Full,
-    /// The two-row half-block banner, then a blank row.
+    /// The two-row half-block banner, a blank row above and below.
     Compact,
     /// No banner at all — only when nothing else fits.
     Hidden,
@@ -33,8 +33,8 @@ impl Banner {
     /// Rows the banner takes, padding included.
     fn rows(self) -> u16 {
         match self {
-            Banner::Full => 6,
-            Banner::Compact => 3,
+            Banner::Full => 7,
+            Banner::Compact => 4,
             Banner::Hidden => 0,
         }
     }
@@ -42,6 +42,7 @@ impl Banner {
     fn text(self) -> &'static [&'static str] {
         match self {
             Banner::Full => &[
+                "",
                 "  ████████ ██    ██ ██████  ███████ ██████  ██    ██ ███████ ██   ██ ",
                 "     ██     ██  ██  ██   ██ ██      ██   ██ ██    ██ ██      ██   ██ ",
                 "     ██      ████   ██████  █████   ██████  ██    ██ ███████ ███████ ",
@@ -50,6 +51,7 @@ impl Banner {
                 "",
             ],
             Banner::Compact => &[
+                "",
                 "▀█▀ ▀▄▀ █▀█ █▀▀ █▀█ █ █ █▀▀ █ █",
                 " █   █  █▀▀ ██▄ █▀▄ █▄█ ▄▄█ █▀█",
                 "",
