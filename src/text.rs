@@ -8,10 +8,26 @@ use unicode_width::UnicodeWidthStr;
 
 /// Characters that must never be drawn as-is: control characters (a Linux
 /// file name may contain ESC, which starts a terminal escape sequence) and
-/// the bidirectional overrides that make text display in a different order
+/// the bidirectional controls that make text display in a different order
 /// than it is stored.
 pub fn is_unsafe(c: char) -> bool {
-    c.is_control() || matches!(c, '\u{202A}'..='\u{202E}' | '\u{2066}'..='\u{2069}')
+    c.is_control()
+        || matches!(
+            c,
+            '\u{061C}' | '\u{200E}' | '\u{200F}' | '\u{202A}'..='\u{202E}' | '\u{2066}'..='\u{2069}'
+        )
+}
+
+/// Characters that can't be typed, so a typing target must not contain
+/// them: everything [`is_unsafe`], plus invisible formatting characters —
+/// the byte-order mark some Windows editors put at the start of a UTF-8 file
+/// (U+FEFF), zero-width spaces and joiners, word joiners, and soft hyphens.
+pub fn is_untypeable(c: char) -> bool {
+    is_unsafe(c)
+        || matches!(
+            c,
+            '\u{00AD}' | '\u{180E}' | '\u{200B}'..='\u{200D}' | '\u{2060}'..='\u{2064}' | '\u{FEFF}'
+        )
 }
 
 /// `text` with every [`is_unsafe`] character shown as `?`.
@@ -47,12 +63,13 @@ pub fn shorten(text: &str, max_width: usize) -> Cow<'_, str> {
         head_width += width;
         head_end = index + grapheme.len();
     }
-    // The text is wider than `max_width`, so head and tail can't overlap.
     let tail_budget = budget - head_width;
     let (mut tail_start, mut tail_width) = (text.len(), 0);
     for (index, grapheme) in text.grapheme_indices(true).rev() {
         let width = grapheme.width();
-        if tail_width + width > tail_budget {
+        // `index < head_end` guards against overlap: a whole string's width
+        // can differ slightly from the sum of its graphemes' widths.
+        if tail_width + width > tail_budget || index < head_end {
             break;
         }
         tail_width += width;
@@ -69,7 +86,20 @@ mod tests {
     fn printable_replaces_control_and_bidi_characters() {
         assert_eq!(printable("a\u{1b}[31mb\tc"), "a?[31mb?c");
         assert_eq!(printable("x\u{202E}txt.exe"), "x?txt.exe");
+        assert_eq!(printable("a\u{200F}b"), "a?b");
         assert!(matches!(printable("plain name"), Cow::Borrowed(_)));
+    }
+
+    #[test]
+    fn byte_order_mark_and_zero_width_characters_are_untypeable() {
+        for c in [
+            '\u{FEFF}', '\u{200B}', '\u{200D}', '\u{00AD}', '\u{1b}', '\u{202E}',
+        ] {
+            assert!(is_untypeable(c), "{c:?}");
+        }
+        for c in ['a', 'é', ' ', '漢', '(', '…'] {
+            assert!(!is_untypeable(c), "{c:?}");
+        }
     }
 
     #[test]

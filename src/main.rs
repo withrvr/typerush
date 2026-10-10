@@ -131,7 +131,15 @@ fn main() -> Result<()> {
     let mut terminal = setup_terminal()?;
     let run_result = run_app(&mut terminal, cli);
     restore_terminal(&mut terminal)?;
-    run_result
+    if let Err(error) = run_result {
+        // The report Rust prints for an `Err` from `main`, line by line, but
+        // with any control characters (from a `--file` path) shown as `?`.
+        let report = format!("{error:?}");
+        let lines: Vec<_> = report.lines().map(text::printable).collect();
+        eprintln!("Error: {}", lines.join("\n"));
+        std::process::exit(1);
+    }
+    Ok(())
 }
 
 /// Print every built-in theme name on its own line and exit with status 0.
@@ -151,15 +159,14 @@ fn print_snippets_and_exit() -> ! {
     if snippets.is_empty() {
         eprintln!(
             "no snippets yet: drop .txt files in {}",
-            words::snippets::snippets_dir().display()
+            text::printable(&words::snippets::snippets_dir().display().to_string())
         );
     }
-    // The labels the menu shows, so the two always match; names are made
-    // safe for the terminal like everywhere else.
-    for (snippet, label) in snippets.iter().zip(app::snippet_labels(&snippets)) {
+    // The path column tells same-named files apart (notes.txt / notes.TXT).
+    for snippet in snippets {
         println!(
             "{}\t{}",
-            label,
+            text::printable(&snippet.name),
             text::printable(&snippet.path.display().to_string())
         );
     }

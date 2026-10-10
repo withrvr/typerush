@@ -280,12 +280,6 @@ pub fn build_menu(snippets: &[Snippet], last_custom_file: Option<&Path>) -> Vec<
 /// names are shortened in the middle so one name can't take over the row.
 pub const MAX_OPTION_WIDTH: usize = 24;
 
-/// Menu labels for `snippets` on their own (what `--list-snippets` prints),
-/// exactly as the custom row shows them when no other file is remembered.
-pub fn snippet_labels(snippets: &[Snippet]) -> Vec<String> {
-    custom_labels(snippets, None).0
-}
-
 /// Labels for the custom row: one per snippet, plus one for the remembered
 /// file unless it is one of the snippets (`None` then).
 ///
@@ -327,6 +321,7 @@ fn custom_labels(snippets: &[Snippet], last: Option<&Path>) -> (Vec<String>, Opt
             }
         })
         .collect();
+    let mut displays: Vec<String> = bases.iter().map(|base| display(base)).collect();
 
     let last = last.filter(|last| {
         // Compare canonical forms too, so `./notes.txt` or a symlink still
@@ -339,27 +334,33 @@ fn custom_labels(snippets: &[Snippet], last: Option<&Path>) -> (Vec<String>, Opt
     });
     if let Some(last) = last {
         let name = file_name(last);
-        let taken = bases.iter().any(|base| display(base) == display(&name));
-        let folder = last.parent().and_then(Path::file_name);
-        bases.push(match folder {
-            Some(folder) if taken => format!(
-                "{}{}{}",
-                folder.to_string_lossy(),
-                std::path::MAIN_SEPARATOR,
-                name
-            ),
+        // The folder of the absolute path, so a relative `--file notes.txt`
+        // still has one.
+        let folder = absolute(last.to_path_buf())
+            .parent()
+            .and_then(Path::file_name)
+            .map(|folder| folder.to_string_lossy().into_owned());
+        let base = match folder {
+            Some(folder) if displays.contains(&display(&name)) => {
+                format!("{folder}{}{name}", std::path::MAIN_SEPARATOR)
+            }
             _ => name,
-        });
+        };
+        displays.push(display(&base));
+        bases.push(base);
     }
 
-    // Every natural label is reserved before any number is handed out, so a
-    // generated "notes (2)" can never take a name another option has.
-    let displays: Vec<String> = bases.iter().map(|base| display(base)).collect();
-    let mut used: HashSet<String> = displays.iter().cloned().collect();
-    let mut claimed: HashSet<&str> = HashSet::new();
+    // Each natural label belongs to the first option that wants it, and all
+    // of them are taken before any number is handed out — so a generated
+    // "notes (2)" can never take a name another option has.
+    let mut owner: HashMap<&str, usize> = HashMap::new();
+    for (index, text) in displays.iter().enumerate() {
+        owner.entry(text.as_str()).or_insert(index);
+    }
+    let mut in_use: HashSet<String> = displays.iter().cloned().collect();
     let mut labels: Vec<String> = Vec::with_capacity(bases.len());
-    for (base, text) in bases.iter().zip(&displays) {
-        if claimed.insert(text) {
+    for (index, (base, text)) in bases.iter().zip(&displays).enumerate() {
+        if owner[text.as_str()] == index {
             labels.push(text.clone());
             continue;
         }
@@ -367,12 +368,12 @@ fn custom_labels(snippets: &[Snippet], last: Option<&Path>) -> (Vec<String>, Opt
         let mut n = 2;
         let label = loop {
             let candidate = display(&format!("{base} ({n})"));
-            if !used.contains(&candidate) {
+            if !in_use.contains(&candidate) {
                 break candidate;
             }
             n += 1;
         };
-        used.insert(label.clone());
+        in_use.insert(label.clone());
         labels.push(label);
     }
 
@@ -1502,6 +1503,26 @@ mod tests {
         );
         let unique: std::collections::HashSet<_> = labels.iter().collect();
         assert_eq!(unique.len(), labels.len());
+    }
+
+    fn snippet_labels(snippets: &[Snippet]) -> Vec<String> {
+        custom_labels(snippets, None).0
+    }
+
+    /// A relative remembered path still gets its folder when its name is
+    /// taken by a snippet.
+    #[test]
+    fn relative_remembered_file_gets_its_folder() {
+        let menu = build_menu(
+            &[snippet("notes.txt", "/s/notes.txt.txt")],
+            Some(Path::new("notes.txt")),
+        );
+        let cwd = std::env::current_dir().unwrap();
+        let folder = cwd.file_name().unwrap().to_string_lossy();
+        assert_eq!(
+            custom_options(&menu)[0].0,
+            format!("{folder}{}notes.txt", std::path::MAIN_SEPARATOR)
+        );
     }
 
     /// Two long names that differ only in the middle would look identical

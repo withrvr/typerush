@@ -71,6 +71,9 @@ straight from the menu.
 - Control characters in a custom file, a file name or an error message can
   no longer reach the terminal as escape sequences: they are dropped from the
   text you type and shown as `?` in names and messages.
+- A custom file saved with a byte-order mark (some Windows editors add one)
+  no longer makes its first word impossible to type; invisible characters
+  such as zero-width spaces are dropped from custom text too.
 
 ### Compatibility
 

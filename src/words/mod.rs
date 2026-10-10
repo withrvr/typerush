@@ -141,8 +141,9 @@ pub enum CodeLang {
 /// A missing or unreadable file surfaces as `Err` naming the path — a stale
 /// remembered file or deleted snippet otherwise shows a bare OS error.
 ///
-/// Control and bidi-override characters are dropped: they can't be typed,
-/// and drawn as-is they could send escape sequences to the terminal.
+/// Characters that can't be typed are dropped (see `text::is_untypeable`):
+/// a byte-order mark would otherwise make the first word impossible to get
+/// right, and control characters drawn as-is are terminal escape sequences.
 pub fn words_from_file(path: &Path) -> anyhow::Result<Vec<String>> {
     let content =
         std::fs::read_to_string(path).with_context(|| format!("can't read {}", path.display()))?;
@@ -150,7 +151,7 @@ pub fn words_from_file(path: &Path) -> anyhow::Result<Vec<String>> {
         .split_whitespace()
         .map(|word| {
             word.chars()
-                .filter(|c| !crate::text::is_unsafe(*c))
+                .filter(|c| !crate::text::is_untypeable(*c))
                 .collect::<String>()
         })
         .filter(|word| !word.is_empty())
@@ -172,6 +173,16 @@ mod tests {
             words_from_file(&path).unwrap(),
             ["plain", "[2Jclear", "name"]
         );
+    }
+
+    /// A UTF-8 byte-order mark (some Windows editors write one) must not
+    /// become part of the first word.
+    #[test]
+    fn file_words_ignore_byte_order_mark() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("bom.txt");
+        std::fs::write(&path, "\u{FEFF}hello world").unwrap();
+        assert_eq!(words_from_file(&path).unwrap(), ["hello", "world"]);
     }
 
     #[test]
