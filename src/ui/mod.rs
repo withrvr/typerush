@@ -437,7 +437,7 @@ mod tests {
         let mut app = App::new(None, builtin::DARK, Mode::Time(15));
         app.start_game(Mode::Words(2)).unwrap();
         app.stats_cache = Some(vec![record(61.5, "words-2")]);
-        for screen in [Screen::Typing, Screen::Results, Screen::Stats] {
+        for screen in [Screen::Menu, Screen::Typing, Screen::Results, Screen::Stats] {
             app.screen = screen;
             let rows = rows_of(&app);
             let first = rows[0].iter().position(|cell| cell.trim() != "").unwrap();
@@ -460,6 +460,19 @@ mod tests {
                     value_column,
                     "{screen:?} {label:?}"
                 );
+            }
+            if screen == Screen::Menu {
+                // The menu box is full width like the others, and its text
+                // starts two cells in from the border too.
+                let words = rows
+                    .iter()
+                    .find(|row| row.concat().contains("words"))
+                    .unwrap();
+                assert_eq!(words[0], "│", "menu box starts at column 0");
+                let column = (0..80)
+                    .find(|&x| words[x..].concat().starts_with("words"))
+                    .unwrap();
+                assert_eq!(column, 3, "menu text column");
             }
         }
     }

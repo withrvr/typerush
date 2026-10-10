@@ -143,8 +143,9 @@ flowchart LR
     one clickable footer on the last row for every
     screen (each render returns its hints)"]
     ui --> menu["menu.rs
-    banner + modes grouped by category, sized to fit
-    (big or compact banner, blank lines dropped top-first,
+    title row, then one full-width box: banner on top,
+    modes grouped by category, sized to fit (big or
+    compact banner, category gaps all or none,
     then scrolling with more hints); word settings on
     the bottom border; long rows wrap"]
     ui --> typing["typing.rs

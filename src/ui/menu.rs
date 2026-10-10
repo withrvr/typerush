@@ -14,22 +14,18 @@ use super::key;
 use crate::app::{menu_row, App, ClickAction, MenuAction};
 use crate::words::WordPool;
 
-/// Narrowest box (borders included) that fits the seven code options on one
-/// line, so the code row doesn't wrap on a standard 80-column terminal.
-const MIN_BOX_WIDTH: u16 = 64;
-
-/// The big banner's width; narrower terminals get the compact one.
+/// The big banner's width; narrower boxes get the compact one.
 const BANNER_WIDTH: u16 = 70;
 
-/// How the title is drawn. The menu picks the biggest that still lets every
-/// option fit on screen (see [`render`]).
+/// How the name is drawn at the top of the menu box. The menu picks the
+/// biggest that still lets every option fit on screen (see [`render`]).
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum Banner {
-    /// One row of breathing room, then the five-row block-letter banner.
+    /// The five-row block-letter banner, then a blank row.
     Full,
-    /// The two-row half-block banner.
+    /// The two-row half-block banner, then a blank row.
     Compact,
-    /// No title at all — only when nothing else fits.
+    /// No banner at all — only when nothing else fits.
     Hidden,
 }
 
@@ -38,7 +34,7 @@ impl Banner {
     fn rows(self) -> u16 {
         match self {
             Banner::Full => 6,
-            Banner::Compact => 2,
+            Banner::Compact => 3,
             Banner::Hidden => 0,
         }
     }
@@ -46,16 +42,17 @@ impl Banner {
     fn text(self) -> &'static [&'static str] {
         match self {
             Banner::Full => &[
-                "",
                 "  ████████ ██    ██ ██████  ███████ ██████  ██    ██ ███████ ██   ██ ",
                 "     ██     ██  ██  ██   ██ ██      ██   ██ ██    ██ ██      ██   ██ ",
                 "     ██      ████   ██████  █████   ██████  ██    ██ ███████ ███████ ",
                 "     ██       ██    ██      ██      ██   ██ ██    ██      ██ ██   ██ ",
                 "     ██       ██    ██      ███████ ██   ██  ██████  ███████ ██   ██ ",
+                "",
             ],
             Banner::Compact => &[
                 "▀█▀ ▀▄▀ █▀█ █▀▀ █▀█ █ █ █▀▀ █ █",
                 " █   █  █▀▀ ██▄ █▀▄ █▄█ ▄▄█ █▀█",
+                "",
             ],
             Banner::Hidden => &[],
         }
@@ -76,16 +73,32 @@ struct MenuLines {
 
 /// Render the menu screen. `app.menu_index` highlights the active option.
 ///
+/// Same grid as every screen: a title row and a blank row, then one
+/// full-width box. The banner sits at the top of the box, the mode list
+/// below it, and the word settings on its bottom border.
+///
 /// Every option should be on screen at once, on a standard 80×24 terminal
 /// too. The layout steps down only as far as it must: the full banner with a
-/// blank line between categories, else the compact banner with as many of
-/// those blank lines as fit (the top ones go first), else no banner. Only
+/// blank line between categories, else the compact banner with those blank
+/// lines if they all fit or none of them, else no banner. Only
 /// when even that doesn't fit does the list scroll, with "more" hints in the
 /// border so nothing is hidden without a sign.
 /// Returns the footer hints.
 pub fn render(f: &mut Frame, app: &App, area: Rect) -> &'static [super::Hint] {
-    let box_width = (area.width * 3 / 5).max(MIN_BOX_WIDTH).min(area.width);
-    let text_width = box_width.saturating_sub(2) as usize;
+    let theme = &app.theme;
+    let [title_area, box_area] =
+        Layout::vertical([Constraint::Length(2), Constraint::Min(0)]).areas(area);
+    f.render_widget(
+        Paragraph::new(Span::styled(
+            "  ◆ select mode",
+            Style::default()
+                .fg(theme.accent)
+                .add_modifier(Modifier::BOLD),
+        )),
+        title_area,
+    );
+
+    let text_width = box_area.width.saturating_sub(2) as usize;
     // Box borders.
     const CHROME: usize = 2;
     let spaced = menu_lines(app, text_width, 0);
@@ -93,9 +106,9 @@ pub fn render(f: &mut Frame, app: &App, area: Rect) -> &'static [super::Hint] {
     // Blank lines that fit with `banner` above the list (`None`: not even
     // the list without any fits).
     let gaps_that_fit = |banner: Banner| {
-        (area.height as usize).checked_sub(banner.rows() as usize + CHROME + dense_rows)
+        (box_area.height as usize).checked_sub(banner.rows() as usize + CHROME + dense_rows)
     };
-    let (banner, menu) = if area.width >= BANNER_WIDTH
+    let (banner, menu) = if text_width >= BANNER_WIDTH as usize
         && gaps_that_fit(Banner::Full).is_some_and(|fit| fit >= spaced.gaps)
     {
         (Banner::Full, spaced)
@@ -105,21 +118,21 @@ pub fn render(f: &mut Frame, app: &App, area: Rect) -> &'static [super::Hint] {
             .find(|banner| gaps_that_fit(*banner).is_some())
             .unwrap_or(Banner::Hidden);
         let fit = gaps_that_fit(banner).unwrap_or(0);
+        // All the gaps between categories, or none: a mix (dense at the
+        // top, spaced below) reads as misaligned.
         let menu = if fit >= spaced.gaps {
             spaced
         } else {
-            menu_lines(app, text_width, spaced.gaps - fit)
+            menu_lines(app, text_width, spaced.gaps)
         };
         (banner, menu)
     };
 
-    let layout = Layout::vertical([
-        Constraint::Length(banner.rows()),
-        Constraint::Min(0), // mode list
-    ])
-    .split(area);
-
-    let theme = &app.theme;
+    // Inside the border: the banner, then the list. Clicks outside the list
+    // area can't hit an option.
+    let inside = Block::default().borders(Borders::ALL).inner(box_area);
+    let [banner_area, menu_area] =
+        Layout::vertical([Constraint::Length(banner.rows()), Constraint::Min(0)]).areas(inside);
     let banner_style = Style::default()
         .fg(theme.accent)
         .add_modifier(Modifier::BOLD);
@@ -130,16 +143,7 @@ pub fn render(f: &mut Frame, app: &App, area: Rect) -> &'static [super::Hint] {
         .collect();
     f.render_widget(
         Paragraph::new(banner_lines).alignment(Alignment::Center),
-        layout[0],
-    );
-
-    let inner = layout[1].centered_horizontally(Constraint::Length(box_width));
-    // Text area inside the border — clicks outside it can't hit an option.
-    let menu_area = Rect::new(
-        inner.x + 1,
-        inner.y + 1,
-        inner.width.saturating_sub(2),
-        inner.height.saturating_sub(2),
+        banner_area,
     );
 
     // Too short even so: scroll so the selected row (and its heading, just
@@ -166,12 +170,12 @@ pub fn render(f: &mut Frame, app: &App, area: Rect) -> &'static [super::Hint] {
     // clickable chip that acts like its key.
     let (settings, chips) = word_settings(app);
     let border_row = Rect::new(
-        inner.x + 1,
-        inner.bottom().saturating_sub(1),
-        inner.width.saturating_sub(2),
+        box_area.x + 1,
+        box_area.bottom().saturating_sub(1),
+        box_area.width.saturating_sub(2),
         1,
     );
-    if inner.height >= 2 {
+    if box_area.height >= 2 {
         for (x, width, code) in chips {
             let area = Rect::new(border_row.x + x, border_row.y, width, 1).intersection(border_row);
             if !area.is_empty() {
@@ -187,13 +191,8 @@ pub fn render(f: &mut Frame, app: &App, area: Rect) -> &'static [super::Hint] {
     let hint_style = Style::default().fg(theme.pending);
     let mut block = Block::default()
         .borders(Borders::ALL)
-        .border_style(Style::default().fg(theme.neutral))
-        .title(Span::styled(
-            " select mode ",
-            Style::default()
-                .fg(theme.secondary)
-                .add_modifier(Modifier::BOLD),
-        ))
+        .border_style(Style::default().fg(theme.pending))
+        .title(" modes ")
         .title_bottom(settings);
     if more_above {
         block = block.title(Line::styled(" ▲ more ", hint_style).right_aligned());
@@ -201,10 +200,11 @@ pub fn render(f: &mut Frame, app: &App, area: Rect) -> &'static [super::Hint] {
     if more_below {
         block = block.title_bottom(Line::styled(" ▼ more ", hint_style).right_aligned());
     }
-    let list = Paragraph::new(menu.lines)
-        .scroll((scroll as u16, 0))
-        .block(block);
-    f.render_widget(list, inner);
+    f.render_widget(block, box_area);
+    f.render_widget(
+        Paragraph::new(menu.lines).scroll((scroll as u16, 0)),
+        menu_area,
+    );
 
     const HINTS: &[super::Hint] = &[
         ("↑/↓ category", None),
@@ -320,10 +320,13 @@ fn menu_lines(app: &App, width: usize, skip_gaps: usize) -> MenuLines {
             }
         }
 
-        let marker = Span::styled(
-            if is_selected_row { " ➤ " } else { "   " },
-            Style::default().fg(theme.accent),
-        );
+        // Text starts two cells in from the border, as in every box; the
+        // marker sits in that gutter. Headings follow a two-cell marker,
+        // options a one-cell indent (their chips carry a leading space).
+        let marker = |cells: usize| {
+            let text = if is_selected_row { "➤" } else { " " };
+            Span::styled(format!("{text:<cells$}"), Style::default().fg(theme.accent))
+        };
         let headed = has_heading(&row);
         if headed {
             // Category heading on its own line, options below.
@@ -335,13 +338,14 @@ fn menu_lines(app: &App, width: usize, skip_gaps: usize) -> MenuLines {
                 Style::default().fg(theme.pending)
             };
             lines.push(Line::from(vec![
-                marker.clone(),
-                Span::styled(format!(" {}", group), heading_style),
+                marker(2),
+                Span::styled(group, heading_style),
             ]));
         }
 
-        const INDENT: &str = "   ";
-        let mut spans: Vec<Span<'static>> = vec![if headed { Span::raw(INDENT) } else { marker }];
+        const INDENT: &str = " ";
+        let mut spans: Vec<Span<'static>> =
+            vec![if headed { Span::raw(INDENT) } else { marker(1) }];
         let mut used = spans[0].width();
         for index in row.clone() {
             let style = if index == app.menu_index {

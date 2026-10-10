@@ -80,6 +80,11 @@ mode at a time.
   summary's two columns have room between them, the typing header lines up
   with the other titles, and the menu leaves a blank line above the word
   settings.
+- **The main menu follows the same layout:** a `◆ select mode` title row,
+  then one full-width box with the TypeRush banner inside at the top and
+  the modes below, their text two cells in from the border like every
+  other box. When the blank lines between categories don't all fit (80×24),
+  none are drawn, instead of dense rows at the top and spaced ones below.
 - **Dependencies upgraded:** ratatui 0.30 (crossterm 0.29 through its
   re-export, only the features TypeRush uses), rand 0.10, toml 1. The
   `dirs` crate is gone (the standard library's `home_dir` is used). The

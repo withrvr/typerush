@@ -961,8 +961,8 @@ mod tests {
             .map(|row| row.iter().map(|cell| cell.symbol()).collect())
             .collect();
         // Selected last row is on screen, directly under "stats" (no gap).
-        let quit_row = rows.iter().position(|r| r.contains("➤  quit")).unwrap();
-        assert!(rows[quit_row - 1].contains("    stats"));
+        let quit_row = rows.iter().position(|r| r.contains("➤ quit")).unwrap();
+        assert!(rows[quit_row - 1].contains("│  stats"));
         target_cell(&app, ClickAction::Menu(quit)); // panics if not clickable
     }
 
@@ -1171,6 +1171,22 @@ mod tests {
         }
     }
 
+    /// When not every blank line between categories fits, none are drawn:
+    /// a mix (dense at the top, spaced below) looks misaligned.
+    #[test]
+    fn category_gaps_are_all_or_nothing() {
+        let app = App::new(None, ThemePalette::default(), Mode::Time(15));
+        let rows = screen(&app, 80, 24);
+        let dump = rows.join("\n");
+        let first = rows.iter().position(|r| r.contains("time")).unwrap();
+        let last = rows.iter().position(|r| r.contains("quit")).unwrap();
+        let blanks = rows[first..last]
+            .iter()
+            .filter(|r| r.trim_matches(['│', ' ']).is_empty())
+            .count();
+        assert_eq!(blanks, 0, "{dump}");
+    }
+
     /// With room to spare the menu looks like v0.3: the big banner, and a
     /// blank line between categories.
     #[test]
@@ -1178,8 +1194,10 @@ mod tests {
         let app = full_menu_app();
         let rows = screen(&app, 100, 40);
         let dump = rows.join("\n");
-        assert!(rows[1].contains("████████"), "{dump}");
-        let time = rows.iter().position(|r| r.contains("➤  time")).unwrap();
+        // Title row, blank row, then the box with the banner at its top.
+        assert!(rows[0].starts_with("  ◆ select mode"), "{dump}");
+        assert!(rows[3].contains("████████"), "{dump}");
+        let time = rows.iter().position(|r| r.contains("│➤ time")).unwrap();
         assert!(rows[time + 2].trim_matches(['│', ' ']).is_empty(), "{dump}");
         assert!(rows[time + 3].contains("words"), "{dump}");
         assert!(all_options_clickable(&app), "{dump}");

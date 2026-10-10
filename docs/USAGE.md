@@ -150,10 +150,13 @@ punctuation`, `n numbers`, `b 10k words` — each spelled out as `on` or `off`
 and clickable. They apply to time and words runs, whose saved label follows
 them (`time-30s+p`).
 
-The menu fits itself to the terminal. With room to spare it shows the big
-banner and a blank line between categories. On a standard 80×24 terminal it
-switches to a two-line banner and drops only as many of those blank lines as
-it must, so every option is on screen at launch. Only on a terminal too short
+The menu is laid out like every other screen: a title row, then one
+full-width box with the TypeRush banner at its top and the modes below. It
+fits itself to the terminal. With room to spare it shows the big banner and
+a blank line between categories. On a standard 80×24 terminal it switches
+to a two-line banner and, when the blank lines between categories don't all
+fit, leaves them all out (never a mix), so every option is on screen at
+launch. Only on a terminal too short
 for the whole list does it scroll, and then the border shows `▲ more` /
 `▼ more`.
 
