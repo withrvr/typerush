@@ -1706,10 +1706,12 @@ mod tests {
             None,
         );
         assert_eq!(app.menu[app.menu_index].label, "30s");
+        // Made absolute: on Windows `/home/me/…` has no drive, so it gains one.
+        let remembered = absolute(PathBuf::from("/home/me/notes.txt"));
         assert_eq!(
             custom_options(&app.menu),
             [
-                ("notes.txt", Some(Path::new("/home/me/notes.txt"))),
+                ("notes.txt", Some(remembered.as_path())),
                 ("alpha", Some(Path::new("/s/alpha.txt"))),
             ]
         );
