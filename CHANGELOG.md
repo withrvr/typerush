@@ -13,6 +13,72 @@ _No unreleased changes yet._
 
 ---
 
+## [0.5.0] — quality of life
+
+Pause a run, type any session again word for word, a daily challenge,
+your history as CSV, and settings you can change without opening a file.
+
+### Added
+
+- **Pause and resume** a run with `Ctrl+P` / `F2`. The clock stands still
+  and the words are hidden until you resume; paused time never counts —
+  not towards WPM, a time run's clock, or the time saved in your stats.
+  `Esc` still finishes the run and `Ctrl+R` / `F5` still restart it.
+- **Replay a session word for word.** Every session now keeps the words it
+  typed. On the Stats screen, pick one with `↑` / `↓` (or a click) and
+  press `Enter` to type exactly those words again — on the bests table,
+  your best run in that mode. `typerush --replay` does the same for your
+  last session, `--replay 3` for the third most recent. A replay ends the
+  way the original did, is saved as `<mode>+replay` (so words you've seen
+  never set your real best), and Results shows how you did against the
+  original (`+12 vs original`). Restarting replays it again.
+- **Daily challenge** — the `daily` menu row, `--daily`, or
+  `mode = "daily"` in `[defaults]`: 40 words from the 10,000-word pool,
+  the same for everyone on a given day and new every day. Results shows
+  **today best**, counting only runs of today's words.
+- **Export your history as CSV:** `typerush export` prints it,
+  `typerush export FILE` writes it, and `e` on the Stats screen writes
+  `~/.typerush/stats.csv`.
+- **`typerush config`** — change settings from the shell without opening
+  the file: `config show` (every setting and the value in use, marking
+  defaults and values that are ignored, and why), `config get NAME`,
+  `config set NAME VALUE`, `config reset [NAME]`, `config path`. Values
+  are checked with the same rules TypeRush uses at start, and the file is
+  edited in place: your comments and layout are kept. Resetting
+  everything moves the file aside instead of deleting it.
+- **`typerush --init-config`** (or `typerush config init`) writes a starter
+  `~/.typerush/config.toml`: every setting at its default, each explained.
+  It won't replace a config you already have.
+- **A Settings screen** (`c` in the menu, or the new `settings` option):
+  theme, start mode, punctuation, numbers and the 10k pool, plus reset to
+  defaults (it asks first). Changes are saved at once and used at once — a
+  theme shows as you pick it. Keyboard and mouse (`‹` / `›` on each value).
+
+### Changed
+
+- **`stats`, `settings` and `quit` share the last row of the menu,** so
+  the two new options still fit a standard 80×24 terminal.
+- **Stats lists have a selected row** (highlighted) that `↑` / `↓`, the
+  mouse wheel and a click move; the list scrolls with it. The footer now
+  offers `Enter replay` and `e export`.
+- **The help overlay** covers pause, replay, export and settings, and still
+  fits 80×24.
+- `config.example.toml` holds the built-in defaults (it used to pick the
+  monokai theme), so as a starter file it changes nothing until edited.
+- Paths shown on screen write your home folder as `~`, and text in the
+  error box keeps its inset when it wraps.
+
+### Fixed
+
+- **A color like `"#aé€"` in `[colors]` crashed TypeRush at startup,** and
+  `"#+F+F+F"` was accepted as a color. Hex colors must now be exactly six
+  hex digits.
+- **`config.toml` is only read if it is a regular file of at most 1 MiB,**
+  like a custom file: a named pipe there used to hang startup, and a device
+  or huge file was read into memory whole.
+
+---
+
 ## [0.4.1] — polish, speed and stats by category
 
 A faster, safer, easier-to-read TypeRush, and stats you can look at one
@@ -450,7 +516,9 @@ keyboard alternates** for accessibility.
   dedicated docs.
 - Demo GIF uses absolute GitHub raw URL for correct display on crates.io.
 
-[Unreleased]: https://github.com/withrvr/typerush/compare/v0.4.0...HEAD
+[Unreleased]: https://github.com/withrvr/typerush/compare/v0.5.0...HEAD
+[0.5.0]: https://github.com/withrvr/typerush/compare/v0.4.1...v0.5.0
+[0.4.1]: https://github.com/withrvr/typerush/compare/v0.4.0...v0.4.1
 [0.4.0]: https://github.com/withrvr/typerush/compare/v0.3.0...v0.4.0
 [0.3.0]: https://github.com/withrvr/typerush/compare/v0.2.1...v0.3.0
 [0.2.1]: https://github.com/withrvr/typerush/compare/v0.2.0...v0.2.1
