@@ -34,7 +34,7 @@ jobs:
             archive: zip
 
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@v7
 
       - name: Install Rust
         uses: dtolnay/rust-toolchain@stable
@@ -74,7 +74,7 @@ jobs:
           "ASSET=dist/$name.zip" | Out-File -FilePath $env:GITHUB_ENV -Append
 
       - name: Upload asset
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: typerush-${{ matrix.target }}
           path: ${{ env.ASSET }}
@@ -87,13 +87,13 @@ jobs:
     permissions:
       contents: write
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@v7
         with:
           # Fetch full history so the auto-generated release notes can compare against the previous tag.
           fetch-depth: 0
 
       - name: Download all build artifacts
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v8
         with:
           path: dist
           merge-multiple: true
@@ -110,7 +110,7 @@ jobs:
           echo "EOF" >> $GITHUB_OUTPUT
 
       - name: Publish release
-        uses: softprops/action-gh-release@v2
+        uses: softprops/action-gh-release@v3
         with:
           name: TypeRush ${{ github.ref_name }}
           tag_name: ${{ github.ref_name }}

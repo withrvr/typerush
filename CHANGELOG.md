@@ -67,6 +67,9 @@ your best, type blind — and make TypeRush look the way you want.
   border's first cell.
 - **The help box has a blank line above and below its text** (two
   two-line entries became one line each, so it still fits 80×24 whole).
+- Dependencies: crate patch updates (`serde_json`, `syn`, `cc`, `nix`,
+  `mac_address`) and newer GitHub Actions (`checkout` v7,
+  `upload-artifact` v7, `download-artifact` v8, `action-gh-release` v3).
 
 ---
 
