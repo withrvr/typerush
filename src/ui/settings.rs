@@ -12,7 +12,7 @@ use ratatui::{
 use super::{key, selected_style, LABEL_WIDTH};
 use crate::app::{App, ClickAction};
 use crate::settings::{mode_name, Row, SettingsView, ROWS};
-use crate::text::{printable, shorten};
+use crate::text::{printable, screen_path, shorten};
 use crate::words::WordPool;
 
 /// Render the Settings screen. Returns the footer hints.
@@ -50,8 +50,7 @@ pub fn render(f: &mut Frame, app: &App, area: Rect) -> &'static [super::Hint] {
         || " not saved ".to_string(),
         |path| {
             let room = (inner.width as usize).saturating_sub(12);
-            let path = printable(&path.display().to_string()).into_owned();
-            format!(" saved to {} ", shorten(&path, room))
+            format!(" saved to {} ", shorten(&screen_path(path), room))
         },
     );
     let block = block.title_bottom(Span::styled(saved_to, Style::default().fg(theme.pending)));
@@ -110,10 +109,12 @@ fn row_line(
 ) -> (Line<'static>, Vec<(u16, u16, KeyCode)>) {
     let theme = &app.theme;
     let selected = view.selected == index;
-    let marker = Span::styled(
-        if selected { "➤ " } else { "  " },
-        Style::default().fg(theme.accent),
-    );
+    // Text starts two cells in from the border, as in every box; the ➤
+    // marker sits in that gutter.
+    let marker = |cells: usize| {
+        let text = if selected { "➤" } else { " " };
+        Span::styled(format!("{text:<cells$}"), Style::default().fg(theme.accent))
+    };
     let chip_style = |style: Style| {
         if selected {
             selected_style(theme)
@@ -137,12 +138,14 @@ fn row_line(
         };
         let chip = Span::styled(text, chip_style(Style::default().fg(theme.neutral)));
         let width = chip.width() as u16;
+        // A one-cell marker: the chip's own leading space puts its text in
+        // the label column.
         let line = Line::from(vec![
-            marker,
+            marker(1),
             chip,
             Span::styled(hint, Style::default().fg(theme.pending)),
         ]);
-        return (line, vec![(2, width, KeyCode::Enter)]);
+        return (line, vec![(1, width, KeyCode::Enter)]);
     }
 
     let (name, value) = match row {
@@ -176,16 +179,14 @@ fn row_line(
     let width = chip.width() as u16;
     let chips = vec![
         (value_x, 1, KeyCode::Left),
-        (value_x + 2, width, KeyCode::Enter),
-        (value_x + 3 + width, 1, KeyCode::Right),
+        (value_x + 1, width, KeyCode::Enter),
+        (value_x + 1 + width, 1, KeyCode::Right),
     ];
     let line = Line::from(vec![
-        marker,
+        marker(2),
         label,
         Span::styled("‹", arrow),
-        Span::raw(" "),
         chip,
-        Span::raw(" "),
         Span::styled("›", arrow),
     ]);
     (line, chips)

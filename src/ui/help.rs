@@ -4,7 +4,7 @@
 
 use ratatui::{
     prelude::*,
-    widgets::{Block, Borders, Clear, Paragraph, Wrap},
+    widgets::{Block, Borders, Clear, Padding, Paragraph, Wrap},
 };
 
 use ratatui::crossterm::event::KeyCode;
@@ -91,15 +91,17 @@ pub fn render(f: &mut Frame, app: &App, screen: Rect) -> &'static [super::Hint] 
 /// Tall enough for the wrapped message plus the hint line.
 pub fn render_message(f: &mut Frame, title: &'static str, border: Color, message: &str) {
     use unicode_width::UnicodeWidthStr;
-    // Messages can carry file paths, which may contain control characters.
-    // Made safe and indented line by line, so a multi-line message (a TOML
-    // parse error points at the bad line with a caret) keeps its layout.
+    // Messages can carry file paths, which may contain control characters:
+    // made safe line by line, so a multi-line message (a TOML parse error
+    // points at the bad line with a caret) keeps its layout. The text is
+    // inset by the box's padding, so a wrapped line keeps the inset too.
     let lines: Vec<String> = message
         .lines()
-        .map(|line| format!("  {}", crate::text::printable(line)))
+        .map(|line| crate::text::printable(line).into_owned())
         .collect();
     const WIDTH: u16 = 60;
-    let text_width = WIDTH.min(f.area().width).saturating_sub(2).max(1) as usize;
+    // Inside the borders and two cells of padding each side.
+    let text_width = WIDTH.min(f.area().width).saturating_sub(6).max(1) as usize;
     // Rows the message takes once each line wraps; slightly over is fine,
     // the box just has a gap.
     let message_rows: usize = lines
@@ -112,11 +114,12 @@ pub fn render_message(f: &mut Frame, title: &'static str, border: Color, message
         .area()
         .centered(Constraint::Length(WIDTH), Constraint::Length(height));
     f.render_widget(Clear, area);
-    let p = Paragraph::new(format!("{}\n\n  press any key or click", lines.join("\n")))
+    let p = Paragraph::new(format!("{}\n\npress any key or click", lines.join("\n")))
         .wrap(Wrap { trim: false })
         .block(
             Block::default()
                 .borders(Borders::ALL)
+                .padding(Padding::horizontal(2))
                 .border_style(Style::default().fg(border))
                 .title(title),
         );

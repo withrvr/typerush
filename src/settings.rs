@@ -235,8 +235,8 @@ impl App {
         match edit::reset_all(&path) {
             Ok(Some(backup)) => {
                 self.notice = Some(format!(
-                    "every setting is back to its default; your old file is at\n{}",
-                    crate::text::printable(&backup.display().to_string())
+                    "every setting is back to its default; your old file is at {}",
+                    crate::text::screen_path(&backup)
                 ));
             }
             Ok(None) => {}

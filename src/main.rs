@@ -760,11 +760,11 @@ fn export_stats(app: &mut App) {
     };
     let sessions = app.stats_cache.as_deref().unwrap_or(&[]);
     let count = sessions.len();
-    let shown = text::printable(&file.display().to_string()).into_owned();
+    let shown = text::screen_path(&file);
     match storage::export_csv(&file, sessions) {
         Ok(()) => {
             app.notice = Some(format!(
-                "exported {} to\n{shown}",
+                "exported {} to {shown}",
                 commands::sessions_text(count)
             ));
         }

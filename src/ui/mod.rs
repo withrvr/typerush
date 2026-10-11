@@ -243,6 +243,36 @@ mod tests {
         assert!(!dump.contains('\x1b'));
     }
 
+    /// A long notice (a path) wraps inside the box's inset: every line of
+    /// it starts two cells in from the border, wrapped ones too.
+    #[test]
+    fn modal_text_keeps_its_inset_when_wrapped() {
+        let mut app = App::new(None, builtin::DARK, Mode::Time(15));
+        app.notice = Some(format!("exported 3 sessions to /{}", "long/".repeat(20)));
+        let mut terminal = Terminal::new(TestBackend::new(80, 24)).unwrap();
+        terminal.draw(|f| render(f, &app)).unwrap();
+        let rows: Vec<String> = terminal
+            .backend()
+            .buffer()
+            .content()
+            .chunks(80)
+            .map(|row| row.iter().map(|c| c.symbol()).collect())
+            .collect();
+        let dump = rows.join("\n");
+        let inside: Vec<&str> = rows
+            .iter()
+            .filter(|r| r.contains("long/") || r.contains("exported"))
+            .map(|r| r.split('│').nth(2).unwrap()) // menu border, then the modal's
+            .collect();
+        assert!(inside.len() >= 2, "{dump}");
+        assert!(
+            inside
+                .iter()
+                .all(|r| r.starts_with("  ") && !r.starts_with("   ")),
+            "{dump}"
+        );
+    }
+
     /// The help overlay fits a standard 80×24 terminal whole: every line,
     /// none wrapped, and the close hint on its bottom border.
     #[test]
