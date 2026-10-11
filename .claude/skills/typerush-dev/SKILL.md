@@ -56,6 +56,9 @@ with a throwaway `HOME` — never the real `~/.typerush` — following
   entry. New modes need a label `Mode::from_label` reads back (replay).
 - Footer hints must fit 80 columns, and the menu and help overlay must fit
   80×24 — tests check both; count the cells before adding one.
+- Anything added up over the history or the whole run (XP, the profile,
+  filters, missed characters) is worked out when a screen opens or a run
+  ends — never while drawing.
 - Docs: diagrams in `.md` files are mermaid; README.md has no mermaid
   (crates.io renders it). Never name other products or companies in the
   repo — describe features in our own words.

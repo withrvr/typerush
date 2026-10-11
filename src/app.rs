@@ -41,6 +41,8 @@ pub enum Screen {
     Stats,
     /// Change the saved settings (`~/.typerush/config.toml`).
     Settings,
+    /// Level, totals, bests side by side and the activity calendar.
+    Profile,
     /// Floating keybindings overlay (any screen can toggle it on).
     Help,
 }
@@ -216,6 +218,16 @@ impl Word {
     }
 }
 
+/// One second of a run (paused time left out): keys typed in it, and how
+/// many of them were right and wrong. Drives raw speed per second, the
+/// consistency figure and the Results chart.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct Second {
+    pub typed: u32,
+    pub correct: u32,
+    pub errors: u32,
+}
+
 /// What a mouse click on a drawn region does. Every click maps onto an
 /// existing keyboard action, so the mouse never reaches anything the
 /// keyboard can't.
@@ -260,6 +272,8 @@ pub enum MenuAction {
     ShowStats,
     /// Open the Settings screen.
     ShowSettings,
+    /// Open the Profile screen.
+    ShowProfile,
     /// Quit the application.
     Quit,
 }
@@ -293,8 +307,8 @@ pub fn default_menu() -> Vec<MenuItem> {
 ///
 /// Categories with several options come first (time, words, code, symbols,
 /// custom), then the single runs (daily, quote, zen), then one row with
-/// the actions that don't start a game (`stats`, `settings`, `quit`) side
-/// by side.
+/// the actions that don't start a game (`stats`, `profile`, `settings`,
+/// `quit`) side by side.
 pub fn build_menu(snippets: &[Snippet], last_custom_file: Option<&Path>) -> Vec<MenuItem> {
     use crate::words::CodeLang;
     let start = |group, label: &str, mode| MenuItem {
@@ -305,7 +319,7 @@ pub fn build_menu(snippets: &[Snippet], last_custom_file: Option<&Path>) -> Vec<
         custom_path: None,
     };
     // The actions that don't start a game share the last row, with no
-    // heading: "stats  settings  quit".
+    // heading: "stats  profile  settings  quit".
     let other = |label: &str, action| MenuItem {
         group: "app",
         label: label.to_string(),
@@ -357,6 +371,7 @@ pub fn build_menu(snippets: &[Snippet], last_custom_file: Option<&Path>) -> Vec<
     menu.push(start("zen", "zen", Mode::Zen));
 
     menu.push(other("stats", MenuAction::ShowStats));
+    menu.push(other("profile", MenuAction::ShowProfile));
     menu.push(other("settings", MenuAction::ShowSettings));
     menu.push(other("quit", MenuAction::Quit));
     menu
@@ -550,6 +565,18 @@ pub struct App {
     /// Per expected character: how many times something else was typed instead.
     pub key_misses: HashMap<char, u64>,
 
+    // --- deeper results (v0.6.0) ---
+    /// The run second by second: index = whole seconds of typing elapsed
+    /// when the key was pressed. ponytail: one entry per second typed —
+    /// 12 bytes a second, so even a day of zen is under a megabyte.
+    pub timeline: Vec<Second>,
+    /// The run was ended with Esc, not by its clock or its last character.
+    pub ended_early: bool,
+    /// Characters of the text left untyped when the run ended
+    /// ([`App::missed_chars`]), worked out once then — Results shows it on
+    /// every frame, and a big custom file has a lot of text left.
+    pub missed: usize,
+
     // --- stats caching (v0.3.0) ---
     /// Full session history, read from disk the first time the Stats or
     /// Results screen needs it and replaced by the updated list on every
@@ -583,6 +610,12 @@ pub struct App {
     /// Where `app_state` is saved. `None` means "don't persist" — the
     /// default, so tests never write to the real home directory.
     pub state_file: Option<PathBuf>,
+    /// Runs started since `app_state` was last saved: counted on a run's
+    /// first key (never in the key path's disk writes) and saved by
+    /// [`App::save_run_count`] when a run ends and on quit.
+    pub runs_started_unsaved: u64,
+    /// When the first of those runs started, for `counting_since`.
+    pub first_unsaved_run: Option<chrono::DateTime<chrono::Local>>,
     /// Where `e` on the Stats screen writes the CSV export
     /// (`~/.typerush/stats.csv`). `None` — the default, and in tests unless
     /// they set one — means exporting is off.
@@ -596,6 +629,11 @@ pub struct App {
     /// What the Settings screen shows, read from `config_file` when the
     /// screen is entered and after each change.
     pub settings: Option<crate::settings::SettingsView>,
+
+    // --- profile (v0.6.0) ---
+    /// What the Profile screen shows, worked out from the history when the
+    /// screen is entered (not coming back from help).
+    pub profile: Option<crate::progress::Profile>,
 
     // --- replay (v0.5.0) ---
     /// The session being typed again, while replaying one. Restarting
@@ -650,6 +688,9 @@ impl App {
             theme: palette,
             key_hits: HashMap::new(),
             key_misses: HashMap::new(),
+            timeline: Vec::new(),
+            ended_early: false,
+            missed: 0,
             stats_cache: None,
             stats_view: None,
             results_comparison: None,
@@ -659,9 +700,12 @@ impl App {
             snippets: Vec::new(),
             app_state: AppState::default(),
             state_file: None,
+            runs_started_unsaved: 0,
+            first_unsaved_run: None,
             export_file: None,
             config_file: None,
             settings: None,
+            profile: None,
             replay: None,
             click_targets: RefCell::new(Vec::new()),
             pressed_target: None,
@@ -838,6 +882,43 @@ impl App {
         self.rebuild_menu();
     }
 
+    /// Runs started in all: the saved count, the runs since, and the saved
+    /// sessions from before counting began (they were started too).
+    pub fn runs_started(&self) -> u64 {
+        let since = self.app_state.counting_since.or(self.first_unsaved_run);
+        let before = self
+            .stats_cache
+            .as_deref()
+            .unwrap_or(&[])
+            .iter()
+            .filter(|s| since.is_none_or(|since| s.timestamp < since))
+            .count() as u64;
+        self.app_state.runs_started + self.runs_started_unsaved + before
+    }
+
+    /// Add the runs started since the last save to `state.json`. Called
+    /// when a run ends and on quit; a failed write keeps them for the next
+    /// try. Tests (no `state_file`) keep them in memory.
+    pub fn save_run_count(&mut self) {
+        if self.runs_started_unsaved == 0 {
+            return;
+        }
+        let Some(file) = self.state_file.clone() else {
+            return;
+        };
+        // Added to the count on disk, not the one read at start: another
+        // TypeRush window may have saved its runs since.
+        let mut updated = state::load_from_path(&file);
+        updated.runs_started += self.runs_started_unsaved;
+        updated.counting_since = updated.counting_since.or(self.first_unsaved_run);
+        if state::save_to_path(&file, &updated).is_ok() {
+            self.app_state.runs_started = updated.runs_started;
+            self.app_state.counting_since = updated.counting_since;
+            self.runs_started_unsaved = 0;
+            self.first_unsaved_run = None;
+        }
+    }
+
     /// Menu ↑/↓: jump to the previous/next row (wrapping), keeping the same
     /// column where the target row has one, else its last option.
     pub fn menu_move_row(&mut self, down: bool) {
@@ -922,6 +1003,67 @@ impl App {
             return 100.0;
         }
         (self.correct_chars as f64 / self.total_typed_chars as f64) * 100.0
+    }
+
+    /// Raw words per minute: every key typed, right or wrong —
+    /// `(total_typed_chars / 5) / minutes`. Next to `wpm` it shows how
+    /// much speed the mistakes cost.
+    pub fn raw_wpm(&self) -> f64 {
+        let minutes = self.elapsed().as_secs_f64() / 60.0;
+        if minutes <= 0.0 {
+            return 0.0;
+        }
+        (self.total_typed_chars as f64 / 5.0) / minutes
+    }
+
+    /// How even the typing speed was, 0–100%: 100 minus the spread of the
+    /// keys typed per whole second, as a percentage of their mean (100% =
+    /// the same number of keys every second). Seconds with no key count, so
+    /// stopping to think lowers it. `None` under two whole seconds.
+    pub fn consistency(&self) -> Option<f64> {
+        let seconds = self.elapsed().as_secs() as usize;
+        if seconds < 2 {
+            return None;
+        }
+        let typed = |i: usize| self.timeline.get(i).map_or(0.0, |s| f64::from(s.typed));
+        let mean = (0..seconds).map(typed).sum::<f64>() / seconds as f64;
+        if mean <= 0.0 {
+            return None;
+        }
+        let variance =
+            (0..seconds).map(|i| (typed(i) - mean).powi(2)).sum::<f64>() / seconds as f64;
+        Some((100.0 * (1.0 - variance.sqrt() / mean)).clamp(0.0, 100.0))
+    }
+
+    /// Characters of the text never typed: what was left of a fixed text
+    /// (words, quote, code, symbols, custom, daily) when the run ended
+    /// early. Endless runs (time, zen) miss nothing — there is always more.
+    pub fn missed_chars(&self) -> usize {
+        if matches!(self.mode, Mode::Time(_) | Mode::Zen) {
+            return 0;
+        }
+        let Some(current) = self.words.get(self.current_word) else {
+            return 0;
+        };
+        let rest_of_word = current
+            .text
+            .chars()
+            .count()
+            .saturating_sub(current.typed.chars().count());
+        // Each later word, and the space before it.
+        let later: usize = self.words[self.current_word + 1..]
+            .iter()
+            .map(|word| word.text.chars().count() + 1)
+            .sum();
+        rest_of_word + later
+    }
+
+    /// End the run now (Esc): it counts as ended early, not completed.
+    pub fn end_early(&mut self) {
+        if self.ended_at.is_none() {
+            self.ended_early = true;
+        }
+        self.finish_game();
     }
 
     /// In `Mode::Time`, how long is left on the clock. `None` for all other modes.
@@ -1018,6 +1160,9 @@ impl App {
         self.total_typed_chars = 0;
         self.key_hits.clear();
         self.key_misses.clear();
+        self.timeline.clear();
+        self.ended_early = false;
+        self.missed = 0;
         self.top_up_words();
         self.screen = Screen::Typing;
     }
@@ -1093,6 +1238,7 @@ impl App {
         }
         if self.ended_at.is_none() {
             self.ended_at = Some(Instant::now());
+            self.missed = self.missed_chars();
         }
         self.screen = Screen::Results;
     }
@@ -1110,12 +1256,20 @@ impl App {
         if self.is_paused() {
             return;
         }
+        // A run's first key starts it. Zen runs aren't counted: they are
+        // never saved, so they could never be completed.
+        if self.started_at.is_none() && self.mode != Mode::Zen {
+            self.runs_started_unsaved += 1;
+            self.first_unsaved_run
+                .get_or_insert_with(chrono::Local::now);
+        }
         self.ensure_timer_started();
         if self.current_word >= self.words.len() {
             return;
         }
 
         let is_last_word = self.current_word + 1 >= self.words.len();
+        let second = self.elapsed().as_secs() as usize;
         let active_word = &mut self.words[self.current_word];
         let cursor_position = active_word.typed.chars().count();
         let word_len = active_word.text.chars().count();
@@ -1133,6 +1287,16 @@ impl App {
             &mut self.key_misses
         };
         *key_counts.entry(target_char).or_insert(0) += 1;
+        if self.timeline.len() <= second {
+            self.timeline.resize(second + 1, Second::default());
+        }
+        let tally = &mut self.timeline[second];
+        tally.typed += 1;
+        if is_correct {
+            tally.correct += 1;
+        } else {
+            tally.errors += 1;
+        }
 
         if expected_char.is_none() {
             // Cursor on the space after the word: that slot is a character too.
@@ -1290,7 +1454,7 @@ mod tests {
         let mut app = menu_app(); // time · 30s (column 1)
         app.menu_move_row(false);
         assert_eq!(app.menu[app.menu_index].group, "app");
-        assert_eq!(app.menu[app.menu_index].label, "settings");
+        assert_eq!(app.menu[app.menu_index].label, "profile");
         app.menu_move_row(true);
         assert_eq!(app.menu[app.menu_index].group, "time");
     }
@@ -1359,6 +1523,140 @@ mod tests {
         app.restart().unwrap();
         assert!(!app.is_paused());
         assert_eq!(app.paused_for, Duration::ZERO);
+    }
+
+    // ── deeper results (v0.6.0) ────────────────────────────────────────────
+
+    /// Each key lands in the second it was typed (paused time left out):
+    /// counted as typed, and as right or wrong.
+    #[test]
+    fn keys_are_tallied_per_second() {
+        let mut app = make_app_with_word("abcdef");
+        app.started_at = Some(Instant::now() - Duration::from_millis(2500));
+        app.handle_char('a');
+        app.handle_char('x');
+        assert_eq!(app.timeline.len(), 3);
+        assert_eq!(app.timeline[0], Second::default());
+        assert_eq!(
+            app.timeline[2],
+            Second {
+                typed: 2,
+                correct: 1,
+                errors: 1
+            }
+        );
+        app.restart().unwrap();
+        assert!(app.timeline.is_empty());
+    }
+
+    /// Raw WPM counts every key; consistency is 100% for an even pace,
+    /// lower for an uneven one, and needs two whole seconds.
+    #[test]
+    fn raw_wpm_and_consistency() {
+        let mut app = make_app_with_word("abcdef");
+        app.ended_at = Some(Instant::now());
+        app.started_at = app.ended_at.map(|end| end - Duration::from_secs(60));
+        app.total_typed_chars = 300;
+        app.correct_chars = 250;
+        assert!((app.raw_wpm() - 60.0).abs() < 1e-9);
+        assert!((app.wpm() - 50.0).abs() < 1e-9);
+
+        let even = Second {
+            typed: 5,
+            correct: 5,
+            errors: 0,
+        };
+        app.timeline = vec![even; 60];
+        assert_eq!(app.consistency(), Some(100.0));
+        // Alternating 2 and 8 keys a second: mean 5, spread 3 → 40%.
+        app.timeline = (0..60)
+            .map(|i| Second {
+                typed: if i % 2 == 0 { 2 } else { 8 },
+                ..Second::default()
+            })
+            .collect();
+        assert!((app.consistency().unwrap() - 40.0).abs() < 1e-9);
+        // Seconds with no keys count, as zero: half the minute idle is a
+        // spread as large as the mean.
+        app.timeline = vec![even; 30];
+        assert!(app.consistency().unwrap().abs() < 1e-9);
+
+        app.started_at = app.ended_at.map(|end| end - Duration::from_millis(1900));
+        assert_eq!(app.consistency(), None, "under two whole seconds");
+    }
+
+    /// Missed characters: what was left of a fixed text when the run ended
+    /// early — the rest of the word, later words and the spaces before
+    /// them. An endless run misses nothing.
+    #[test]
+    fn missed_characters_and_ending_early() {
+        let mut app = custom_app(&["abc", "de", "fgh"]);
+        for ch in "abc d".chars() {
+            app.handle_char(ch);
+        }
+        assert_eq!(app.missed_chars(), 1 + 4); // "e", then " fgh"
+        app.end_early();
+        assert!(app.ended_early);
+        assert_eq!(app.screen, Screen::Results);
+        assert_eq!(app.missed, 5, "kept when the run ended");
+
+        let mut app = custom_app(&["ab"]);
+        app.handle_char('a');
+        app.handle_char('b');
+        assert_eq!(app.screen, Screen::Results);
+        assert!(!app.ended_early, "finished by its last character");
+        assert_eq!(app.missed_chars(), 0);
+        app.end_early(); // Esc after the end changes nothing
+        assert!(!app.ended_early);
+
+        let mut app = menu_app();
+        app.start_game(Mode::Time(15)).unwrap();
+        assert_eq!(app.missed_chars(), 0);
+    }
+
+    /// A run counts as started on its first key — once, however many keys
+    /// follow; zen doesn't count. Saved sessions from before counting began
+    /// count too, and saving the count moves it to state.json.
+    #[test]
+    fn runs_started_are_counted_once_and_saved() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut app = menu_app();
+        let old = chrono::Local::now() - chrono::Duration::days(3);
+        app.stats_cache = Some(vec![
+            SessionRecord {
+                timestamp: old,
+                ..SessionRecord::default()
+            };
+            2
+        ]);
+        assert_eq!(app.runs_started(), 2);
+        app.start_game(Mode::Words(5)).unwrap();
+        app.handle_char('x');
+        app.handle_char('y');
+        app.restart().unwrap();
+        app.handle_char('x');
+        app.start_game(Mode::Zen).unwrap();
+        app.handle_char('x');
+        assert_eq!(app.runs_started_unsaved, 2);
+        assert_eq!(app.runs_started(), 4);
+
+        // Another window saved 5 runs meanwhile: they add up.
+        let file = dir.path().join("state.json");
+        let other = state::AppState {
+            runs_started: 5,
+            counting_since: Some(old),
+            ..Default::default()
+        };
+        state::save_to_path(&file, &other).unwrap();
+        app.state_file = Some(file);
+        app.save_run_count();
+        assert_eq!(app.runs_started_unsaved, 0);
+        let saved = state::load_from_path(&dir.path().join("state.json"));
+        assert_eq!(saved.runs_started, 7);
+        assert_eq!(saved.counting_since, Some(old), "the earliest start kept");
+        // 7 counted since `old`; the two saved sessions at `old` aren't
+        // before it, so they aren't added again.
+        assert_eq!(app.runs_started(), 7);
     }
 
     // ── daily challenge (v0.5.0) ───────────────────────────────────────────
@@ -1757,7 +2055,7 @@ mod tests {
             ["time", "words", "code", "symbols", "custom", "daily", "quote", "zen", "app"]
         );
         assert_eq!(row("daily"), ["daily"]);
-        assert_eq!(row("app"), ["stats", "settings", "quit"]);
+        assert_eq!(row("app"), ["stats", "profile", "settings", "quit"]);
     }
 
     #[test]
@@ -2014,6 +2312,7 @@ mod tests {
             vec![snippet("notes.txt", "/s/notes.txt.txt")],
             AppState {
                 last_custom_file: Some("notes.txt".into()),
+                ..Default::default()
             },
             None,
         );
@@ -2161,6 +2460,7 @@ mod tests {
             vec![snippet("alpha", "/s/alpha.txt")],
             AppState {
                 last_custom_file: Some("/home/me/notes.txt".into()),
+                ..Default::default()
             },
             None,
         );
@@ -2189,6 +2489,7 @@ mod tests {
             Vec::new(),
             AppState {
                 last_custom_file: Some("/old/remembered.txt".into()),
+                ..Default::default()
             },
             None,
         );

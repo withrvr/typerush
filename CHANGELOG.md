@@ -13,6 +13,60 @@ _No unreleased changes yet._
 
 ---
 
+## [0.6.0] — profile and deeper results
+
+See more of every run, and of all of them: a chart and new figures on
+Results, filters on your history, levels, and a Profile with a year of
+practice on a calendar.
+
+### Added
+
+- **A chart of the run on Results** ([#4]): the WPM so far, the raw
+  speed of each second and a dot on every second with a mistake. Runs
+  under two seconds, and zen, say why there's no chart.
+- **Raw WPM** (every key typed, right or wrong), **consistency** (how even
+  your pace was, second by second: 100% = the same speed every second) and
+  **chars: correct · incorrect · missed** (missed = text left when a run is
+  ended early) on Results. Raw WPM and consistency are saved, and shown as
+  new columns in the Stats sessions list — raw WPM even for old sessions.
+- **Filter and sort your history** on the Stats screen: dates (`d`: all
+  time, today, 7 days, 30 days, a year), word settings (`w`: any, plain,
+  `+p`, `+n`, `+10k`), sort (`s`: date, WPM, raw, accuracy, consistency,
+  time) and `r` to reverse — as clickable chips on the list's bottom
+  border. The filters apply to the summary, trend and bests table too, and
+  stay as you change category and come back.
+- **Levels and XP:** one XP per second typed; Results shows what a run
+  earned (`+31 xp · level 7 · 62%`) and any level-up.
+- **A Profile screen** (`u`, or `profile` on the menu's last row): level
+  and XP, the day you started, days typed, current and longest streak, runs
+  started and completed, time and keys typed, your best for 15/30/60/120 s
+  next to 10/25/50/100 words, and the mode you play most.
+- **An activity calendar** on the Profile: the last year, a column per
+  week, each day shaded by how long you typed (`· ░ ▒ ▓ █`); pick a day
+  with the arrows (`Home` for today) or a click to see its runs, time and
+  best.
+- The CSV export gains `raw_wpm`, `consistency`, `missed` and `completed`
+  columns (at the end, so existing columns don't move).
+
+### Changed
+
+- **`Esc` while typing ends the run early:** it is still saved (if a
+  second or longer), but counts as started, not completed.
+- The Results trend strip is replaced by the run's chart (Stats keeps a
+  trend per category); the Results box has two more lines.
+- `state.json` also keeps how many runs you've started, and since when.
+- The help overlay mentions the Stats filters, the Profile and the calendar.
+
+### Fixed
+
+- **The help box, the error / notice boxes, the Results chart and the
+  filled part of the typing progress bar now use the theme's colors.** They
+  were drawn on the terminal's own background — black on `light`,
+  `monokai` and `dracula`. Every screen in every state, on every theme, is
+  now checked for it.
+
+---
+
 ## [0.5.0] — quality of life
 
 Pause a run, type any session again word for word, a daily challenge,
@@ -518,7 +572,8 @@ keyboard alternates** for accessibility.
   dedicated docs.
 - Demo GIF uses absolute GitHub raw URL for correct display on crates.io.
 
-[Unreleased]: https://github.com/withrvr/typerush/compare/v0.5.0...HEAD
+[Unreleased]: https://github.com/withrvr/typerush/compare/v0.6.0...HEAD
+[0.6.0]: https://github.com/withrvr/typerush/compare/v0.5.0...v0.6.0
 [0.5.0]: https://github.com/withrvr/typerush/compare/v0.4.1...v0.5.0
 [0.4.1]: https://github.com/withrvr/typerush/compare/v0.4.0...v0.4.1
 [0.4.0]: https://github.com/withrvr/typerush/compare/v0.3.0...v0.4.0
@@ -527,3 +582,4 @@ keyboard alternates** for accessibility.
 [0.2.0]: https://github.com/withrvr/typerush/compare/v0.1.1...v0.2.0
 [0.1.1]: https://github.com/withrvr/typerush/releases/tag/v0.1.1
 [#8]: https://github.com/withrvr/typerush/issues/8
+[#4]: https://github.com/withrvr/typerush/issues/4

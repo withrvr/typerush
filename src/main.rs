@@ -14,6 +14,7 @@ mod app;
 mod commands;
 mod config;
 mod game;
+mod progress;
 mod settings;
 mod state;
 mod storage;
@@ -382,6 +383,8 @@ fn run_app(terminal: &mut Tui, cli: Cli) -> Result<()> {
             break;
         }
     }
+    // Runs started since the last save (a run left with Ctrl+C included).
+    app.save_run_count();
     Ok(())
 }
 
@@ -464,6 +467,7 @@ fn handle_key(app: &mut App, code: KeyCode, mods: KeyModifiers) {
         Screen::Results => handle_results_key(app, code, mods),
         Screen::Stats => handle_stats_key(app, code, mods),
         Screen::Settings => handle_settings_key(app, code),
+        Screen::Profile => handle_profile_key(app, code),
         Screen::Help => {}
     }
 }
@@ -556,10 +560,23 @@ fn handle_mouse(app: &mut App, mouse: MouseEvent) {
     }
 }
 
-/// Select row `row` of the list on screen (a clicked Stats table row).
+/// Select row `row` of the list on screen: a clicked Stats table row, or
+/// on the Profile calendar the day `row` days before today.
 fn select_row(app: &mut App, row: usize) {
-    if let Some(view) = app.stats_view.as_mut() {
-        view.select_row(row);
+    match app.screen {
+        Screen::Profile => {
+            if let Some(profile) = app.profile.as_mut() {
+                let today = chrono::Local::now().date_naive();
+                if let Some(day) = today.checked_sub_days(chrono::Days::new(row as u64)) {
+                    profile.select_day(day);
+                }
+            }
+        }
+        _ => {
+            if let Some(view) = app.stats_view.as_mut() {
+                view.select_row(row);
+            }
+        }
     }
 }
 
@@ -595,6 +612,7 @@ fn handle_menu_key(app: &mut App, code: KeyCode, _mods: KeyModifiers) {
                 }
                 MenuAction::ShowStats => app.screen = Screen::Stats,
                 MenuAction::ShowSettings => app.screen = Screen::Settings,
+                MenuAction::ShowProfile => app.screen = Screen::Profile,
                 MenuAction::Quit => app.should_quit = true,
             }
         }
@@ -608,6 +626,28 @@ fn handle_menu_key(app: &mut App, code: KeyCode, _mods: KeyModifiers) {
         }
         KeyCode::Tab | KeyCode::Char('s') => app.screen = Screen::Stats,
         KeyCode::Char('c') => app.screen = Screen::Settings,
+        KeyCode::Char('u') => app.screen = Screen::Profile,
+        KeyCode::Char('q') => app.should_quit = true,
+        _ => {}
+    }
+}
+
+/// Keymap for the Profile screen: the arrows pick a calendar day, Esc /
+/// `m` / Tab back to the menu, `q` quits.
+fn handle_profile_key(app: &mut App, code: KeyCode) {
+    // The calendar's day: ←/→ a week, ↑/↓ a day, Home today.
+    if let Some(profile) = app.profile.as_mut() {
+        match code {
+            KeyCode::Left | KeyCode::Char('h') => return profile.move_day(-7),
+            KeyCode::Right | KeyCode::Char('l') => return profile.move_day(7),
+            KeyCode::Up | KeyCode::Char('k') => return profile.move_day(-1),
+            KeyCode::Down | KeyCode::Char('j') => return profile.move_day(1),
+            KeyCode::Home => return profile.select_day(chrono::Local::now().date_naive()),
+            _ => {}
+        }
+    }
+    match code {
+        KeyCode::Esc | KeyCode::Char('m') | KeyCode::Tab => app.screen = Screen::Menu,
         KeyCode::Char('q') => app.should_quit = true,
         _ => {}
     }
@@ -639,9 +679,7 @@ pub(crate) fn handle_typing_key(app: &mut App, code: KeyCode, mods: KeyModifiers
         // Pause / resume: keys never typed, like restart's.
         KeyCode::F(2) => app.toggle_pause(),
         KeyCode::Char('p') if ctrl => app.toggle_pause(),
-        KeyCode::Esc => {
-            app.finish_game();
-        }
+        KeyCode::Esc => app.end_early(),
         KeyCode::F(5) => {
             if let Err(e) = app.restart() {
                 app.show_error(&e);
@@ -716,7 +754,9 @@ fn handle_results_key(app: &mut App, code: KeyCode, mods: KeyModifiers) {
 
 /// Keymap for the historical stats screen: ←/→ (h/l) pick a category, `a`
 /// shows all sessions, ↑/↓ (j/k), PgUp/PgDn and Home/End move the
-/// selection, Enter replays the selected session, `e` exports CSV.
+/// selection, Enter replays the selected session, `e` exports CSV; `d`,
+/// `w`, `s` and `r` change the date range, word settings, sort and its
+/// direction.
 fn handle_stats_key(app: &mut App, code: KeyCode, _mods: KeyModifiers) {
     let history = app.stats_cache.as_deref().unwrap_or(&[]);
     if let Some(view) = app.stats_view.as_mut() {
@@ -724,6 +764,10 @@ fn handle_stats_key(app: &mut App, code: KeyCode, _mods: KeyModifiers) {
             KeyCode::Left | KeyCode::Char('h') => return view.cycle(history, false),
             KeyCode::Right | KeyCode::Char('l') => return view.cycle(history, true),
             KeyCode::Char('a') => return view.select(history, 0),
+            KeyCode::Char('d') => return view.set_filters(history, view.filters.next_range()),
+            KeyCode::Char('w') => return view.set_filters(history, view.filters.next_words()),
+            KeyCode::Char('s') => return view.set_filters(history, view.filters.next_sort()),
+            KeyCode::Char('r') => return view.set_filters(history, view.filters.reversed()),
             KeyCode::Up | KeyCode::Char('k') => return view.move_selection(-1),
             KeyCode::Down | KeyCode::Char('j') => return view.move_selection(1),
             KeyCode::PageUp => return view.move_selection(-10),
@@ -786,12 +830,19 @@ fn after_input(app: &mut App, last_screen: Screen, session_saved: &mut bool, sta
     }
     if app.screen == Screen::Typing {
         *session_saved = false;
+    } else if last_screen == Screen::Typing {
+        // A run just ended (or was left): keep its "started" count.
+        app.save_run_count();
     }
 
     // History is read from disk once; every save hands back the updated list,
     // so the cache stays current without re-reading the file. The render path
     // never touches disk.
-    if matches!(app.screen, Screen::Stats | Screen::Results) && app.stats_cache.is_none() {
+    if matches!(
+        app.screen,
+        Screen::Stats | Screen::Results | Screen::Profile
+    ) && app.stats_cache.is_none()
+    {
         app.stats_cache = Some(storage::load_sessions_from_path(stats_file).unwrap_or_default());
     }
     // Results comparisons and the Stats summary (streak, averages, key
@@ -809,6 +860,13 @@ fn after_input(app: &mut App, last_screen: Screen, session_saved: &mut bool, sta
     // other way in rebuilds the view (a game may have been saved since).
     // Straight after a run it opens on that run's mode; otherwise it stays
     // on the category that was showing.
+    // The profile is added up on the way in (not coming back from help),
+    // never per frame.
+    if app.screen == Screen::Profile && !matches!(last_screen, Screen::Profile | Screen::Help) {
+        let started = app.runs_started();
+        let sessions = app.stats_cache.as_deref().unwrap_or(&[]);
+        app.profile = Some(progress::Profile::new(sessions, started));
+    }
     // Settings are read from the file on the way in (not coming back from
     // help), so an edit made outside — `typerush config set` — shows up.
     if app.screen == Screen::Settings && !matches!(last_screen, Screen::Settings | Screen::Help) {
@@ -828,8 +886,17 @@ fn after_input(app: &mut App, last_screen: Screen, session_saved: &mut bool, sta
                 .as_ref()
                 .map(|view| view.category_name().to_string())
         };
+        // The filters and sort stay as they were.
+        let filters = app
+            .stats_view
+            .as_ref()
+            .map_or_else(Default::default, |view| view.filters);
         let sessions = app.stats_cache.as_deref().unwrap_or(&[]);
-        app.stats_view = Some(storage::StatsView::new(sessions, category.as_deref()));
+        app.stats_view = Some(storage::StatsView::new(
+            sessions,
+            category.as_deref(),
+            filters,
+        ));
     }
 }
 
@@ -873,6 +940,9 @@ fn save_current_session(app: &mut App, stats_file: &Path) {
             .map(|(k, v)| (k.to_string(), *v))
             .collect(),
         text: app.session_text(),
+        consistency: app.consistency(),
+        missed: app.missed,
+        ended_early: app.ended_early,
     };
     match storage::save_session_to_path(stats_file, &record) {
         Ok(history) => {
@@ -1301,6 +1371,7 @@ mod tests {
         let state_file = dir.path().join("state.json");
         let remembered = state::AppState {
             last_custom_file: Some("/kept/notes.txt".into()),
+            ..Default::default()
         };
         state::save_to_path(&state_file, &remembered).unwrap();
 
@@ -1352,6 +1423,7 @@ mod tests {
             vec![snippet("drill"), snippet("essay"), snippet("hello")],
             state::AppState {
                 last_custom_file: Some("/home/me/notes.txt".into()),
+                ..Default::default()
             },
             None,
         );
@@ -1978,6 +2050,212 @@ mod tests {
         app.menu_index = app.menu.iter().position(|m| m.label == "settings").unwrap();
         press(&mut app, KeyCode::Enter);
         assert_eq!(app.screen, Screen::Settings);
+    }
+
+    // ── deeper results (v0.6.0) ──────────────────────────────────────────────
+
+    /// A run ended with Esc is saved as ended early, with the characters it
+    /// missed and its consistency; Results shows raw WPM, consistency and
+    /// the breakdown.
+    #[test]
+    fn esc_saves_an_early_end_with_its_breakdown() {
+        let dir = tempfile::tempdir().unwrap();
+        let stats_file = dir.path().join("stats.json");
+        let mut app = make_typing_app(); // "hello world"
+        app.started_at = Some(std::time::Instant::now() - Duration::from_secs(4));
+        for ch in "hellx".chars() {
+            app.handle_char(ch);
+        }
+        handle_key(&mut app, KeyCode::Esc, KeyModifiers::NONE);
+        after_input(&mut app, Screen::Typing, &mut false, &stats_file);
+        let saved = storage::load_sessions_from_path(&stats_file).unwrap();
+        let record = &saved[0];
+        assert!(record.ended_early);
+        assert_eq!(record.missed, 6); // " world"
+        assert_eq!(record.consistency, app.consistency());
+        let rows = screen(&app, 80, 24).join("\n");
+        assert!(rows.contains("raw wpm"), "{rows}");
+        assert!(rows.contains("consistency"), "{rows}");
+        assert!(
+            rows.contains("4 correct  ·  1 incorrect  ·  6 missed"),
+            "{rows}"
+        );
+    }
+
+    /// `d`, `w`, `s` and `r` (or their chips on the table's border) change
+    /// the Stats filters and sort, which stay when you come back.
+    #[test]
+    fn stats_filters_by_key_and_click_and_stay() {
+        let mut app = App::new(None, ThemePalette::default(), Mode::Time(15));
+        app.stats_cache = Some(vec![
+            SessionRecord {
+                wpm: 40.0,
+                mode: "time-30s".into(),
+                timestamp: chrono::Local::now(),
+                ..SessionRecord::default()
+            },
+            SessionRecord {
+                wpm: 90.0,
+                mode: "time-30s+p".into(),
+                timestamp: chrono::Local::now(),
+                ..SessionRecord::default()
+            },
+        ]);
+        app.screen = Screen::Stats;
+        after_input(&mut app, Screen::Menu, &mut false, Path::new("unused"));
+        let filters = |app: &App| app.stats_view.as_ref().unwrap().filters;
+        handle_key(&mut app, KeyCode::Char('d'), KeyModifiers::NONE);
+        assert_eq!(filters(&app).range, storage::DateRange::Today);
+        handle_key(&mut app, KeyCode::Char('s'), KeyModifiers::NONE);
+        handle_key(&mut app, KeyCode::Char('r'), KeyModifiers::NONE);
+        assert_eq!(filters(&app).sort, storage::SortBy::Wpm);
+        assert!(filters(&app).ascending);
+
+        draw(&app);
+        let words = ClickAction::Key(KeyCode::Char('w'), KeyModifiers::NONE);
+        let chip = target_cell(&app, words);
+        click(&mut app, chip);
+        assert_eq!(filters(&app).words, storage::WordsFilter::Plain);
+        assert_eq!(app.stats_view.as_ref().unwrap().order, [0]);
+        let rows = screen(&app, 80, 24).join("\n");
+        assert!(
+            rows.contains("d dates today   w words plain   s sort wpm ↑"),
+            "{rows}"
+        );
+
+        handle_key(&mut app, KeyCode::Esc, KeyModifiers::NONE);
+        after_input(&mut app, Screen::Stats, &mut false, Path::new("unused"));
+        handle_key(&mut app, KeyCode::Char('s'), KeyModifiers::NONE);
+        after_input(&mut app, Screen::Menu, &mut false, Path::new("unused"));
+        assert_eq!(filters(&app).words, storage::WordsFilter::Plain, "kept");
+
+        handle_key(&mut app, KeyCode::Char('d'), KeyModifiers::NONE); // 7 days
+        handle_key(&mut app, KeyCode::Char('w'), KeyModifiers::NONE); // +p
+        handle_key(&mut app, KeyCode::Char('w'), KeyModifiers::NONE); // +n
+        let rows = screen(&app, 80, 24).join("\n");
+        assert!(rows.contains("sessions · none match"), "{rows}");
+    }
+
+    /// Results says what a saved run earned, and a level-up when it crosses
+    /// one: 295 s before plus a 6 s run passes level 2 at 300 XP.
+    #[test]
+    fn results_show_xp_and_level_up() {
+        let dir = tempfile::tempdir().unwrap();
+        let stats_file = dir.path().join("stats.json");
+        let earlier = SessionRecord {
+            duration_secs: 295.0,
+            mode: "quote".into(),
+            timestamp: chrono::Local::now(),
+            ..SessionRecord::default()
+        };
+        storage::save_session_to_path(&stats_file, &earlier).unwrap();
+        let mut app = make_typing_app();
+        app.started_at = Some(std::time::Instant::now() - Duration::from_secs(6));
+        for ch in "hello world".chars() {
+            app.handle_char(ch);
+        }
+        after_input(&mut app, Screen::Typing, &mut false, &stats_file);
+        let title = screen(&app, 80, 24)[0].clone();
+        assert!(title.contains("+6 xp  ·  ★ level 2!"), "{title}");
+
+        app.restart().unwrap();
+        app.words = vec![Word::new("hello".into()), Word::new("world".into())];
+        app.started_at = Some(std::time::Instant::now() - Duration::from_secs(4));
+        for ch in "hello world".chars() {
+            app.handle_char(ch);
+        }
+        after_input(&mut app, Screen::Typing, &mut false, &stats_file);
+        let title = screen(&app, 80, 24)[0].clone();
+        assert!(title.contains("+4 xp  ·  level 2  ·  1%"), "{title}");
+    }
+
+    // ── profile (v0.6.0) ─────────────────────────────────────────────────────
+
+    /// `u` (or the menu's profile option) opens the Profile, added up from
+    /// the history on the way in; Esc goes back. Help and back keeps it.
+    #[test]
+    fn profile_opens_from_the_menu_and_adds_up() {
+        let dir = tempfile::tempdir().unwrap();
+        let stats_file = dir.path().join("stats.json");
+        for (mode, wpm) in [("time-30s", 61.0), ("words-25", 72.5), ("time-30s", 64.0)] {
+            saved(&stats_file, mode, "", wpm);
+        }
+        let mut app = App::new(None, ThemePalette::default(), Mode::Time(15));
+        handle_key(&mut app, KeyCode::Char('u'), KeyModifiers::NONE);
+        assert_eq!(app.screen, Screen::Profile);
+        after_input(&mut app, Screen::Menu, &mut false, &stats_file);
+        let profile = app.profile.as_ref().unwrap();
+        assert_eq!((profile.sessions, profile.started), (3, 3));
+        let rows = screen(&app, 80, 24);
+        let dump = rows.join("\n");
+        assert!(
+            dump.contains("  time  wpm   acc    words wpm   acc"),
+            "{dump}"
+        );
+        assert!(dump.contains("30s   64.0  0%"), "{dump}");
+        assert!(dump.contains("25    72.5"), "{dump}");
+        assert!(dump.contains("most played  time-30s (2)"), "{dump}");
+        assert!(dump.contains("completed   3 (100%)"), "{dump}");
+
+        handle_key(&mut app, KeyCode::Esc, KeyModifiers::NONE);
+        assert_eq!(app.screen, Screen::Menu);
+        app.menu_index = app.menu.iter().position(|m| m.label == "profile").unwrap();
+        handle_key(&mut app, KeyCode::Enter, KeyModifiers::NONE);
+        assert_eq!(app.screen, Screen::Profile);
+    }
+
+    /// The calendar shades each day typed and describes the picked one: the
+    /// arrows move it by weeks and days, a click picks a day, Home is today.
+    #[test]
+    fn profile_calendar_picks_days() {
+        let dir = tempfile::tempdir().unwrap();
+        let stats_file = dir.path().join("stats.json");
+        let today = chrono::Local::now();
+        let three_days_ago = today - chrono::Days::new(3);
+        for (when, secs) in [
+            (three_days_ago, 30.0),
+            (three_days_ago, 30.0),
+            (today, 120.0),
+        ] {
+            let record = SessionRecord {
+                wpm: 50.0,
+                mode: "quote".into(),
+                duration_secs: secs,
+                timestamp: when,
+                ..SessionRecord::default()
+            };
+            storage::save_session_to_path(&stats_file, &record).unwrap();
+        }
+        let mut app = App::new(None, ThemePalette::default(), Mode::Time(15));
+        handle_key(&mut app, KeyCode::Char('u'), KeyModifiers::NONE);
+        after_input(&mut app, Screen::Menu, &mut false, &stats_file);
+        let dump = screen(&app, 80, 24).join("\n");
+        assert!(dump.contains("activity · 2 days typed"), "{dump}");
+        assert!(dump.contains("1 run · 2m · best 50.0"), "{dump}");
+        assert!(
+            dump.contains('█') && dump.contains('▒'),
+            "busiest and half: {dump}"
+        );
+
+        handle_key(&mut app, KeyCode::Up, KeyModifiers::NONE);
+        handle_key(&mut app, KeyCode::Up, KeyModifiers::NONE);
+        handle_key(&mut app, KeyCode::Up, KeyModifiers::NONE);
+        let picked = three_days_ago.date_naive();
+        assert_eq!(app.profile.as_ref().unwrap().selected_day, picked);
+        let dump = screen(&app, 80, 24).join("\n");
+        assert!(dump.contains("2 runs · 1m · best 50.0"), "{dump}");
+
+        handle_key(&mut app, KeyCode::Home, KeyModifiers::NONE);
+        handle_key(&mut app, KeyCode::Left, KeyModifiers::NONE);
+        let week_ago = today.date_naive() - chrono::Days::new(7);
+        assert_eq!(app.profile.as_ref().unwrap().selected_day, week_ago);
+        let dump = screen(&app, 80, 24).join("\n");
+        assert!(dump.contains("· no typing"), "{dump}");
+
+        draw(&app);
+        let cell = target_cell(&app, ClickAction::Select(3));
+        click(&mut app, cell);
+        assert_eq!(app.profile.as_ref().unwrap().selected_day, picked);
     }
 
     // ── saving ───────────────────────────────────────────────────────────────

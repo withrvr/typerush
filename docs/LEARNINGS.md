@@ -56,6 +56,92 @@ rule that keeps it fixed).
 
 ---
 
+## v0.6.0 — profile and deeper results
+
+### Bugs (caught before they shipped)
+
+- **Results walked the whole remaining text on every frame.** The first
+  version showed "missed" characters by calling `missed_chars()` while
+  drawing; for a 1 MiB custom file ended early that is ~170,000 words per
+  frame. Fix: worked out once in `finish_game` (`App::missed`). Rule
+  restated: the render path reads results, it doesn't compute them from
+  the whole run.
+- **A far calendar jump could overflow date arithmetic.** `Home` first
+  moved the picked day by a huge number of days, and `NaiveDate + Days`
+  panics out of range. Fix: `Home` picks today, and `move_day` uses
+  `checked_add_days` / `checked_sub_days` and clamps. Guard:
+  `calendar_day_stays_on_the_calendar` moves by `i64::MIN` and `i64::MAX`.
+- **The chart's legend vanished.** ratatui hides a chart legend that takes
+  more than a quarter of the chart's height — always, at 80×24. Fix: the
+  legend is in the box title (with names, not only colors). Found by the
+  render test, not by reading the docs.
+- **Overlays were black on every painted theme.** Symptom (reported from
+  use): the help box, opened from Results or anywhere, and the error and
+  notice boxes showed a black background on `light`, `monokai` and
+  `dracula`. Cause: they cleared their area with ratatui's `Clear`, which
+  resets cells to the terminal's own colors, undoing the theme's
+  background paint. Fix: one `ui::clear` that clears and repaints the
+  theme's base style, used by all three. Then the Results chart's plot was
+  reported black too: `Chart` draws on a canvas of its own that fills its
+  cells with the terminal's colors unless the chart is given a style — and
+  the first version of the screen-wide test drew Results with no run to
+  chart, so it never saw one. Fix: the chart gets the theme's base style;
+  the test now draws a real chart. Guards:
+  `overlays_use_the_theme_background`, and
+  `every_screen_is_on_the_theme_background` — every screen, with real data
+  in every widget, on every painted theme: no cell in the terminal's own
+  colors. Lesson: a check over "every screen" only covers the widgets the
+  test actually makes draw. So the last pass, `no_terminal_colors_anywhere`,
+  draws every screen in every state with data in every widget (paused,
+  zen, a charted run, every Stats category with filters, a filled
+  calendar, a pending reset) under each overlay at three sizes — and it
+  found one more: the typing progress bar's filled part, whose
+  `gauge_style` had no background. The release binary was swept the same
+  way in tmux, counting default-background cells (zero on every painted
+  theme; a parser that tracks colors across lines, since `capture-pane`
+  only prints changes).
+- **A test passed by luck.** `results_show_xp_and_level_up` typed "hello
+  world" after `restart()`, which deals new random words; it passed only
+  while a frame happened to finish. Fix: set the words after restarting.
+  Rule: a test that types must type the words it put there.
+
+### Features and changes
+
+- **Raw WPM, consistency, breakdown.** `App::timeline` tallies keys per
+  whole second, indexed by `elapsed()`, so pauses stay out without any
+  special case. Raw WPM for old records comes from fields they already
+  had (`total_chars`, `duration_secs`) — computed, not stored, so history
+  from v0.1 on has it. Consistency is our own measure: 100 minus the
+  coefficient of variation of keys per second, idle seconds counted.
+- **The Results chart** replaced the trend strip (Stats has a trend per
+  category). Whole seconds only: a last part-second divided by its length
+  reads as a spike.
+- **Filters** live in `StatsView` and are carried over when it is rebuilt,
+  like the category. Two lists from one filter: `indices` in time order for
+  the summary and trend, `order` sorted for the table. `bests_by_mode`
+  became `bests_among` a set of indices so the bests table can follow the
+  filters while the ★ and the categories don't.
+- **Levels and XP** are pure functions of the history (no stored XP to
+  drift out of step): one per second typed, a level curve that grows
+  linearly. Worked out with `ResultsComparison` on Results entry.
+- **Started vs completed.** Completed comes from records (`ended_early`);
+  started needs a count of runs that were never saved, kept in
+  `state.json`. It is counted in memory on a run's first key — a disk write
+  there would sit in the keystroke path — and saved when a run ends and on
+  quit, adding to the count on disk so two windows don't overwrite each
+  other. `counting_since` lets sessions saved before counting began count
+  as started instead of making "completed" exceed "started".
+- **The calendar** is glyph density (`· ░ ▒ ▓ █`) as well as color, so it
+  reads without color; shades are quarters of the busiest day shown. Day
+  cells are ordinary `Select` click targets, numbered in days back from
+  today, so the mouse needed no new kind of action.
+- **The Profile at 80×24** is 2 + 11 + 10 rows: two 50/50 boxes (each side
+  of the bests table 17 cells, so both fit half of 80) and the calendar
+  (a month row and seven day rows). The header of the bests table is built
+  with the same widths as its rows after the first one drifted a cell.
+
+---
+
 ## v0.5.0 — quality of life
 
 ### Bugs

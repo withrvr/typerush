@@ -47,7 +47,7 @@ pub fn render(f: &mut Frame, app: &App, area: Rect) -> &'static [super::Hint] {
     let view = match &app.stats_view {
         Some(view) => view,
         None => {
-            fallback = storage::StatsView::new(sessions, None);
+            fallback = storage::StatsView::new(sessions, None, Default::default());
             &fallback
         }
     };
@@ -121,7 +121,7 @@ pub fn render(f: &mut Frame, app: &App, area: Rect) -> &'static [super::Hint] {
 }
 
 /// `1h 05m`, `12m`, `45s`: time spent typing, at a glance.
-fn format_duration(secs: f64) -> String {
+pub(super) fn format_duration(secs: f64) -> String {
     let secs = secs as u64;
     match (secs / 3600, secs / 60 % 60) {
         (0, 0) => format!("{secs}s"),
@@ -392,9 +392,18 @@ fn row_style(app: &App, selected: bool, style: Style) -> Style {
     }
 }
 
-/// A bordered table block titled with the rows shown: ` sessions · 1–5 of 42 `.
-fn table_block<'a>(app: &App, name: &str, first: usize, shown: usize, total: usize) -> Block<'a> {
-    let title = if total == 0 {
+/// A bordered table block titled with the rows shown: ` sessions · 1–5 of 42 `,
+/// the filter chips on its bottom border.
+fn table_block<'a>(
+    app: &App,
+    view: &storage::StatsView,
+    name: &str,
+    (first, shown, total): (usize, usize, usize),
+    chips: Line<'a>,
+) -> Block<'a> {
+    let title = if total == 0 && view.filters.filtering() {
+        format!(" {name} · none match ")
+    } else if total == 0 {
         format!(" {name} · none yet ")
     } else if shown == 0 {
         format!(" {name} · {total} ")
@@ -405,9 +414,88 @@ fn table_block<'a>(app: &App, name: &str, first: usize, shown: usize, total: usi
         .borders(Borders::ALL)
         .border_style(Style::default().fg(app.theme.pending))
         .title(title)
+        .title_bottom(chips)
 }
 
-/// The category's sessions, newest first, ★ on each mode's best.
+/// The filter chips on a table's bottom border — `d dates all time`,
+/// `w words any`, and on the sessions list `s sort date ↓` and `r reverse` —
+/// each clickable like its key. A chip that filters something out is
+/// highlighted (and says what it keeps, so it isn't color alone).
+fn filter_chips(
+    app: &App,
+    view: &storage::StatsView,
+    area: Rect,
+    with_sort: bool,
+) -> Line<'static> {
+    let theme = &app.theme;
+    let filters = view.filters;
+    let key_style = Style::default()
+        .fg(theme.accent)
+        .add_modifier(Modifier::BOLD);
+    let value = |active: bool| {
+        if active {
+            Style::default()
+                .fg(theme.secondary)
+                .add_modifier(Modifier::BOLD)
+        } else {
+            Style::default().fg(theme.pending)
+        }
+    };
+    let arrow = if filters.ascending { "↑" } else { "↓" };
+    let sort = format!("{} {arrow}", filters.sort.label());
+    let mut chips = vec![
+        (
+            'd',
+            "dates ",
+            filters.range.label().to_string(),
+            filters.range != Default::default(),
+        ),
+        (
+            'w',
+            "words ",
+            filters.words.label().to_string(),
+            filters.words != Default::default(),
+        ),
+    ];
+    if with_sort {
+        let sorted = filters.sort != Default::default() || filters.ascending;
+        chips.push(('s', "sort ", sort, sorted));
+        chips.push(('r', "reverse", String::new(), false));
+    }
+    let mut spans = vec![Span::raw(" ")];
+    let mut x = area.x + 2;
+    let border_y = area.bottom().saturating_sub(1);
+    let mut targets = app.click_targets.borrow_mut();
+    for (code, name, current, active) in chips {
+        let chip = [
+            Span::styled(format!("{code} "), key_style),
+            Span::styled(name, Style::default().fg(theme.pending)),
+            Span::styled(current, value(active)),
+        ];
+        let width: u16 = chip.iter().map(|span| span.width() as u16).sum();
+        if area.height >= 2 {
+            let cell = Rect::new(x, border_y, width, 1).intersection(area);
+            if !cell.is_empty() {
+                targets.push((
+                    cell,
+                    ClickAction::Key(KeyCode::Char(code), KeyModifiers::NONE),
+                ));
+            }
+        }
+        spans.extend(chip);
+        spans.push(Span::raw("   "));
+        x += width + 3;
+    }
+    Line::from(spans)
+}
+
+/// `61.0`, or `—` when there's no figure.
+fn figure(value: Option<f64>, suffix: &str) -> String {
+    value.map_or("—".to_string(), |v| format!("{v:.1}{suffix}"))
+}
+
+/// The category's sessions that pass the filters, in the chosen order
+/// (newest first by default), ★ on each mode's best.
 fn render_sessions_table(
     f: &mut Frame,
     app: &App,
@@ -416,13 +504,12 @@ fn render_sessions_table(
     view: &storage::StatsView,
 ) {
     let theme = &app.theme;
-    let total = view.indices.len();
+    let total = view.order.len();
     let (first, fits) = visible_rows(area, total, view);
 
     let rows: Vec<Row> = view
-        .indices
+        .order
         .iter()
-        .rev()
         .enumerate()
         .skip(first)
         .take(fits)
@@ -449,8 +536,16 @@ fn render_sessions_table(
                     .style(style(Style::default().fg(theme.mode_tag))),
                 Cell::from(format!("{:.1}", s.wpm))
                     .style(style(Style::default().fg(theme.secondary))),
+                Cell::from(figure(s.raw_wpm(), ""))
+                    .style(style(Style::default().fg(theme.neutral))),
                 Cell::from(format!("{:.1}%", s.accuracy))
                     .style(style(Style::default().fg(theme.correct))),
+                // Consistency as a whole percentage, `—` before v0.6.
+                Cell::from(
+                    s.consistency
+                        .map_or("—".to_string(), |c| format!("{c:.0}%")),
+                )
+                .style(style(Style::default().fg(theme.accent))),
                 Cell::from(format!("{:.1}s", s.duration_secs))
                     .style(style(Style::default().fg(theme.accent))),
             ])
@@ -460,29 +555,41 @@ fn render_sessions_table(
     let shown = rows.len();
     register_rows(app, area, first, shown);
 
-    let header = Row::new(vec!["", "Date", "Mode", "WPM", "Acc", "Time"]).style(
+    let header = Row::new(vec![
+        "", "Date", "Mode", "WPM", "Raw", "Acc", "Cons", "Time",
+    ])
+    .style(
         Style::default()
             .fg(theme.pending)
             .add_modifier(Modifier::BOLD),
     );
+    let chips = filter_chips(app, view, area, true);
     let table = Table::new(
         rows,
         [
             Constraint::Length(1),
             Constraint::Length(16),
             Constraint::Length(MODE_WIDTH as u16), // fits "words-100+10k+p+n"
-            Constraint::Length(8),
-            Constraint::Length(8),
-            Constraint::Length(8),
+            Constraint::Length(7),
+            Constraint::Length(7),
+            Constraint::Length(7),
+            Constraint::Length(5),
+            Constraint::Length(7),
         ],
     )
     .header(header)
-    .block(table_block(app, "sessions", first, shown, total));
+    .block(table_block(
+        app,
+        view,
+        "sessions",
+        (first, shown, total),
+        chips,
+    ));
     f.render_widget(table, area);
 }
 
-/// One row per mode: its best (with that run's accuracy and date), average
-/// and number of runs.
+/// One row per mode: its best among the sessions that pass the filters
+/// (with that run's accuracy and date), average and number of runs.
 fn render_bests_table(
     f: &mut Frame,
     app: &App,
@@ -491,11 +598,11 @@ fn render_bests_table(
     view: &storage::StatsView,
 ) {
     let theme = &app.theme;
-    let total = view.bests.len();
+    let total = view.table_bests.len();
     let (first, fits) = visible_rows(area, total, view);
 
     let rows: Vec<Row> = view
-        .bests
+        .table_bests
         .iter()
         .enumerate()
         .skip(first)
@@ -547,6 +654,12 @@ fn render_bests_table(
         ],
     )
     .header(header)
-    .block(table_block(app, "bests per mode", first, shown, total));
+    .block(table_block(
+        app,
+        view,
+        "bests per mode",
+        (first, shown, total),
+        filter_chips(app, view, area, false),
+    ));
     f.render_widget(table, area);
 }

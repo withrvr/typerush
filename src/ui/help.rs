@@ -4,12 +4,12 @@
 
 use ratatui::{
     prelude::*,
-    widgets::{Block, Borders, Clear, Padding, Paragraph, Wrap},
+    widgets::{Block, Borders, Padding, Paragraph, Wrap},
 };
 
 use ratatui::crossterm::event::KeyCode;
 
-use crate::app::App;
+use crate::{app::App, theme::ThemePalette};
 
 /// Render the keybindings overlay. Sized to its content (23 rows, so it fits
 /// an 80×24 window whole). On a smaller terminal the box shrinks and the
@@ -30,7 +30,7 @@ pub fn render(f: &mut Frame, app: &App, screen: Rect) -> &'static [super::Hint] 
 
     let lines = vec![
         heading("  TypeRush — keybindings"),
-        Line::from("  ↑/↓ ←/→  hjkl    move: menu, stats, settings"),
+        Line::from("  ↑/↓ ←/→  hjkl    move: menu, lists, calendar"),
         Line::from("  Enter  Space     start, choose, change"),
         Line::from("  Ctrl+R  F5       restart (results: Enter too)"),
         Line::from("  Ctrl+P  F2       pause / resume a run"),
@@ -39,9 +39,9 @@ pub fn render(f: &mut Frame, app: &App, screen: Rect) -> &'static [super::Hint] 
         Line::from("  p  n  b          menu: punctuation, numbers,"),
         Line::from("                   10k words (time & words runs)"),
         Line::from("  Tab  s           stats (only Tab on results)"),
-        Line::from("  c                menu: settings"),
+        Line::from("  c  u             menu: settings, profile"),
         Line::from("  Enter  e         stats: replay, export CSV"),
-        Line::from("  a  PgUp/Dn       stats: all sessions, scroll"),
+        Line::from("  a d w s r        stats: all/dates/words/sort"),
         Line::from("  ?  F1            help (only F1 on results)"),
         Line::from("  Ctrl+C           quit"),
         Line::from("  Mouse            click options, rows, hints;"),
@@ -61,7 +61,7 @@ pub fn render(f: &mut Frame, app: &App, screen: Rect) -> &'static [super::Hint] 
         lines.len() as u16 + 2
     };
     let area = screen.centered(Constraint::Length(WIDTH), Constraint::Length(height));
-    f.render_widget(Clear, area);
+    super::clear(f, theme, area);
     let p = Paragraph::new(lines)
         // Plain Line::from(string) entries inherit this fg — otherwise they
         // render with terminal default which is invisible on the light theme.
@@ -89,7 +89,13 @@ pub fn render(f: &mut Frame, app: &App, screen: Rect) -> &'static [super::Hint] 
 /// Render a transient modal — an error, or a notice — titled `title` with a
 /// `border` color. Dismissed by any keypress or click from the main loop.
 /// Tall enough for the wrapped message plus the hint line.
-pub fn render_message(f: &mut Frame, title: &'static str, border: Color, message: &str) {
+pub fn render_message(
+    f: &mut Frame,
+    theme: &ThemePalette,
+    title: &'static str,
+    border: Color,
+    message: &str,
+) {
     use unicode_width::UnicodeWidthStr;
     // Messages can carry file paths, which may contain control characters:
     // made safe line by line, so a multi-line message (a TOML parse error
@@ -113,7 +119,7 @@ pub fn render_message(f: &mut Frame, title: &'static str, border: Color, message
     let area = f
         .area()
         .centered(Constraint::Length(WIDTH), Constraint::Length(height));
-    f.render_widget(Clear, area);
+    super::clear(f, theme, area);
     let p = Paragraph::new(format!("{}\n\npress any key or click", lines.join("\n")))
         .wrap(Wrap { trim: false })
         .block(
