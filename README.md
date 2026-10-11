@@ -4,7 +4,7 @@
 
 [![Crates.io](https://img.shields.io/crates/v/typerush)](https://crates.io/crates/typerush)
 [![License: MIT](https://img.shields.io/badge/license-MIT-blue)](LICENSE)
-[![Build](https://img.shields.io/github/actions/workflow/status/withrvr/typerush/ci.yml?branch=main&label=build)](https://github.com/withrvr/typerush/actions/workflows/ci.yml)
+[![Build](https://github.com/withrvr/typerush/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/withrvr/typerush/actions/workflows/ci.yml)
 
 <a href="docs/brag/brag.mp4"><img src="docs/brag/brag.gif" alt="TypeRush in action: a fast typing run with live speed, its results chart, the new practice modes, the stats history, and the color themes" width="100%"></a>
 
