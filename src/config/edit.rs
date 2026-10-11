@@ -176,8 +176,8 @@ impl Setting {
 /// Check `raw` for `key` with the loader's rules, and put it in the form
 /// written to the file: theme, mode, language and pool names in lower case
 /// (a language or pool by its main name: `js` is `javascript`), switches as
-/// `true` / `false` (`on` / `off` are accepted too). The error says what
-/// would be accepted.
+/// `true` / `false` (`on` / `off` are accepted too), colors as `#RRGGBB` or
+/// a name like `dark_gray`. The error says what would be accepted.
 pub fn check(key: &Key, raw: &str) -> Result<Setting, String> {
     let raw = raw.trim();
     let lower = raw.to_lowercase();
@@ -214,8 +214,10 @@ pub fn check(key: &Key, raw: &str) -> Result<Setting, String> {
             "false" | "off" => Ok(Setting::Switch(false)),
             _ => Err("not a switch (try true or false)".into()),
         },
+        // Written back the one way the parser reads it (`#A6E22E`,
+        // `dark_gray`), so a printed value is always one of those.
         Kind::Color => match color::parse_color(raw) {
-            Ok(_) => text(raw),
+            Ok(parsed) => text(&color::color_name(parsed)),
             Err(error) => Err(error.to_string()),
         },
     }

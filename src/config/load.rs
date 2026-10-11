@@ -109,17 +109,25 @@ const MAX_CONFIG_BYTES: u64 = 1024 * 1024;
 /// put there would otherwise block or fill memory before the menu opens.
 pub fn read_config(path: &Path) -> std::io::Result<Option<String>> {
     use std::io::Read;
-    let file = match std::fs::File::open(path) {
-        Ok(file) => file,
+    let not_a_file = || std::io::Error::other("not a regular file");
+    // Checked before opening: opening a named pipe blocks until something
+    // writes to it.
+    let metadata = match std::fs::metadata(path) {
+        Ok(metadata) => metadata,
         Err(err) if err.kind() == std::io::ErrorKind::NotFound => return Ok(None),
         Err(err) => return Err(err),
     };
-    let metadata = file.metadata()?;
     if !metadata.is_file() {
-        return Err(std::io::Error::other("not a regular file"));
+        return Err(not_a_file());
     }
     if metadata.len() > MAX_CONFIG_BYTES {
         return Err(std::io::Error::other("too big (over 1 MiB)"));
+    }
+    // Checked again on the opened file, and the read bounded, in case the
+    // path changed in between.
+    let file = std::fs::File::open(path)?;
+    if !file.metadata()?.is_file() {
+        return Err(not_a_file());
     }
     let mut text = String::new();
     file.take(MAX_CONFIG_BYTES).read_to_string(&mut text)?;
@@ -379,7 +387,7 @@ mod tests {
     }
 
     /// The config is read like a custom file: only a regular file of at
-    /// most 1 MiB. A folder (or a pipe, a device) where config.toml should be
+    /// most 1 MiB. A folder, a pipe or a device where config.toml should be
     /// is a warning, not a hang; so is a huge file.
     #[test]
     fn config_must_be_a_small_regular_file() {
@@ -395,6 +403,17 @@ mod tests {
         let (resolved, warnings) = load_from(&huge, CliOverrides::default());
         assert!(warnings[0].contains("too big"), "{warnings:?}");
         assert_eq!(resolved, ResolvedConfig::default());
+
+        // A named pipe would block `open` forever: it is refused unopened.
+        #[cfg(unix)]
+        {
+            let fifo = dir.path().join("fifo.toml");
+            let made = std::process::Command::new("mkfifo").arg(&fifo).status();
+            if made.is_ok_and(|status| status.success()) {
+                let (_, warnings) = load_from(&fifo, CliOverrides::default());
+                assert!(warnings[0].contains("not a regular file"), "{warnings:?}");
+            }
+        }
     }
 
     /// Every mode name the config documents resolves without a warning.

@@ -520,6 +520,8 @@ fn handle_mouse(app: &mut App, mouse: MouseEvent) {
         MouseEventKind::ScrollDown if app.screen == Screen::Stats => {
             handle_key(app, KeyCode::Down, KeyModifiers::NONE)
         }
+        MouseEventKind::ScrollUp if app.screen == Screen::Settings => app.settings_move(-1),
+        MouseEventKind::ScrollDown if app.screen == Screen::Settings => app.settings_move(1),
         MouseEventKind::Down(MouseButton::Left) => {
             app.pressed_target = target;
             match target {
@@ -1934,6 +1936,10 @@ mod tests {
         click(&mut app, numbers);
         assert_eq!(app.settings.as_ref().unwrap().selected, 3);
         assert!(app.word_decor.numbers);
+        handle_mouse(&mut app, mouse(MouseEventKind::ScrollDown, (0, 0)));
+        assert_eq!(app.settings.as_ref().unwrap().selected, 4);
+        handle_mouse(&mut app, mouse(MouseEventKind::ScrollUp, (0, 0)));
+        assert_eq!(app.settings.as_ref().unwrap().selected, 3);
     }
 
     /// A config that isn't valid TOML is never overwritten from Settings:
