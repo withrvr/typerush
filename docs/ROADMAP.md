@@ -155,7 +155,7 @@ Worked in this order, one commit (or a few) per step, on one branch and
 one pull request:
 
 1. 🚧 Plan (this section)
-2. 🔲 Pause / resume mid-session: `Ctrl+P` / `F2` stops the clock and hides
+2. ✅ Pause / resume mid-session: `Ctrl+P` / `F2` stops the clock and hides
    the text; paused time never counts
 3. 🔲 Replay a recent session word-for-word: every session keeps the text
    it typed; pick one on the Stats screen (or `--replay N`) and type the

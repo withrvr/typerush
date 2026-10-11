@@ -396,6 +396,10 @@ pub struct App {
     pub started_at: Option<Instant>,
     /// When the session finished (timer up, all words done, or Esc pressed).
     pub ended_at: Option<Instant>,
+    /// When the current pause began (`Ctrl+P` / `F2`); `None` while running.
+    pub paused_at: Option<Instant>,
+    /// Time spent paused in earlier pauses of this session; never counted.
+    pub paused_for: Duration,
 
     // --- counters used for WPM / accuracy ---
     /// Characters typed that matched the target. Drives both WPM and accuracy.
@@ -492,6 +496,8 @@ impl App {
             current_word: 0,
             started_at: None,
             ended_at: None,
+            paused_at: None,
+            paused_for: Duration::ZERO,
             correct_chars: 0,
             total_typed_chars: 0,
             custom_file,
@@ -704,13 +710,35 @@ impl App {
         self.menu_index = row.start + column;
     }
 
-    /// How long the user has been (or was) typing during the current session.
-    /// Returns `Duration::ZERO` until the first keypress.
+    /// How long the user has been (or was) typing during the current session,
+    /// paused time left out. Returns `Duration::ZERO` until the first keypress.
     pub fn elapsed(&self) -> Duration {
-        match (self.started_at, self.ended_at) {
-            (Some(start), Some(end)) => end.duration_since(start),
-            (Some(start), None) => start.elapsed(),
-            _ => Duration::ZERO,
+        let Some(start) = self.started_at else {
+            return Duration::ZERO;
+        };
+        // While paused the clock stands still at the moment the pause began.
+        let end = self
+            .ended_at
+            .or(self.paused_at)
+            .unwrap_or_else(Instant::now);
+        end.saturating_duration_since(start)
+            .saturating_sub(self.paused_for)
+    }
+
+    /// Whether the session is paused: the clock is stopped and typing keys
+    /// are ignored until it resumes.
+    pub fn is_paused(&self) -> bool {
+        self.paused_at.is_some()
+    }
+
+    /// Pause the session, or resume it. Paused time never counts towards
+    /// WPM or a time run's clock.
+    pub fn toggle_pause(&mut self) {
+        match self.paused_at.take() {
+            // Before the first key the clock isn't running: nothing to subtract.
+            Some(at) if self.started_at.is_some() => self.paused_for += at.elapsed(),
+            Some(_) => {}
+            None => self.paused_at = Some(Instant::now()),
         }
     }
 
@@ -801,6 +829,8 @@ impl App {
         self.current_word = 0;
         self.started_at = None;
         self.ended_at = None;
+        self.paused_at = None;
+        self.paused_for = Duration::ZERO;
         self.correct_chars = 0;
         self.total_typed_chars = 0;
         self.key_hits.clear();
@@ -841,7 +871,11 @@ impl App {
     }
 
     /// Stop the timer and move to the results screen. Safe to call twice.
+    /// Finishing while paused ends the run at the moment it was paused.
     pub fn finish_game(&mut self) {
+        if self.is_paused() {
+            self.toggle_pause();
+        }
         if self.ended_at.is_none() {
             self.ended_at = Some(Instant::now());
         }
@@ -857,6 +891,10 @@ impl App {
     /// moves on one slot either way. Space is not special: mid-word it is just
     /// a wrong character.
     pub fn handle_char(&mut self, typed_char: char) {
+        // Paused: the text is hidden and the clock stopped, so nothing types.
+        if self.is_paused() {
+            return;
+        }
         self.ensure_timer_started();
         if self.current_word >= self.words.len() {
             return;
@@ -903,7 +941,7 @@ impl App {
     /// word, erases the space before it — the cursor walks back to the previous
     /// word so they can fix a typo in a word they've already typed.
     pub fn handle_backspace(&mut self, delete_whole_word: bool) {
-        if self.current_word >= self.words.len() {
+        if self.is_paused() || self.current_word >= self.words.len() {
             return;
         }
         let active_word = &mut self.words[self.current_word];
@@ -1054,6 +1092,54 @@ mod tests {
             assert!(app.words.len() >= 1100, "{mode:?}");
             assert_eq!(app.screen, Screen::Typing, "{mode:?}");
         }
+    }
+
+    // ── pause (v0.5.0) ─────────────────────────────────────────────────────
+
+    /// Paused time is left out of the clock: while paused it stands still,
+    /// and after resuming (or finishing while paused) it never counts.
+    #[test]
+    fn paused_time_never_counts() {
+        let mut app = make_app_with_word("hello");
+        let now = Instant::now();
+        app.started_at = Some(now - Duration::from_secs(10));
+        app.paused_at = Some(now - Duration::from_secs(6));
+        let frozen = app.elapsed();
+        assert!((frozen.as_secs_f64() - 4.0).abs() < 0.1, "{frozen:?}");
+        app.toggle_pause(); // resume
+        assert!(!app.is_paused());
+        assert!((app.elapsed().as_secs_f64() - 4.0).abs() < 0.1);
+
+        // Pause again for 3 s, then finish while paused: still 4 s.
+        app.paused_at = Some(Instant::now() - Duration::from_secs(3));
+        app.paused_for = Duration::from_secs(6);
+        app.started_at = Some(Instant::now() - Duration::from_secs(13));
+        app.finish_game();
+        assert!(!app.is_paused());
+        assert!((app.elapsed().as_secs_f64() - 4.0).abs() < 0.1);
+    }
+
+    /// While paused, keys type nothing, the clock doesn't start, and a time
+    /// run doesn't run out; a new game is never paused.
+    #[test]
+    fn paused_session_ignores_typing_and_clock() {
+        let mut app = menu_app();
+        app.start_game(Mode::Time(15)).unwrap();
+        app.toggle_pause();
+        app.handle_char('x');
+        app.handle_backspace(true);
+        assert_eq!(app.total_typed_chars, 0);
+        assert!(app.started_at.is_none(), "clock started while paused");
+        app.toggle_pause();
+        assert_eq!(app.elapsed(), Duration::ZERO);
+
+        app.started_at = Some(Instant::now() - Duration::from_secs(20));
+        app.paused_at = Some(Instant::now() - Duration::from_secs(10));
+        app.tick();
+        assert_eq!(app.screen, Screen::Typing, "time ran out while paused");
+        app.restart().unwrap();
+        assert!(!app.is_paused());
+        assert_eq!(app.paused_for, Duration::ZERO);
     }
 
     // ── per-key accuracy tracking (v0.3.0) ──────────────────────────────────

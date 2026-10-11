@@ -531,9 +531,14 @@ fn handle_menu_key(app: &mut App, code: KeyCode, _mods: KeyModifiers) {
 }
 
 /// Keymap for the typing screen. Note that '?' is **not** a help shortcut
-/// here — the user may legitimately need to type it.
+/// here — the user may legitimately need to type it. While paused only
+/// resume, Esc, restart and Ctrl+C act (`App` ignores typing then).
 pub(crate) fn handle_typing_key(app: &mut App, code: KeyCode, mods: KeyModifiers) {
+    let ctrl = mods.contains(KeyModifiers::CONTROL);
     match code {
+        // Pause / resume: keys never typed, like restart's.
+        KeyCode::F(2) => app.toggle_pause(),
+        KeyCode::Char('p') if ctrl => app.toggle_pause(),
         KeyCode::Esc => {
             app.finish_game();
         }
@@ -839,6 +844,31 @@ mod tests {
         assert_eq!(app.total_typed_chars, 0);
     }
 
+    /// Ctrl+P and F2 pause and resume; typing while paused does nothing;
+    /// Esc still finishes and Ctrl+R still restarts (unpaused).
+    #[test]
+    fn pause_keys_toggle_and_block_typing() {
+        let mut app = make_typing_app();
+        handle_typing_key(&mut app, KeyCode::Char('h'), KeyModifiers::NONE);
+        handle_typing_key(&mut app, KeyCode::Char('p'), KeyModifiers::CONTROL);
+        assert!(app.is_paused());
+        handle_typing_key(&mut app, KeyCode::Char('e'), KeyModifiers::NONE);
+        handle_typing_key(&mut app, KeyCode::Backspace, KeyModifiers::NONE);
+        assert_eq!(app.words[0].typed, "h");
+        handle_typing_key(&mut app, KeyCode::F(2), KeyModifiers::NONE);
+        assert!(!app.is_paused());
+        handle_typing_key(&mut app, KeyCode::Char('e'), KeyModifiers::NONE);
+        assert_eq!(app.words[0].typed, "he");
+
+        handle_typing_key(&mut app, KeyCode::F(2), KeyModifiers::NONE);
+        handle_typing_key(&mut app, KeyCode::Char('r'), KeyModifiers::CONTROL);
+        assert!(!app.is_paused() && app.screen == Screen::Typing);
+        handle_typing_key(&mut app, KeyCode::F(2), KeyModifiers::NONE);
+        handle_typing_key(&mut app, KeyCode::Esc, KeyModifiers::NONE);
+        assert_eq!(app.screen, Screen::Results);
+        assert!(!app.is_paused());
+    }
+
     // ── mouse ────────────────────────────────────────────────────────────────
 
     /// Draw one frame of `app` at 80×24 so its click targets are registered.
@@ -885,6 +915,22 @@ mod tests {
         click(&mut app, previous);
         assert_eq!(app.stats_view.as_ref().unwrap().category_name(), "all");
         assert_eq!(previous.1, 0, "arrows sit on the title row");
+    }
+
+    /// The pause hint in the typing footer pauses with a click, and the same
+    /// spot (now "resume") resumes.
+    #[test]
+    fn clicking_the_pause_hint_pauses_and_resumes() {
+        let mut app = make_typing_app();
+        let pause = ClickAction::Key(KeyCode::F(2), KeyModifiers::NONE);
+        draw(&app);
+        let cell = target_cell(&app, pause);
+        click(&mut app, cell);
+        assert!(app.is_paused());
+        draw(&app);
+        let cell = target_cell(&app, pause);
+        click(&mut app, cell);
+        assert!(!app.is_paused());
     }
 
     #[test]

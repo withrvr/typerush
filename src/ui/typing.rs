@@ -40,16 +40,71 @@ pub fn render(f: &mut Frame, app: &App, area: Rect) -> &'static [super::Hint] {
     render_header(f, app, layout[0]);
     // Inset like the title and the box text, so the bar starts in line.
     render_progress(f, app, layout[1].inner(Margin::new(2, 0)));
-    render_words(f, app, layout[3]);
-    const HINTS: &[super::Hint] = &[
+    if app.is_paused() {
+        render_paused(f, app, layout[3]);
+    } else {
+        render_words(f, app, layout[3]);
+    }
+    const QUIT: super::Hint = (
+        "Ctrl+C quit",
+        Some((KeyCode::Char('c'), KeyModifiers::CONTROL)),
+    );
+    const RUNNING: &[super::Hint] = &[
+        ("Ctrl+R / F5 restart", super::key(KeyCode::F(5))),
+        ("Ctrl+P / F2 pause", super::key(KeyCode::F(2))),
+        ("Esc finish", super::key(KeyCode::Esc)),
+        QUIT,
+    ];
+    const PAUSED: &[super::Hint] = &[
+        ("Ctrl+P / F2 resume", super::key(KeyCode::F(2))),
         ("Ctrl+R / F5 restart", super::key(KeyCode::F(5))),
         ("Esc finish", super::key(KeyCode::Esc)),
-        (
-            "Ctrl+C quit",
-            Some((KeyCode::Char('c'), KeyModifiers::CONTROL)),
+        QUIT,
+    ];
+    if app.is_paused() {
+        PAUSED
+    } else {
+        RUNNING
+    }
+}
+
+/// The words box while paused: the text is hidden (no reading ahead on a
+/// stopped clock) and the box says how to carry on.
+fn render_paused(f: &mut Frame, app: &App, area: Rect) {
+    let theme = &app.theme;
+    let block = words_block(app);
+    let inner = block.inner(area);
+    f.render_widget(block, area);
+    let lines = vec![
+        Line::styled(
+            "paused",
+            Style::default()
+                .fg(theme.secondary)
+                .add_modifier(Modifier::BOLD),
+        ),
+        Line::raw(""),
+        Line::styled(
+            "Ctrl+P / F2 resume  ·  Esc finish",
+            Style::default().fg(theme.pending),
         ),
     ];
-    HINTS
+    let height = lines.len() as u16;
+    let middle = inner.centered_vertically(Constraint::Length(height));
+    f.render_widget(Paragraph::new(lines).alignment(Alignment::Center), middle);
+}
+
+/// The bordered box the words are typed in.
+fn words_block(app: &App) -> Block<'static> {
+    Block::default()
+        .borders(Borders::ALL)
+        .padding(Padding::horizontal(2))
+        .border_style(Style::default().fg(app.theme.pending))
+        .title(Span::styled(
+            " typerush ",
+            Style::default()
+                .fg(app.theme.accent)
+                .add_modifier(Modifier::BOLD),
+        ))
 }
 
 /// Renders the live WPM / accuracy / time / mode strip at the top of the screen.
@@ -58,7 +113,10 @@ fn render_header(f: &mut Frame, app: &App, area: Rect) {
     let is_zen_mode = matches!(app.mode, Mode::Zen);
     let theme = &app.theme;
 
-    let timer_text = if let Some(remaining) = app.time_remaining() {
+    // The clock reads "paused" while it stands still.
+    let timer_text = if app.is_paused() {
+        "paused".to_string()
+    } else if let Some(remaining) = app.time_remaining() {
         format!("{:>3}s", remaining.as_secs())
     } else {
         format!("{:>5.1}s", app.elapsed().as_secs_f64())
@@ -67,7 +125,14 @@ fn render_header(f: &mut Frame, app: &App, area: Rect) {
     let header = if is_zen_mode {
         Line::from(vec![
             Span::styled("  zen ", Style::default().fg(theme.pending)),
-            Span::styled(" · esc to finish", Style::default().fg(theme.pending)),
+            Span::styled(
+                if app.is_paused() {
+                    " · paused"
+                } else {
+                    " · esc to finish"
+                },
+                Style::default().fg(theme.pending),
+            ),
         ])
     } else {
         Line::from(vec![
@@ -281,18 +346,7 @@ fn render_words(f: &mut Frame, app: &App, area: Rect) {
     }
 
     let words_paragraph = Paragraph::new(lines.into_iter().map(Line::from).collect::<Vec<_>>())
-        .block(
-            Block::default()
-                .borders(Borders::ALL)
-                .padding(Padding::horizontal(2))
-                .border_style(Style::default().fg(app.theme.pending))
-                .title(Span::styled(
-                    " typerush ",
-                    Style::default()
-                        .fg(app.theme.accent)
-                        .add_modifier(Modifier::BOLD),
-                )),
-        );
+        .block(words_block(app));
     f.render_widget(words_paragraph, area);
 }
 
@@ -385,6 +439,36 @@ mod tests {
         app.words[257].typed = "x".repeat(100);
         let (_, y) = cursor_cell(&app, 80, 24).expect("cursor drawn in a long word");
         assert!((6..23).contains(&y), "cursor row {y} outside the words box");
+    }
+
+    /// Paused, the words are hidden (no reading ahead on a stopped clock),
+    /// the box and header say "paused", and the footer offers resume.
+    #[test]
+    fn paused_screen_hides_the_words() {
+        let mut app = App::new(None, builtin::DARK, Mode::Time(15));
+        app.start_game(Mode::Words(5)).unwrap();
+        app.words = (0..5).map(|_| Word::new("zebra".into())).collect();
+        let text = |app: &App| {
+            let mut terminal = Terminal::new(TestBackend::new(80, 24)).unwrap();
+            terminal.draw(|f| crate::ui::render(f, app)).unwrap();
+            let buffer = terminal.backend().buffer();
+            (0..24)
+                .map(|y| (0..80).map(|x| buffer[(x, y)].symbol()).collect::<String>())
+                .collect::<Vec<_>>()
+                .join("\n")
+        };
+        assert!(text(&app).contains("zebra"));
+        assert!(text(&app).contains("Ctrl+P / F2 pause"));
+        app.toggle_pause();
+        let paused = text(&app);
+        assert!(!paused.contains("zebra"), "{paused}");
+        assert!(paused.contains("time paused"), "{paused}");
+        assert!(
+            paused.contains("Ctrl+P / F2 resume  ·  Esc finish"),
+            "{paused}"
+        );
+        let footer = paused.lines().last().unwrap();
+        assert!(footer.starts_with("  Ctrl+P / F2 resume"), "{footer}");
     }
 
     /// An emoji with a skin-tone modifier is two characters drawn two cells
