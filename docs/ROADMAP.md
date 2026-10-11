@@ -110,7 +110,7 @@ in v0.3, as the category-grouped menu.)
 
 ## 🚧 In progress
 
-- 🚧 Release v0.2.1, v0.3.0, v0.4.0, v0.4.1 and v0.5.0: git tags, GitHub release binaries,
+- 🚧 Release v0.2.1, v0.3.0, v0.4.0, v0.4.1, v0.5.0 and v0.6.0: git tags, GitHub release binaries,
   crates.io. The latest published release is v0.2.0 — pre-built binaries on
   the [Releases page](https://github.com/withrvr/typerush/releases) and
   `cargo install typerush` both started with v0.1.1 / v0.2.0.
@@ -183,12 +183,12 @@ one pull request:
 - ✅ Fixed: a non-hex color in `[colors]` crashed at startup; a pipe or
   device at `config.toml` could hang or fill memory
 
-## 🚧 v0.6 — Profile and deeper results
+## ✅ v0.6 — Profile and deeper results
 
 Worked in this order, one commit (or a few) per step, on one branch and
 one pull request:
 
-1. 🚧 Plan (this section)
+1. ✅ Plan (this section)
 2. ✅ Raw WPM (every keystroke, errors included), consistency (how even
    your speed was, second by second) and a character breakdown (correct /
    incorrect / missed) on Results, saved with every session
@@ -206,7 +206,13 @@ one pull request:
    word count side by side
 8. ✅ Activity calendar on the Profile screen: a year of days shaded by how
    long you typed, with a day you can pick to see its runs
-9. 🔲 Review, end-to-end test, docs, version 0.6.0
+9. ✅ Review, end-to-end test, docs, version 0.6.0
+
+**Added to v0.6 along the way:**
+
+- ✅ `Esc` ends a run *early*: saved, but not counted as completed
+- ✅ The CSV export gains raw WPM, consistency, missed and completed
+- ✅ `profile` joins `stats`, `settings` and `quit` on the menu's last row
 
 ---
 
@@ -233,8 +239,6 @@ one pull request:
 - 💡 Adaptive practice: re-roll words containing your worst keys
 - 💡 Webhook to post your PB to a chat channel
 - 💡 Voice-over for accessibility
-- 💡 Chart of the session you just finished on the Results screen
-  ([#4](https://github.com/withrvr/typerush/issues/4))
 - 💡 Animated on-screen keyboard for learning to touch-type
   ([#5](https://github.com/withrvr/typerush/issues/5))
 

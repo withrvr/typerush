@@ -44,6 +44,8 @@ with a quote — TypeRush meets you where you already work: the command line.
 - 📅 **Daily challenge** — the same 40 words for everyone on a given day, with today's best
 - 🔁 **Replay any session** — type the exact same words again and see how you compare
 - ⏸ **Pause** — `Ctrl+P` / `F2` stops the clock and hides the text
+- 📊 **A chart of every run** — WPM, raw speed and mistakes second by second, plus raw WPM, consistency and a correct / incorrect / missed breakdown
+- 🏅 **Levels, XP and a profile** — earn XP for time typed, see your bests side by side and a year of practice on an activity calendar
 - 🔤 **Seven code languages** — Rust, Python, JavaScript, Go, Java, SQL, Shell
 - 📚 **10k-word pool & punctuation/number drills** — toggle them with `b` / `p` / `n` in the menu when you want a tougher session
 - 🗂  **Personal snippet library** — drop `.txt` files in `~/.typerush/snippets/`, each with its own personal best
@@ -134,6 +136,7 @@ typerush --init-config                # write a starter ~/.typerush/config.toml
 | `Ctrl+P` / `F2` | pause / resume while typing     |
 | `Tab`           | jump to your stats history      |
 | `c`             | settings (from the menu)        |
+| `u`             | profile (from the menu)         |
 | `?` / `F1`      | open the keybindings overlay    |
 | `Ctrl+C`        | quit                            |
 
@@ -162,6 +165,18 @@ in every mode — with a ★ on each record-holding run.
 New in v0.5: pick any session in the list and press `Enter` to **replay it
 word for word** (Results then shows how you did against the original), and
 press `e` to **export your history as CSV**.
+
+New in v0.6:
+
+- 📊 **Results chart** — the run second by second: WPM, raw speed, and a
+  dot for every mistake; with **raw WPM**, **consistency** (how even your
+  pace was) and **correct / incorrect / missed** characters
+- 🔎 **Filter and sort your history** — by date range (`d`), word settings
+  (`w`), and sort by WPM, raw, accuracy, consistency or time (`s`, `r`)
+- 🏅 **Profile** (`u` in the menu) — your **level and XP** (one XP per
+  second typed), runs started vs completed, time and keys typed, your best
+  for every time and word count side by side, and an **activity calendar**
+  of the last year
 
 ---
 

@@ -48,10 +48,13 @@ stateDiagram-v2
     Stats --> Menu: Esc / m / Tab
     Menu --> Settings: c / click settings
     Settings --> Menu: Esc / m / Tab
+    Menu --> Profile: u / click profile
+    Profile --> Menu: Esc / m / Tab
     Menu --> Help: ? / F1
     Results --> Help: F1
     Stats --> Help: ? / F1
     Settings --> Help: ? / F1
+    Profile --> Help: ? / F1
     Help --> [*]: Esc / ? / F1 / q / click
     note right of Help
         Overlay: remembers the previous screen
@@ -112,9 +115,14 @@ flowchart LR
     src --> settings["settings.rs
     Settings screen state (SettingsView) and actions:
     change, save through config::edit, apply at once"]
+    src --> progress["progress.rs
+    XP and levels (Level::of), Profile: totals,
+    days typed, streaks, standard bests, calendar day"]
     src --> app["app.rs
     App state machine: all fields and transitions,
-    WPM / accuracy math (paused time left out), pause,
+    WPM / raw WPM / accuracy math (paused time left out),
+    the per-second timeline, consistency, missed chars,
+    runs started (saved to state.json), pause,
     mode switching, completion, per-key tracking,
     replay (Replay, Mode::from_label), session text,
     menu navigation, click targets"]
@@ -125,11 +133,12 @@ flowchart LR
     SessionRecord + ~/.typerush/stats.json (atomic writes).
     personal_best, personal_best_for_mode, average_accuracy,
     streak, avg_wpm_last_n_days, key_accuracy,
-    bests_by_mode, StatsSummary, StatsView (selection),
-    ResultsComparison, to_csv / export_csv"]
+    bests_by_mode / bests_among, StatsSummary,
+    StatsView (selection, Filters: dates, words, sort),
+    ResultsComparison (incl. XP), to_csv / export_csv"]
     src --> state["state.rs
-    ~/.typerush/state.json: the last custom file
-    (atomic writes, path passed in)"]
+    ~/.typerush/state.json: the last custom file, runs
+    started and since when (atomic writes, path passed in)"]
     src --> text["text.rs
     printable / shorten / screen_path: safe,
     width-aware display of user-supplied names,
@@ -170,10 +179,15 @@ flowchart LR
     ui --> typing["typing.rs
     header, progress gauge, words"]
     ui --> results["results.rs
-    WPM delta, mode best, sparkline"]
+    WPM delta, raw, consistency, breakdown, mode best,
+    XP in the title, the run's chart (second by second)"]
     ui --> stats["stats.rs
     categories, summary, key heatmap, sparkline,
-    scrolling sessions table (★ bests), bests table"]
+    sessions table (★ bests, raw, consistency),
+    bests table, filter chips on the bottom border"]
+    ui --> profile_ui["profile.rs
+    you / bests boxes, activity calendar (a year of
+    days, shaded by time typed; a day to pick)"]
     ui --> settings_ui["settings.rs
     the saved settings as ‹ value › rows,
     reset to defaults (asks first)"]
@@ -357,6 +371,51 @@ The Settings screen keeps a `SettingsView` read from the file on the way in
 (not per frame) and after each change; every change is saved, then applied
 to the running app (theme with the file's color overrides, start mode as
 the menu's highlight, word settings).
+
+### Deeper results (v0.6.0)
+
+`App::timeline` tallies the run per whole second of typing (keys typed,
+right, wrong), indexed by `elapsed()` — so paused time is left out like
+everywhere else. From it come `consistency()` (100 minus the coefficient of
+variation of keys per second, idle seconds included) and the Results chart
+(`ui::results::chart_points`: the running WPM, each second's raw speed, the
+seconds with mistakes; whole seconds only). `raw_wpm()` is every key over
+the minutes; `SessionRecord::raw_wpm` works it out from the saved key
+count and duration, so it exists for every old record. `missed` (text left
+when a fixed run ends early) is worked out once in `finish_game` — it walks
+the rest of the text, which can be big — and `end_early` (Esc) marks a run
+as not completed. Records gain `consistency`, `missed` and `ended_early`,
+each left out of the file when empty.
+
+### History filters (v0.6.0)
+
+`storage::Filters` (date range, word settings, sort and direction) lives in
+`StatsView` and is carried over when the view is rebuilt. `select` filters
+the category's sessions into `indices` (in order of time: the summary and
+trend), sorts a copy into `order` (the list) and recomputes
+`table_bests` with `bests_among(history, indices)`; the categories and the
+★ still come from the unfiltered `bests`. Sorting puts a run without the
+figure last whichever way round, ties newest first.
+
+### Levels, XP and the Profile (v0.6.0)
+
+`progress` is pure: one XP per whole second of a saved session,
+`Level::of(xp)` walks levels of 300 + 150 × (level − 1). `ResultsComparison`
+carries the XP before and with the run, worked out on Results entry with
+the rest. `progress::Profile` adds up the history once when the Profile
+opens (per-day totals in a `BTreeMap`, streaks, completed runs, the
+standard bests via `bests_by_mode`) and holds the calendar's picked day.
+
+Runs *started* are counted on a run's first key (not zen) into
+`App::runs_started_unsaved` — no disk write in the key path — and added to
+`state.json` by `save_run_count` when a run ends and on quit, read-modify-
+write so two windows add up. `counting_since` lets `App::runs_started`
+count saved sessions from before counting began as started too.
+
+The calendar (`ui::profile::render_calendar`) draws as many weeks as fit
+(up to 53), Monday on top and the current week last, each day's shade its
+share of the busiest day shown in quarters, as glyphs that get denser; each
+day cell is a `ClickAction::Select(days_back)` target.
 
 ### Config loading
 

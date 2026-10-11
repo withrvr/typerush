@@ -29,6 +29,7 @@ The TL;DR:
 - `src/commands.rs` — subcommands that don't open the app (`export`, `config …`)
 - `src/app.rs` — application state machine
 - `src/settings.rs` — the Settings screen's state and actions
+- `src/progress.rs` — levels, XP and the Profile screen's summary
 - `src/game.rs` — character matcher
 - `src/storage.rs` — JSON stats persistence
 - `src/state.rs` — `state.json` (the last custom file)

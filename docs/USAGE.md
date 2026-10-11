@@ -160,12 +160,15 @@ file), so `stats.json` stays small.
 Everything the mouse can do, the keyboard can do too (WCAG 2.1.1), and vice
 versa where it makes sense:
 
-- **Click a menu option** to start it (or open stats, settings / quit).
+- **Click a menu option** to start it (or open stats, profile, settings /
+  quit).
 - **Click a footer hint** (`Enter start`, `s stats`, `esc finish`, …) to do
   what its key does. Navigation hints like `↑/↓ category` are not clickable.
 - **Click a row** of the Stats lists to select it (`Enter replay` then
-  replays it), and in Settings **click `‹` / `›`** to change a value or the
-  value itself for the next one.
+  replays it), and the **filter chips** under it (`d dates`, `w words`,
+  `s sort`, `r reverse`) to change them. In Settings **click `‹` / `›`** to
+  change a value or the value itself for the next one; on the Profile
+  calendar **click a day** to see it.
 - **Scroll wheel** on the menu moves between categories; on Stats and
   Settings it moves the selection.
 - **Click anywhere** to close the help overlay or an error message.
@@ -183,7 +186,7 @@ Modes are grouped by category, the ones with a choice of options first:
 `time`, `words`, `code`, `symbols` and `custom` show a heading with their
 options on the line below (a row too wide for the menu continues on the next
 line). Then come the single runs `daily`, `quote` and `zen`, and `stats`,
-`settings` and `quit` share the last row:
+`profile`, `settings` and `quit` share the last row:
 
 ```mermaid
 flowchart TD
@@ -209,7 +212,7 @@ flowchart TD
     end
     subgraph app[" "]
         direction LR
-        stats ~~~ settings ~~~ quit
+        stats ~~~ profile ~~~ settings ~~~ quit
     end
     time ~~~ words ~~~ code ~~~ symbols ~~~ custom ~~~ daily ~~~ quote ~~~ zen ~~~ app
 ```
@@ -241,6 +244,7 @@ for the whole list does it scroll, and then the border shows `▲ more` /
 | `b`                | 10k-word pool on / off (time and words runs)   |
 | `Tab` / `s`        | Jump to the historical stats view              |
 | `c`                | Settings                                       |
+| `u`                | Profile                                        |
 | `q`                | Quit                                           |
 
 ### While typing
@@ -277,6 +281,28 @@ Only keys you never press while typing work here: if you're still typing
 when the run ends, those last letters, spaces and `?` are ignored instead of
 skipping past your results.
 
+What Results shows:
+
+- The title row: `✓ session complete`, then the XP the run earned and your
+  level (`+31 xp · level 7 · 62%`), or `★ level 8!` when it took you up a
+  level (see [Levels and XP](#levels-and-xp)).
+- **wpm** (with `+3 vs last`, or `vs original` for a replay), **raw wpm**
+  — every key typed, right or wrong, so the gap to wpm is what the mistakes
+  cost — **accuracy**, **consistency**, **time**.
+- **chars**: keys typed right · keys typed wrong · characters of the text
+  you never reached (a fixed text ended early with `Esc`; a time run misses
+  nothing).
+- **mode** and its best (`today best` for the daily challenge).
+- **A chart of the run, second by second**: the WPM so far (the line that
+  ends at your WPM), the raw speed of each second, and a dot on each second
+  with a mistake. Runs under two seconds, and zen, have no chart.
+
+**Consistency** is how even your speed was: 100% means the same number of
+keys every second. It is 100 minus how far the keys per second spread from
+their average, as a percentage of that average (a second with no keys
+counts, so stopping to think lowers it). Runs under two whole seconds have
+none.
+
 ### Stats history
 
 | Key                         | Action                                       |
@@ -286,12 +312,31 @@ skipping past your results.
 | `↑` / `↓` (`k` / `j`)       | Select a session (or a mode on the bests table); the list scrolls with it |
 | `PgUp` / `PgDn`, `Home` / `End` | Move by ten / to the newest or oldest    |
 | `Enter`                     | Replay the selected session (on bests: that mode's best run) |
+| `d`                         | Dates: all time → today → 7 days → 30 days → a year |
+| `w`                         | Word settings: any → plain → `+p` → `+n` → `+10k` |
+| `s`                         | Sort by: date → wpm → raw → accuracy → consistency → time (largest first) |
+| `r`                         | Reverse the sort                             |
 | `e`                         | Export your history to `~/.typerush/stats.csv` |
 | `m` / `Esc` / `Tab`         | Back to the menu                             |
 | `q`                         | Quit                                         |
 
 The mouse wheel moves the selection too, and a click selects a row; in the
-title, click `[all]` for all sessions or `‹` / `›` to change category.
+title, click `[all]` for all sessions or `‹` / `›` to change category; the
+filter chips on the table's bottom border are clickable too.
+
+### Profile
+
+Open it from the menu (`u`, or the `profile` option on the last row).
+
+| Key                   | Action                                 |
+| --------------------- | -------------------------------------- |
+| `←` / `→` (`h` / `l`) | Calendar: a week back / on             |
+| `↑` / `↓` (`k` / `j`) | Calendar: a day back / on              |
+| `Home`                | Calendar: today                        |
+| `m` / `Esc` / `Tab`   | Back to the menu                       |
+| `q`                   | Quit                                   |
+
+See [The Profile screen](#the-profile-screen).
 
 ### Settings
 
@@ -344,7 +389,7 @@ Everything TypeRush keeps lives in `~/.typerush/`:
 | `config.toml`     | Optional settings (see below)                               |
 | `config.toml.bak-…` | A config put aside by a reset — nothing is deleted        |
 | `stats.csv`       | Your history as CSV, written by `e` on the Stats screen     |
-| `state.json`      | The custom file you typed last, so the menu can offer it again |
+| `state.json`      | The custom file you typed last (so the menu can offer it again) and how many runs you've started |
 | `snippets/*.txt`  | Your snippet library — one menu option per file             |
 
 Each file is written atomically, so a crash mid-save never leaves a broken file.
@@ -370,7 +415,20 @@ Opened from the menu, it stays on the category you were looking at last.
 | **Summary (left)** | Best WPM · Average accuracy · Session count · Last WPM · **Daily streak** · **7-day avg WPM** · **30-day avg WPM** · **Time typed** |
 | **Key accuracy (right)** | Up to 5 of your worst keys (≥ 3 presses). Colour-coded: red < 80%, amber < 93%, green otherwise. Shows `no key data yet` until enough data is collected. |
 | **WPM trend** | Sparkline of the category's last 20 sessions |
-| **Sessions** | Every session in the category, newest first, with date, mode, WPM, accuracy and time; `↑` / `↓` move the highlighted row and `Enter` replays it. A `★` marks the session holding its mode's best. The title says which rows are showing (`1–5 of 42`). |
+| **Sessions** | Every session in the category, newest first, with date, mode, WPM, raw WPM, accuracy, consistency (`—` before v0.6) and time; `↑` / `↓` move the highlighted row and `Enter` replays it. A `★` marks the session holding its mode's best. The title says which rows are showing (`1–5 of 42`). |
+
+**Filters and sorting.** The chips on the list's bottom border — `d dates
+all time   w words any   s sort date ↓   r reverse` — narrow the history
+and order the list; press the key or click the chip. Dates count whole
+calendar days ending today; word settings follow the mode label's `+p`,
+`+n` and `+10k` (a replay's `+replay` doesn't count, and modes without word
+settings are plain). The mode itself is the category. The filters apply to
+everything on the screen — summary, key accuracy, trend and the bests table
+(each mode's best within them) — while the `★` stays on each mode's best of
+all time. They stay as you change category and when you come back; a chip
+that filters something out is highlighted, and a filter that leaves nothing
+says `none match`. Runs without the figure you sort by (no consistency)
+always come last.
 
 ### Per-mode personal bests
 
@@ -382,6 +440,33 @@ their own modes (`time-30s+p`, …) — see [Words](#words). A replay counts as
 its own mode too (`time-30s+replay`), and the daily challenge's row reads
 `today best` (see [The daily challenge](#the-daily-challenge)).
 
+### Levels and XP
+
+Every saved session earns **one XP per second typed** (paused time never
+counts), whatever the speed — practice is what moves you up. Each level
+asks for a little more than the last: 300 XP (five minutes) to reach level
+2, then 150 more for each level after — ten hours of typing is level 21.
+Results shows what a run earned; the Profile shows your level and how much
+is left to the next. Zen runs aren't saved, so they earn nothing.
+
+### The Profile screen
+
+- **you** — your level (with a bar of the way to the next) and XP, the day
+  you started, days typed, your streak (and your longest), runs **started**
+  and **completed**, time typed and keys typed. A run is *started* by its
+  first key and *completed* when it ends by itself — the clock runs out or
+  the last character is typed — and is saved. Runs ended with `Esc`,
+  restarted or left part way through are started but not completed.
+  (Runs started before v0.6 weren't counted; every one saved then counts as
+  started.)
+- **bests (plain runs)** — your best WPM and its accuracy for 15, 30, 60 and
+  120 seconds next to 10, 25, 50 and 100 words, and the mode you play most.
+- **activity** — a calendar of the last year: a column per week (Monday on
+  top, this week last), each day shaded by how long you typed against your
+  busiest day shown: `·` none, then `░ ▒ ▓ █`. Pick a day with the arrow
+  keys or a click to see its runs, time and best on the bottom border.
+  A narrow terminal shows fewer weeks.
+
 ### Exporting your history
 
 `typerush export` prints every session as CSV, oldest first;
@@ -389,11 +474,14 @@ its own mode too (`time-30s+replay`), and the daily challenge's row reads
 screen writes `~/.typerush/stats.csv`. The columns:
 
 ```
-timestamp,mode,wpm,accuracy,duration_secs,words,correct_chars,total_chars
-2026-10-11T09:05:07+02:00,time-30s+p,61.23,95.00,30.00,30,100,105
+timestamp,mode,wpm,accuracy,duration_secs,words,correct_chars,total_chars,raw_wpm,consistency,missed,completed
+2026-10-11T09:05:07+02:00,time-30s+p,61.23,95.00,30.00,30,100,105,64.12,84.30,0,true
 ```
 
-Timestamps are RFC 3339 with your UTC offset; numbers have two decimals.
+Timestamps are RFC 3339 with your UTC offset; numbers have two decimals;
+`completed` is `false` for a run ended with `Esc`. A figure that doesn't
+exist (consistency of a short run or one from before v0.6) is left empty.
+New columns are only ever added at the end.
 A mode label with a comma or quote is quoted, and one starting with `=`,
 `+`, `-` or `@` gets a leading `'` so a spreadsheet never runs it as a
 formula.
