@@ -1092,6 +1092,10 @@ impl App {
     /// `Some(idle seconds)` when the run sat idle for at least the limit
     /// (`typing.idle_limit`): it isn't saved, and Results says why.
     pub fn too_idle(&self) -> Option<u64> {
+        // Zen is never saved, so being idle can't be why it wasn't.
+        if self.mode == Mode::Zen {
+            return None;
+        }
         let limit = self.options.idle_limit?;
         let idle = self.longest_idle();
         (idle >= limit).then_some(idle)
@@ -1217,14 +1221,13 @@ impl App {
     /// and compared with it on Results. A replay is simply replayed again.
     pub fn repeat_run(&mut self) {
         if self.replay.is_none() {
-            let mut label = self.session_label();
-            while let Some(original) = label.strip_suffix("+replay") {
-                label = original.to_string();
-            }
+            // Not a replay yet, so the label has no +replay to take off; the
+            // words straight from the run, however long (the saved text is
+            // empty past 64 KiB).
             self.replay = Some(Replay {
-                label,
+                label: self.session_label(),
                 mode: self.mode,
-                words: self.session_text().split(' ').map(str::to_string).collect(),
+                words: self.run_words().iter().map(|w| w.text.clone()).collect(),
                 pool: self.word_pool,
                 decor: self.word_decor,
                 wpm: self.wpm(),
@@ -1344,7 +1347,12 @@ impl App {
                 Some(replay) => Some(replay.wpm),
                 None => {
                     let label = self.session_label();
-                    crate::storage::personal_best_for_mode(self.history(), &label)
+                    // The daily challenge's best is today's, on today's
+                    // words — as Results counts it.
+                    let same_text = self.best_text();
+                    crate::storage::personal_best(self.history().iter().filter(|s| {
+                        s.mode == label && same_text.as_ref().is_none_or(|text| s.text == *text)
+                    }))
                 }
             },
         }
@@ -1371,18 +1379,24 @@ impl App {
     /// with a fixed text, only the words reached in an endless (time) run.
     /// Empty when longer than [`crate::storage::MAX_TEXT_BYTES`].
     pub fn session_text(&self) -> String {
-        let words = match self.mode {
-            Mode::Time(_) | Mode::Zen => {
-                &self.words[..(self.current_word + 1).min(self.words.len())]
-            }
-            _ => &self.words[..],
-        };
+        let words = self.run_words();
         let bytes = words.iter().map(|w| w.text.len() + 1).sum::<usize>();
         if bytes.saturating_sub(1) > crate::storage::MAX_TEXT_BYTES {
             return String::new();
         }
         let words: Vec<&str> = words.iter().map(|w| w.text.as_str()).collect();
         words.join(" ")
+    }
+
+    /// The run's text, as words: all of a fixed text; in an endless run
+    /// (time, zen) the words reached — the rest were only ever a buffer.
+    fn run_words(&self) -> &[Word] {
+        match self.mode {
+            Mode::Time(_) | Mode::Zen => {
+                &self.words[..(self.current_word + 1).min(self.words.len())]
+            }
+            _ => &self.words[..],
+        }
     }
 
     /// Time and zen runs end on the clock or on Esc, not on the last word:
@@ -1467,7 +1481,6 @@ impl App {
         let active_word = &mut self.words[self.current_word];
         let cursor_position = active_word.typed.chars().count();
         let word_len = active_word.text.chars().count();
-        self.total_typed_chars += 1;
 
         // Past the end of the word the cursor sits on the space after it.
         let expected_char = active_word.text.chars().nth(cursor_position);
@@ -1485,6 +1498,15 @@ impl App {
             }
         };
         self.rejected_key = blocked;
+        // The right space, refused because the word still has a mistake:
+        // the mistake is that earlier letter, already counted — this key
+        // isn't another one (it would mark Space as a weak key). It only
+        // stops, and sounds if mistakes do.
+        if blocked && typed_char == target_char {
+            self.bell = self.options.sound != KeySound::Off;
+            return;
+        }
+        self.total_typed_chars += 1;
         let is_correct = typed_char == target_char && !blocked;
         active_word.had_error |= !is_correct;
         self.bell = match self.options.sound {
@@ -1771,6 +1793,28 @@ mod tests {
         assert_eq!(app.replay.as_ref().unwrap().wpm, wpm, "still the first run");
     }
 
+    /// Review fix: stopping on words, the right space refused at the end of
+    /// a wrong word is not another mistake — not on the Space key, not in
+    /// accuracy or the per-second tally; a wrong key there still is.
+    #[test]
+    fn refused_right_space_is_not_a_mistake() {
+        let mut app = custom_app(&["ab", "cd"]);
+        app.options.stop_on_error = StopOnError::Word;
+        app.started_at = Some(Instant::now());
+        app.handle_char('a');
+        app.handle_char('x');
+        let (typed, correct) = (app.total_typed_chars, app.correct_chars);
+        for _ in 0..3 {
+            app.handle_char(' ');
+        }
+        assert!(app.rejected_key);
+        assert_eq!((app.total_typed_chars, app.correct_chars), (typed, correct));
+        assert!(!app.key_misses.contains_key(&' '), "{:?}", app.key_misses);
+        assert_eq!(app.timeline.iter().map(|s| s.errors).sum::<u32>(), 1);
+        app.handle_char('z'); // a letter where the space belongs: a mistake
+        assert_eq!(app.key_misses.get(&' '), Some(&1));
+    }
+
     /// Stopping on letters, a wrong key is a mistake that doesn't move the
     /// cursor; stopping on words, a word with a mistake can't be left — nor
     /// the run finished on one — until it's fixed.
@@ -1912,8 +1956,26 @@ mod tests {
         // Walking away at the end counts too: keys only in seconds 0–3.
         app.timeline = vec![typing; 4];
         assert_eq!(app.longest_idle(), 16);
+        // Review fix: zen is never saved, so it is never "too idle".
+        app.options.idle_limit = Some(10);
+        app.mode = Mode::Zen;
+        assert_eq!(app.too_idle(), None);
+        app.mode = Mode::Custom;
         app.options.idle_limit = None;
         assert_eq!(app.too_idle(), None);
+    }
+
+    /// Review fix: F6 after a run too long to save its text (a big custom
+    /// file) repeated one empty word. It repeats the run's own words.
+    #[test]
+    fn repeat_of_a_huge_run_repeats_its_words() {
+        let word = "x".repeat(1000);
+        let mut app = custom_app(&vec![word.as_str(); 70]);
+        assert_eq!(app.session_text(), "", "too long to save");
+        app.end_early();
+        app.repeat_run();
+        assert_eq!(app.words.len(), 70);
+        assert!(app.words.iter().all(|w| w.text == word));
     }
 
     /// The bell is asked for on every key, on mistakes only (refused keys
@@ -1961,6 +2023,25 @@ mod tests {
         assert_eq!(app.pace_wpm, None, "no best yet for words-25");
         app.start_game(Mode::Zen).unwrap();
         assert_eq!(app.pace_wpm, None);
+        // Review fix: the daily challenge races today's best on today's
+        // words, not another day's.
+        let today = crate::words::daily_words(chrono::Local::now().date_naive()).join(" ");
+        app.stats_cache = Some(vec![
+            SessionRecord {
+                wpm: 95.0,
+                mode: "daily".into(),
+                text: "yesterday's words".into(),
+                ..SessionRecord::default()
+            },
+            SessionRecord {
+                wpm: 70.0,
+                mode: "daily".into(),
+                text: today,
+                ..SessionRecord::default()
+            },
+        ]);
+        app.start_game(Mode::Daily).unwrap();
+        assert_eq!(app.pace_wpm, Some(70.0));
         app.start_replay(&SessionRecord {
             wpm: 55.5,
             mode: "words-25".into(),

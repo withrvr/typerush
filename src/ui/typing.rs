@@ -254,8 +254,10 @@ fn render_words(f: &mut Frame, app: &App, area: Rect) {
     //    ever gets long enough to show up in a profile.
     let mut word_starts = Vec::with_capacity(app.words.len());
     // Where each word starts in the text read as one stream (each space
-    // between words one character): what the pace cursor counts in.
-    let mut word_offsets = Vec::with_capacity(app.words.len());
+    // between words one character): what the pace cursor counts in. Only
+    // kept when there is a pace cursor.
+    let pace = app.pace_position();
+    let mut word_offsets = Vec::new();
     let mut offset = 0;
     let mut cursor_line = 0;
     let mut at = (0, 0);
@@ -270,8 +272,10 @@ fn render_words(f: &mut Frame, app: &App, area: Rect) {
             + usize::from(has_space(word_index));
         at = place(at, width.min(max_width));
         word_starts.push(at);
-        word_offsets.push(offset);
-        offset += word.text.chars().count() + 1;
+        if pace.is_some() {
+            word_offsets.push(offset);
+            offset += word.text.chars().count() + 1;
+        }
         let is_active = word_index == app.current_word;
         if at.1 + width <= max_width && !is_active {
             at.1 += width;
@@ -336,9 +340,9 @@ fn render_words(f: &mut Frame, app: &App, area: Rect) {
     let mut bar_at: Option<(usize, usize)> = None;
     // The pace cursor: the character it has reached, underlined in the
     // secondary color — never over the real cursor, which wins.
-    let pace = app.pace_position();
-    let ghost = |index: usize, on_cursor: bool, style: Style| {
-        if pace == Some(index) && !on_cursor {
+    let ghost = |word_index: usize, char_index: usize, on_cursor: bool, style: Style| {
+        let index = word_offsets.get(word_index).map(|start| start + char_index);
+        if pace.is_some() && pace == index && !on_cursor {
             style
                 .fg(app.theme.secondary)
                 .add_modifier(Modifier::UNDERLINED)
@@ -374,11 +378,7 @@ fn render_words(f: &mut Frame, app: &App, area: Rect) {
                 Style::default()
             };
             let on_cursor = is_active_word && typed_char_count >= char_states.len();
-            let style = ghost(
-                word_offsets[word_index] + char_states.len(),
-                on_cursor,
-                style,
-            );
+            let style = ghost(word_index, char_states.len(), on_cursor, style);
             (' ', style, on_cursor)
         });
         let styled = char_states
@@ -393,7 +393,7 @@ fn render_words(f: &mut Frame, app: &App, area: Rect) {
                 } else {
                     style_for_char(*state, is_zen_mode, blind, &app.theme)
                 };
-                let style = ghost(word_offsets[word_index] + char_index, on_cursor, style);
+                let style = ghost(word_index, char_index, on_cursor, style);
                 (*ch, style, on_cursor)
             });
         for (ch, style, on_cursor) in styled.chain(space) {

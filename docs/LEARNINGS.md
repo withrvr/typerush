@@ -95,6 +95,20 @@ rule that keeps it fixed).
   vertical border (a `│` run, overlays included) on every screen and fails
   on anything drawn beside it — checked to fail with the old padding and
   help width.
+- **Found by the last review of the branch** (fixed with a test each):
+  the chart's x labels panicked on a terminal 8–9 columns wide (`clamp`
+  with min > max) — `no_screen_panics_at_any_size` now draws every screen
+  at every width from 1 to 30; `F6` after a run over 64 KiB repeated one
+  empty word (it took the saved text, which is empty past the limit — it
+  now takes the run's words); stopping on words, the right space refused at
+  the end of a wrong word counted as a Space-key mistake; zen runs showed
+  "not saved: idle" though zen is never saved; `pace = best` on the daily
+  challenge raced any day's best while Results meant today's; the Settings
+  typing rows showed the file's values, not `--blind` / `--pace` in use. And
+  three tidy-ups: one source for the stats path (`App::stats_file`, read
+  through `App::history`), one helper for the typing rows, and word offsets
+  for the pace cursor counted only when there is one. Lesson: a value
+  shown on screen and a value used must come from the same place.
 - **The help box had no room to breathe.** Padding above and below meant
   two more rows in a box that already used all 23 at 80×24; two entries
   that wrapped onto a second line (`p n b`, `Mouse`) were reworded to one

@@ -396,9 +396,14 @@ fn draw_x_labels(
     for (value, text) in labels {
         let column = left + ((value / top) * f64::from(width - 1)).round() as u16;
         let text_width = text.chars().count() as u16;
+        // Wider than the chart (a tiny terminal): no room for it at all.
+        if text_width > inner.width {
+            continue;
+        }
         let start = column
             .saturating_sub(text_width / 2)
-            .clamp(inner.left(), inner.right().saturating_sub(text_width));
+            .max(inner.left())
+            .min(inner.right() - text_width);
         buf.set_string(start, row, text, style);
     }
 }
@@ -503,6 +508,35 @@ mod tests {
                 "{max} {room}: {count}"
             );
             assert!(step * (count - 1) as f64 >= max, "{max}: reaches the top");
+        }
+    }
+
+    /// Review fix: on a terminal narrower than an x label (8–9 columns),
+    /// placing the label panicked (`clamp` with min > max). Every width
+    /// from 1 to 30 draws a charted run without panicking.
+    #[test]
+    fn chart_survives_any_width() {
+        use crate::app::{Mode, Screen};
+        use std::time::{Duration, Instant};
+        let mut app = App::new(None, crate::theme::builtin::DARK, Mode::Time(15));
+        app.start_game(Mode::Words(10)).unwrap();
+        app.screen = Screen::Results;
+        app.stats_cache = Some(Vec::new());
+        let end = Instant::now();
+        app.ended_at = Some(end);
+        app.started_at = Some(end - Duration::from_secs(12));
+        app.timeline = vec![
+            Second {
+                typed: 5,
+                correct: 5,
+                errors: 0
+            };
+            12
+        ];
+        for width in 1..=30 {
+            let mut terminal =
+                ratatui::Terminal::new(ratatui::backend::TestBackend::new(width, 24)).unwrap();
+            terminal.draw(|f| crate::ui::render(f, &app)).unwrap();
         }
     }
 

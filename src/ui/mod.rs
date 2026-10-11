@@ -558,6 +558,84 @@ mod tests {
         }
     }
 
+    /// No screen panics at any size: every screen (with a charted run, a
+    /// pace and a pending reset among them) at every width from 1 to 30 and
+    /// heights from 1 to 24 — the review found the chart panicking at 8
+    /// columns.
+    #[test]
+    fn no_screen_panics_at_any_size() {
+        use crate::app::{Screen, Second};
+        use std::time::{Duration, Instant};
+        let history: Vec<_> = (0..20)
+            .map(|i| record(40.0 + i as f64, "time-30s"))
+            .collect();
+        type Setup = fn(&mut App);
+        let cases: Vec<Setup> = vec![
+            |app| app.screen = Screen::Menu,
+            |app| {
+                app.start_game(Mode::Words(25)).unwrap();
+                app.started_at = Some(Instant::now() - Duration::from_secs(5));
+                app.pace_wpm = Some(60.0);
+                app.options.cursor = crate::options::CursorStyle::Bar;
+                app.handle_char('x');
+            },
+            |app| {
+                app.start_game(Mode::Words(25)).unwrap();
+                app.toggle_pause();
+            },
+            |app| {
+                app.start_game(Mode::Words(10)).unwrap();
+                let end = Instant::now();
+                app.ended_at = Some(end);
+                app.started_at = Some(end - Duration::from_secs(30));
+                app.timeline = vec![
+                    Second {
+                        typed: 5,
+                        correct: 4,
+                        errors: 1
+                    };
+                    30
+                ];
+                app.screen = Screen::Results;
+            },
+            |app| app.screen = Screen::Stats,
+            |app| {
+                let history = app.stats_cache.clone().unwrap();
+                app.stats_view = Some(crate::storage::StatsView::new(
+                    &history,
+                    Some("bests"),
+                    Default::default(),
+                ));
+                app.screen = Screen::Stats;
+            },
+            |app| {
+                let mut view =
+                    crate::settings::SettingsView::load(None, crate::settings::ROWS.len() - 1);
+                view.confirm_reset = true;
+                app.settings = Some(view);
+                app.screen = Screen::Settings;
+            },
+            |app| {
+                let history = app.stats_cache.clone().unwrap();
+                app.profile = Some(crate::progress::Profile::new(&history, 30));
+                app.screen = Screen::Profile;
+            },
+            |app| app.screen = Screen::Help,
+            |app| app.error_message = Some("a long error message ".repeat(8)),
+        ];
+        for setup in &cases {
+            let mut app = App::new(None, builtin::MONOKAI, Mode::Time(15));
+            app.stats_cache = Some(history.clone());
+            setup(&mut app);
+            for width in 1..=30 {
+                for height in [1, 2, 3, 4, 6, 9, 13, 18, 24] {
+                    let mut terminal = Terminal::new(TestBackend::new(width, height)).unwrap();
+                    terminal.draw(|f| render(f, &app)).unwrap();
+                }
+            }
+        }
+    }
+
     /// Issue #20: nothing is drawn against a box's side. On every screen,
     /// each cell beside a vertical border — a `│` with a border character
     /// above or below it, so overlays count too — is blank or another

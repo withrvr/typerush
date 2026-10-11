@@ -53,6 +53,8 @@ your best, type blind — and make TypeRush look the way you want.
 - The blank line under the menu's last option gives way before the banner
   on a terminal too short for both.
 - The help overlay lists `Tab` and `F6`.
+- The Settings typing rows show the values in use, so `--blind`,
+  `--stop-on-error` and `--pace` show there for the launch they're given on.
 - **The Results chart is labelled on round numbers:** at least four labels
   on each axis and as many as fit, every label on its value.
 - **The Stats WPM trend shows as many sessions as the box is wide** (it

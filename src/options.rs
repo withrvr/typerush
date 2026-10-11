@@ -26,12 +26,10 @@ impl StopOnError {
 
     /// The setting called `name` (case-insensitive), if there is one.
     pub fn from_name(name: &str) -> Option<Self> {
-        match name.to_lowercase().as_str() {
-            "off" => Some(Self::Off),
-            "letter" => Some(Self::Letter),
-            "word" => Some(Self::Word),
-            _ => None,
-        }
+        let at = Self::NAMES
+            .iter()
+            .position(|n| n.eq_ignore_ascii_case(name))?;
+        Some([Self::Off, Self::Letter, Self::Word][at])
     }
 }
 

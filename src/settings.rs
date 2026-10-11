@@ -61,8 +61,6 @@ pub struct SettingsView {
     pub start: Mode,
     pub pool: WordPool,
     pub decor: WordDecor,
-    /// The `[typing]` settings.
-    pub typing: crate::options::TypingOptions,
     /// The first problem the loader has with the file (it doesn't parse, a
     /// value is out of range…), shown on the screen.
     pub problem: Option<String>,
@@ -91,7 +89,6 @@ impl SettingsView {
             start: resolved.default_mode,
             pool: resolved.word_pool,
             decor: resolved.word_decor,
-            typing: resolved.typing,
             problem: warnings.into_iter().next(),
         }
     }
@@ -188,83 +185,19 @@ impl App {
                     self.word_pool = pool;
                 }
             }
-            Row::LiveWpm => {
-                let on = !view.typing.live_wpm;
-                if self
-                    .save_settings(&[("typing.live_wpm", on.to_string())])
-                    .is_some()
-                {
-                    self.options.live_wpm = on;
-                }
-            }
-            Row::Blind => {
-                let on = !view.typing.blind;
-                if self
-                    .save_settings(&[("typing.blind", on.to_string())])
-                    .is_some()
-                {
-                    self.options.blind = on;
-                }
-            }
-            Row::StopOnError => {
-                use crate::options::StopOnError;
-                let names = StopOnError::NAMES;
-                let at = names
-                    .iter()
-                    .position(|n| *n == view.typing.stop_on_error.name());
-                let name = names[cycle(at, names.len(), forward)];
-                if self
-                    .save_settings(&[("typing.stop_on_error", name.to_string())])
-                    .is_some()
-                {
-                    self.options.stop_on_error = StopOnError::from_name(name).unwrap_or_default();
-                }
-            }
-            Row::Pace => {
-                use crate::options::Pace;
-                let at = Pace::CHOICES.iter().position(|p| *p == view.typing.pace);
-                let pace = Pace::CHOICES[cycle(at, Pace::CHOICES.len(), forward)];
-                if self
-                    .save_settings(&[("typing.pace", pace.name())])
-                    .is_some()
-                {
-                    self.options.pace = pace;
-                }
-            }
-            Row::Cursor => {
-                use crate::options::CursorStyle;
-                let names = CursorStyle::NAMES;
-                let at = names.iter().position(|n| *n == view.typing.cursor.name());
-                let name = names[cycle(at, names.len(), forward)];
-                if self
-                    .save_settings(&[("typing.cursor", name.to_string())])
-                    .is_some()
-                {
-                    self.options.cursor = CursorStyle::from_name(name).unwrap_or_default();
-                }
-            }
-            Row::Sound => {
-                use crate::options::KeySound;
-                let names = KeySound::NAMES;
-                let at = names.iter().position(|n| *n == view.typing.sound.name());
-                let name = names[cycle(at, names.len(), forward)];
-                if self
-                    .save_settings(&[("typing.sound", name.to_string())])
-                    .is_some()
-                {
-                    self.options.sound = KeySound::from_name(name).unwrap_or_default();
-                }
-            }
-            Row::IdleLimit => {
-                use crate::options::IDLE_CHOICES;
-                let current = view.typing.idle_limit.unwrap_or(0);
-                let at = IDLE_CHOICES.iter().position(|s| *s == current);
-                let seconds = IDLE_CHOICES[cycle(at, IDLE_CHOICES.len(), forward)];
-                if self
-                    .save_settings(&[("typing.idle_limit", seconds.to_string())])
-                    .is_some()
-                {
-                    self.options.idle_limit = (seconds > 0).then_some(seconds);
+            // The typing rows change the values in use (`--blind` and the
+            // other flags included), then save the new one.
+            row @ (Row::LiveWpm
+            | Row::Blind
+            | Row::StopOnError
+            | Row::Pace
+            | Row::Cursor
+            | Row::Sound
+            | Row::IdleLimit) => {
+                let mut next = self.options;
+                let (key, value) = next_typing(&mut next, row, forward);
+                if self.save_settings(&[(key, value)]).is_some() {
+                    self.options = next;
                 }
             }
             Row::Reset => {}
@@ -374,6 +307,58 @@ fn start_settings(mode: Mode) -> Vec<(&'static str, String)> {
         _ => {}
     }
     settings
+}
+
+/// Move typing setting `row` of `options` to its next (or previous) value;
+/// the config key and the value as written.
+fn next_typing(
+    options: &mut crate::options::TypingOptions,
+    row: Row,
+    forward: bool,
+) -> (&'static str, String) {
+    use crate::options::{CursorStyle, KeySound, Pace, StopOnError, IDLE_CHOICES};
+    match row {
+        Row::LiveWpm => {
+            options.live_wpm = !options.live_wpm;
+            ("typing.live_wpm", options.live_wpm.to_string())
+        }
+        Row::Blind => {
+            options.blind = !options.blind;
+            ("typing.blind", options.blind.to_string())
+        }
+        Row::StopOnError => {
+            let name = step(&StopOnError::NAMES, options.stop_on_error.name(), forward);
+            options.stop_on_error = StopOnError::from_name(name).unwrap_or_default();
+            ("typing.stop_on_error", name.to_string())
+        }
+        Row::Cursor => {
+            let name = step(&CursorStyle::NAMES, options.cursor.name(), forward);
+            options.cursor = CursorStyle::from_name(name).unwrap_or_default();
+            ("typing.cursor", name.to_string())
+        }
+        Row::Sound => {
+            let name = step(&KeySound::NAMES, options.sound.name(), forward);
+            options.sound = KeySound::from_name(name).unwrap_or_default();
+            ("typing.sound", name.to_string())
+        }
+        Row::Pace => {
+            options.pace = step(&Pace::CHOICES, options.pace, forward);
+            ("typing.pace", options.pace.name())
+        }
+        Row::IdleLimit => {
+            let seconds = step(&IDLE_CHOICES, options.idle_limit.unwrap_or(0), forward);
+            options.idle_limit = (seconds > 0).then_some(seconds);
+            ("typing.idle_limit", seconds.to_string())
+        }
+        _ => unreachable!("not a typing row: {row:?}"),
+    }
+}
+
+/// The item after (or before) `current` in `choices`, wrapping; the first
+/// (or last) when `current` isn't one of them.
+fn step<T: Copy + PartialEq>(choices: &[T], current: T, forward: bool) -> T {
+    let at = choices.iter().position(|choice| *choice == current);
+    choices[cycle(at, choices.len(), forward)]
 }
 
 /// Index after (or before) `at` in a list of `len`, wrapping; the first
