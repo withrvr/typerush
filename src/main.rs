@@ -14,6 +14,7 @@ mod app;
 mod commands;
 mod config;
 mod game;
+mod settings;
 mod state;
 mod storage;
 mod text;
@@ -332,6 +333,7 @@ fn run_app(terminal: &mut Tui, cli: Cli) -> Result<()> {
         app.error_message = Some(first_warning);
     }
     app.export_file = Some(storage::data_dir().join("stats.csv"));
+    app.config_file = Some(config::load::config_path());
     let stats_file = storage::stats_path();
     apply_cli_autostart(&mut app, &cli, &stats_file)?;
 
@@ -461,6 +463,7 @@ fn handle_key(app: &mut App, code: KeyCode, mods: KeyModifiers) {
         Screen::Typing => handle_typing_key(app, code, mods),
         Screen::Results => handle_results_key(app, code, mods),
         Screen::Stats => handle_stats_key(app, code, mods),
+        Screen::Settings => handle_settings_key(app, code),
         Screen::Help => {}
     }
 }
@@ -522,6 +525,7 @@ fn handle_mouse(app: &mut App, mouse: MouseEvent) {
             match target {
                 Some(ClickAction::Menu(index)) => app.menu_index = index,
                 Some(ClickAction::Select(row)) => select_row(app, row),
+                Some(ClickAction::Setting(row, _)) => app.settings_select(row),
                 _ => {}
             }
         }
@@ -539,6 +543,10 @@ fn handle_mouse(app: &mut App, mouse: MouseEvent) {
                 }
                 Some(ClickAction::Key(code, mods)) => handle_key(app, code, mods),
                 Some(ClickAction::Select(row)) => select_row(app, row),
+                Some(ClickAction::Setting(row, code)) => {
+                    app.settings_select(row);
+                    handle_key(app, code, KeyModifiers::NONE);
+                }
                 None => {}
             }
         }
@@ -584,6 +592,7 @@ fn handle_menu_key(app: &mut App, code: KeyCode, _mods: KeyModifiers) {
                     }
                 }
                 MenuAction::ShowStats => app.screen = Screen::Stats,
+                MenuAction::ShowSettings => app.screen = Screen::Settings,
                 MenuAction::Quit => app.should_quit = true,
             }
         }
@@ -596,6 +605,24 @@ fn handle_menu_key(app: &mut App, code: KeyCode, _mods: KeyModifiers) {
             }
         }
         KeyCode::Tab | KeyCode::Char('s') => app.screen = Screen::Stats,
+        KeyCode::Char('c') => app.screen = Screen::Settings,
+        KeyCode::Char('q') => app.should_quit = true,
+        _ => {}
+    }
+}
+
+/// Keymap for the Settings screen: ↑/↓ (k/j) pick a setting, ←/→ (h/l)
+/// change it, Enter / Space the next value (or reset, asked twice); Esc
+/// cancels a pending reset, else goes back to the menu like `m` / Tab.
+fn handle_settings_key(app: &mut App, code: KeyCode) {
+    match code {
+        KeyCode::Up | KeyCode::Char('k') => app.settings_move(-1),
+        KeyCode::Down | KeyCode::Char('j') => app.settings_move(1),
+        KeyCode::Left | KeyCode::Char('h') => app.settings_change(false),
+        KeyCode::Right | KeyCode::Char('l') => app.settings_change(true),
+        KeyCode::Enter | KeyCode::Char(' ') => app.settings_activate(),
+        KeyCode::Esc if app.settings_cancel() => {}
+        KeyCode::Esc | KeyCode::Char('m') | KeyCode::Tab => app.screen = Screen::Menu,
         KeyCode::Char('q') => app.should_quit = true,
         _ => {}
     }
@@ -780,6 +807,15 @@ fn after_input(app: &mut App, last_screen: Screen, session_saved: &mut bool, sta
     // other way in rebuilds the view (a game may have been saved since).
     // Straight after a run it opens on that run's mode; otherwise it stays
     // on the category that was showing.
+    // Settings are read from the file on the way in (not coming back from
+    // help), so an edit made outside — `typerush config set` — shows up.
+    if app.screen == Screen::Settings && !matches!(last_screen, Screen::Settings | Screen::Help) {
+        let selected = app.settings.as_ref().map_or(0, |view| view.selected);
+        app.settings = Some(settings::SettingsView::load(
+            app.config_file.as_deref(),
+            selected,
+        ));
+    }
     if app.screen == Screen::Stats
         && (app.stats_view.is_none() || !matches!(last_screen, Screen::Stats | Screen::Help))
     {
@@ -850,7 +886,7 @@ fn save_current_session(app: &mut App, stats_file: &Path) {
 mod tests {
     use super::*;
     use crate::app::{Screen, Word};
-    use crate::theme::ThemePalette;
+    use crate::theme::{builtin, ThemePalette};
 
     fn make_typing_app() -> App {
         let mut app = App::new(None, ThemePalette::default(), Mode::Time(15));
@@ -1754,6 +1790,185 @@ mod tests {
         assert!(rows.contains(" done "), "{rows}");
         assert!(app.dismiss_modal());
         assert!(app.notice.is_none() && !app.dismiss_modal());
+    }
+
+    // ── settings (v0.5.0) ────────────────────────────────────────────────────
+
+    /// An app whose Settings screen saves to a config file in a temp dir,
+    /// already on that screen (entered from the menu with `c`).
+    fn settings_app(dir: &tempfile::TempDir) -> (App, PathBuf) {
+        let config_file = dir.path().join(".typerush").join("config.toml");
+        std::fs::create_dir_all(config_file.parent().unwrap()).unwrap();
+        let mut app = App::new(None, ThemePalette::default(), Mode::Time(15));
+        app.config_file = Some(config_file.clone());
+        handle_key(&mut app, KeyCode::Char('c'), KeyModifiers::NONE);
+        assert_eq!(app.screen, Screen::Settings);
+        after_input(&mut app, Screen::Menu, &mut false, Path::new("unused"));
+        (app, config_file)
+    }
+
+    fn press(app: &mut App, code: KeyCode) {
+        handle_key(app, code, KeyModifiers::NONE);
+    }
+
+    /// Changing the theme saves it and shows it at once (with the file's
+    /// color overrides on top); ← goes back, and it wraps.
+    #[test]
+    fn settings_theme_is_saved_and_shown_at_once() {
+        let dir = tempfile::tempdir().unwrap();
+        let (mut app, config_file) = settings_app(&dir);
+        std::fs::write(&config_file, "# mine\n[colors]\nerror = \"#123456\"\n").unwrap();
+        after_input(&mut app, Screen::Menu, &mut false, Path::new("unused"));
+        press(&mut app, KeyCode::Right); // dark → light
+        let text = std::fs::read_to_string(&config_file).unwrap();
+        // A new top-level key goes above the first section; the comment
+        // stays with the section it was written over.
+        assert_eq!(
+            text,
+            "theme = \"light\"\n# mine\n[colors]\nerror = \"#123456\"\n"
+        );
+        assert_eq!(app.theme.background, builtin::LIGHT.background);
+        assert_eq!(
+            app.theme.error,
+            ratatui::style::Color::Rgb(0x12, 0x34, 0x56)
+        );
+        assert_eq!(app.settings.as_ref().unwrap().theme, "light");
+        press(&mut app, KeyCode::Left);
+        press(&mut app, KeyCode::Left); // dark → dracula (wraps)
+        assert_eq!(app.settings.as_ref().unwrap().theme, "dracula");
+        assert_eq!(app.theme.background, builtin::DRACULA.background);
+    }
+
+    /// The start mode cycles through the menu's runs, saves the mode and
+    /// its count, and moves the menu's highlight to it; the switches save
+    /// and apply the word settings.
+    #[test]
+    fn settings_start_mode_and_switches() {
+        let dir = tempfile::tempdir().unwrap();
+        let (mut app, config_file) = settings_app(&dir);
+        press(&mut app, KeyCode::Down);
+        press(&mut app, KeyCode::Right); // time 15s → time 30s
+        press(&mut app, KeyCode::Right); // → time 60s
+        assert_eq!(app.settings.as_ref().unwrap().start, Mode::Time(60));
+        assert_eq!(app.menu[app.menu_index].label, "60s");
+        press(&mut app, KeyCode::Left);
+        press(&mut app, KeyCode::Left);
+        press(&mut app, KeyCode::Left); // wraps to the last run: daily
+        assert_eq!(app.settings.as_ref().unwrap().start, Mode::Daily);
+        let (resolved, warnings) = config::load::load_from(&config_file, CliOverrides::default());
+        assert!(warnings.is_empty(), "{warnings:?}");
+        assert_eq!(resolved.default_mode, Mode::Daily);
+
+        press(&mut app, KeyCode::Down); // punctuation
+        press(&mut app, KeyCode::Enter);
+        press(&mut app, KeyCode::Down); // numbers
+        press(&mut app, KeyCode::Char(' '));
+        press(&mut app, KeyCode::Down); // 10k words
+        press(&mut app, KeyCode::Right);
+        assert!(app.word_decor.punctuation && app.word_decor.numbers);
+        assert_eq!(app.word_pool, WordPool::Extended);
+        let (resolved, _) = config::load::load_from(&config_file, CliOverrides::default());
+        assert!(resolved.word_decor.punctuation && resolved.word_decor.numbers);
+        assert_eq!(resolved.word_pool, WordPool::Extended);
+        press(&mut app, KeyCode::Enter);
+        assert_eq!(app.word_pool, WordPool::Common);
+    }
+
+    /// Reset asks first: one Enter only asks, Esc keeps everything (and
+    /// stays), moving away forgets the question; the second Enter moves the
+    /// file aside, says where, and puts the defaults back in use.
+    #[test]
+    fn settings_reset_asks_first() {
+        let dir = tempfile::tempdir().unwrap();
+        let (mut app, config_file) = settings_app(&dir);
+        press(&mut app, KeyCode::Right); // light theme, saved
+        press(&mut app, KeyCode::End);
+        for _ in 0..5 {
+            press(&mut app, KeyCode::Down);
+        }
+        press(&mut app, KeyCode::Enter);
+        assert!(app.settings.as_ref().unwrap().confirm_reset);
+        let rows = screen(&app, 80, 24).join("\n");
+        assert!(
+            rows.contains("Enter again to reset every setting"),
+            "{rows}"
+        );
+        press(&mut app, KeyCode::Esc);
+        assert_eq!(app.screen, Screen::Settings, "Esc only cancelled");
+        assert!(!app.settings.as_ref().unwrap().confirm_reset);
+        press(&mut app, KeyCode::Enter);
+        press(&mut app, KeyCode::Up);
+        press(&mut app, KeyCode::Down);
+        press(&mut app, KeyCode::Enter);
+        assert!(config_file.exists(), "moving away forgot the question");
+
+        press(&mut app, KeyCode::Enter);
+        assert!(!config_file.exists());
+        assert!(app
+            .notice
+            .as_deref()
+            .unwrap()
+            .contains("your old file is at"));
+        assert_eq!(app.theme, builtin::DARK);
+        assert_eq!(app.settings.as_ref().unwrap().theme, "dark");
+        press(&mut app, KeyCode::Esc);
+        assert_eq!(app.screen, Screen::Menu);
+    }
+
+    /// With the mouse: ‹ › change the theme, a switch's value flips it, and
+    /// a click on another row's value selects that row too.
+    #[test]
+    fn settings_by_mouse() {
+        let dir = tempfile::tempdir().unwrap();
+        let (mut app, _) = settings_app(&dir);
+        draw(&app);
+        let next = target_cell(&app, ClickAction::Setting(0, KeyCode::Right));
+        click(&mut app, next);
+        assert_eq!(app.settings.as_ref().unwrap().theme, "light");
+        draw(&app);
+        let previous = target_cell(&app, ClickAction::Setting(0, KeyCode::Left));
+        click(&mut app, previous);
+        assert_eq!(app.settings.as_ref().unwrap().theme, "dark");
+        draw(&app);
+        let numbers = target_cell(&app, ClickAction::Setting(3, KeyCode::Enter));
+        click(&mut app, numbers);
+        assert_eq!(app.settings.as_ref().unwrap().selected, 3);
+        assert!(app.word_decor.numbers);
+    }
+
+    /// A config that isn't valid TOML is never overwritten from Settings:
+    /// the change shows an error and nothing moves; the screen names the
+    /// problem.
+    #[test]
+    fn settings_leave_a_broken_file_alone() {
+        let dir = tempfile::tempdir().unwrap();
+        let (mut app, config_file) = settings_app(&dir);
+        std::fs::write(&config_file, "theme = = 1").unwrap();
+        press(&mut app, KeyCode::Esc);
+        press(&mut app, KeyCode::Char('c'));
+        after_input(&mut app, Screen::Menu, &mut false, Path::new("unused"));
+        let rows = screen(&app, 80, 24).join("\n");
+        assert!(rows.contains("could not parse"), "{rows}");
+        press(&mut app, KeyCode::Right);
+        assert!(app
+            .error_message
+            .as_deref()
+            .unwrap()
+            .contains("isn't valid TOML"));
+        assert_eq!(
+            std::fs::read_to_string(&config_file).unwrap(),
+            "theme = = 1"
+        );
+        assert_eq!(app.theme, ThemePalette::default());
+    }
+
+    /// The menu's settings option opens the screen too.
+    #[test]
+    fn menu_settings_option_opens_settings() {
+        let mut app = App::new(None, ThemePalette::default(), Mode::Time(15));
+        app.menu_index = app.menu.iter().position(|m| m.label == "settings").unwrap();
+        press(&mut app, KeyCode::Enter);
+        assert_eq!(app.screen, Screen::Settings);
     }
 
     // ── saving ───────────────────────────────────────────────────────────────

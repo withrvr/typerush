@@ -39,6 +39,8 @@ pub enum Screen {
     Results,
     /// Browse historical sessions (`~/.typerush/stats.json`).
     Stats,
+    /// Change the saved settings (`~/.typerush/config.toml`).
+    Settings,
     /// Floating keybindings overlay (any screen can toggle it on).
     Help,
 }
@@ -226,6 +228,9 @@ pub enum ClickAction {
     /// Select this row of the list on screen (a Stats table row), like
     /// moving there with ↑/↓.
     Select(usize),
+    /// Select this Settings row, then act like this key on it (‹ is ←,
+    /// › is →, the value itself is Enter).
+    Setting(usize, KeyCode),
 }
 
 /// One selectable option in the main menu. Consecutive items that share a
@@ -253,6 +258,8 @@ pub enum MenuAction {
     StartCustom,
     /// Jump to the historical stats screen.
     ShowStats,
+    /// Open the Settings screen.
+    ShowSettings,
     /// Quit the application.
     Quit,
 }
@@ -262,7 +269,7 @@ pub enum MenuAction {
 /// Exact match wins (e.g. `time_seconds = 30` → "Time · 30s"). Otherwise we
 /// fall back to the first row of the same mode family (so `time_seconds = 45`
 /// still pre-selects a time row rather than landing on something unrelated).
-fn best_menu_match(menu: &[MenuItem], default_mode: Mode) -> usize {
+pub fn best_menu_match(menu: &[MenuItem], default_mode: Mode) -> usize {
     let same_family =
         |mode: &Mode| std::mem::discriminant(mode) == std::mem::discriminant(&default_mode);
     menu.iter()
@@ -286,7 +293,8 @@ pub fn default_menu() -> Vec<MenuItem> {
 ///
 /// The v0.3 rows keep their order; the v0.4 `symbols` and `custom` rows and
 /// v0.5's `daily` sit between `zen` and the last row, which holds the
-/// actions that don't start a game (`stats`, `quit`) side by side.
+/// actions that don't start a game (`stats`, `settings`, `quit`) side by
+/// side.
 pub fn build_menu(snippets: &[Snippet], last_custom_file: Option<&Path>) -> Vec<MenuItem> {
     use crate::words::CodeLang;
     let start = |group, label: &str, mode| MenuItem {
@@ -297,7 +305,7 @@ pub fn build_menu(snippets: &[Snippet], last_custom_file: Option<&Path>) -> Vec<
         custom_path: None,
     };
     // The actions that don't start a game share the last row, with no
-    // heading: "stats  quit".
+    // heading: "stats  settings  quit".
     let other = |label: &str, action| MenuItem {
         group: "app",
         label: label.to_string(),
@@ -348,6 +356,7 @@ pub fn build_menu(snippets: &[Snippet], last_custom_file: Option<&Path>) -> Vec<
     menu.push(start("daily", "daily", Mode::Daily));
 
     menu.push(other("stats", MenuAction::ShowStats));
+    menu.push(other("settings", MenuAction::ShowSettings));
     menu.push(other("quit", MenuAction::Quit));
     menu
 }
@@ -578,6 +587,15 @@ pub struct App {
     /// they set one — means exporting is off.
     pub export_file: Option<PathBuf>,
 
+    // --- settings (v0.5.0) ---
+    /// The config file the Settings screen saves to
+    /// (`~/.typerush/config.toml`). `None` — the default, so tests never
+    /// write to the real home directory — means nothing is saved.
+    pub config_file: Option<PathBuf>,
+    /// What the Settings screen shows, read from `config_file` when the
+    /// screen is entered and after each change.
+    pub settings: Option<crate::settings::SettingsView>,
+
     // --- replay (v0.5.0) ---
     /// The session being typed again, while replaying one. Restarting
     /// replays it again; starting any other game clears it.
@@ -641,6 +659,8 @@ impl App {
             app_state: AppState::default(),
             state_file: None,
             export_file: None,
+            config_file: None,
+            settings: None,
             replay: None,
             click_targets: RefCell::new(Vec::new()),
             pressed_target: None,
@@ -1264,9 +1284,10 @@ mod tests {
 
     #[test]
     fn menu_up_down_wraps_between_first_and_last_row() {
-        let mut app = menu_app();
+        let mut app = menu_app(); // time · 30s (column 1)
         app.menu_move_row(false);
-        assert_eq!(app.menu[app.menu_index].label, "quit");
+        assert_eq!(app.menu[app.menu_index].group, "app");
+        assert_eq!(app.menu[app.menu_index].label, "settings");
         app.menu_move_row(true);
         assert_eq!(app.menu[app.menu_index].group, "time");
     }
@@ -1729,8 +1750,8 @@ mod tests {
         let zen = groups.iter().position(|g| *g == "zen").unwrap();
         assert_eq!(groups[zen + 1], "symbols");
         assert_eq!(row("daily"), ["daily"]);
-        assert_eq!(groups[groups.len() - 3], "daily");
-        assert_eq!(row("app"), ["stats", "quit"]);
+        assert_eq!(groups[groups.len() - 4], "daily");
+        assert_eq!(row("app"), ["stats", "settings", "quit"]);
     }
 
     #[test]

@@ -167,7 +167,7 @@ one pull request:
 6. ✅ `typerush config path / show / get / set / reset` and
    `typerush --init-config` (also `config init`): edit
    `~/.typerush/config.toml` from the shell, comments and layout kept
-7. 🔲 In-app Settings screen: theme (previewed as you pick), start mode,
+7. ✅ In-app Settings screen: theme (previewed as you pick), start mode,
    word settings, reset to defaults — saved to `config.toml` at once
 8. 🔲 Review, end-to-end test, docs, version 0.5.0
 

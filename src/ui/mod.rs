@@ -21,6 +21,7 @@
 pub mod help;
 pub mod menu;
 pub mod results;
+pub mod settings;
 pub mod stats;
 pub mod typing;
 
@@ -53,6 +54,7 @@ pub fn render(frame: &mut Frame, app: &App) {
         Screen::Typing => typing::render(frame, app, body),
         Screen::Results => results::render(frame, app, body),
         Screen::Stats => stats::render(frame, app, body),
+        Screen::Settings => settings::render(frame, app, body),
         Screen::Help => help::render(frame, app, body),
     };
     render_footer(frame, app, footer, hints);
@@ -241,6 +243,33 @@ mod tests {
         assert!(!dump.contains('\x1b'));
     }
 
+    /// The help overlay fits a standard 80×24 terminal whole: every line,
+    /// none wrapped, and the close hint on its bottom border.
+    #[test]
+    fn help_fits_80x24() {
+        let mut app = App::new(None, builtin::DARK, Mode::Time(15));
+        app.screen = crate::app::Screen::Help;
+        let mut terminal = Terminal::new(TestBackend::new(80, 24)).unwrap();
+        terminal.draw(|f| render(f, &app)).unwrap();
+        let rows: Vec<String> = terminal
+            .backend()
+            .buffer()
+            .content()
+            .chunks(80)
+            .map(|row| row.iter().map(|c| c.symbol()).collect())
+            .collect();
+        let dump = rows.join("\n");
+        let title = rows
+            .iter()
+            .position(|r| r.contains("TypeRush — keybindings"));
+        let last = rows.iter().position(|r| r.contains("Snippets ~/.typerush"));
+        assert_eq!(last.zip(title).map(|(l, t)| l - t), Some(20), "{dump}");
+        assert!(rows[last.unwrap() + 1].contains("click to close"), "{dump}");
+        for text in ["Ctrl+P  F2", "menu: settings", "replay, export CSV"] {
+            assert!(dump.contains(text), "{text:?} missing:\n{dump}");
+        }
+    }
+
     /// Symbols mode shows a token-count gauge like words mode does.
     #[test]
     fn symbols_mode_shows_token_progress() {
@@ -407,6 +436,7 @@ mod tests {
             (24, Screen::Results, "Enter / F5 restart"),
             (24, Screen::Stats, "←/→ category"),
             (24, Screen::Help, "Esc / F1 close"),
+            (24, Screen::Settings, "↑/↓ setting"),
             (40, Screen::Results, "Enter / F5 restart"),
         ] {
             let mut app = App::new(None, builtin::DARK, Mode::Time(15));
@@ -467,7 +497,13 @@ mod tests {
         let mut app = App::new(None, builtin::DARK, Mode::Time(15));
         app.start_game(Mode::Words(2)).unwrap();
         app.stats_cache = Some(vec![record(61.5, "words-2")]);
-        for screen in [Screen::Menu, Screen::Typing, Screen::Results, Screen::Stats] {
+        for screen in [
+            Screen::Menu,
+            Screen::Typing,
+            Screen::Results,
+            Screen::Stats,
+            Screen::Settings,
+        ] {
             app.screen = screen;
             let rows = rows_of(&app);
             let first = rows[0].iter().position(|cell| cell.trim() != "").unwrap();
@@ -482,6 +518,9 @@ mod tests {
                     "30-day avg",
                     "time typed",
                 ],
+                // Not "theme": the selected row has the ➤ in its gutter; not
+                // "punctuation": it fills the label column but one cell.
+                Screen::Settings => &["start mode", "numbers", "10k words"],
                 _ => &[],
             };
             for label in labels {
