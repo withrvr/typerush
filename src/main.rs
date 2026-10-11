@@ -941,7 +941,7 @@ fn save_current_session(app: &mut App, stats_file: &Path) {
             .collect(),
         text: app.session_text(),
         consistency: app.consistency(),
-        missed: app.missed_chars(),
+        missed: app.missed,
         ended_early: app.ended_early,
     };
     match storage::save_session_to_path(stats_file, &record) {

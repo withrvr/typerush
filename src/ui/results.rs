@@ -214,7 +214,7 @@ pub fn render(f: &mut Frame, app: &App, area: Rect) -> &'static [super::Hint] {
             ),
             Span::styled("  ·  ", Style::default().fg(theme.pending)),
             Span::styled(
-                format!("{} missed", app.missed_chars()),
+                format!("{} missed", app.missed),
                 Style::default().fg(theme.neutral),
             ),
         ]),

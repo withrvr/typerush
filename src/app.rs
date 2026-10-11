@@ -572,6 +572,10 @@ pub struct App {
     pub timeline: Vec<Second>,
     /// The run was ended with Esc, not by its clock or its last character.
     pub ended_early: bool,
+    /// Characters of the text left untyped when the run ended
+    /// ([`App::missed_chars`]), worked out once then — Results shows it on
+    /// every frame, and a big custom file has a lot of text left.
+    pub missed: usize,
 
     // --- stats caching (v0.3.0) ---
     /// Full session history, read from disk the first time the Stats or
@@ -686,6 +690,7 @@ impl App {
             key_misses: HashMap::new(),
             timeline: Vec::new(),
             ended_early: false,
+            missed: 0,
             stats_cache: None,
             stats_view: None,
             results_comparison: None,
@@ -1157,6 +1162,7 @@ impl App {
         self.key_misses.clear();
         self.timeline.clear();
         self.ended_early = false;
+        self.missed = 0;
         self.top_up_words();
         self.screen = Screen::Typing;
     }
@@ -1232,6 +1238,7 @@ impl App {
         }
         if self.ended_at.is_none() {
             self.ended_at = Some(Instant::now());
+            self.missed = self.missed_chars();
         }
         self.screen = Screen::Results;
     }
@@ -1591,6 +1598,7 @@ mod tests {
         app.end_early();
         assert!(app.ended_early);
         assert_eq!(app.screen, Screen::Results);
+        assert_eq!(app.missed, 5, "kept when the run ended");
 
         let mut app = custom_app(&["ab"]);
         app.handle_char('a');
