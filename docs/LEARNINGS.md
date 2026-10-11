@@ -156,6 +156,17 @@ rule that keeps it fixed).
   the session holding each mode's best), on a row of their own under the
   bars, so a best is never hidden behind a tall bar. The trend box grew one
   row; the sessions list shows one fewer at 80×24.
+- **A new launch video, recorded from 0.7.0** (`docs/brag/`). The old one
+  showed v0.2 screens. The recorder runs the release binary in a PTY under
+  a terminal emulator and saves every frame cell by cell; a step list types
+  the words it reads off the screen. Two things to know when re-recording:
+  crossterm sends the 16 basic colors as 256-color indexes, so the emulator
+  reports them as xterm hex values (`00cd00`), which the renderer maps to its
+  palette; and the README GIF stays under 7 MB only with the background held
+  still (`?freeze`) and 12 fps — a moving background made it 8.6 MB.
+- **The README is for new users** (what it is, how to get it, the first
+  keys); everything for contributors lives in `CONTRIBUTING.md` and `docs/`.
+  It's also the crates.io page, so it has no diagrams.
 
 ---
 

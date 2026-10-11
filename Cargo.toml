@@ -11,13 +11,11 @@ categories = ["command-line-utilities", "games"]
 authors = ["Raghav Rathi", "withrvr"]
 readme = "README.md"
 exclude = [
-    "assets/",
     "docs/",
     ".claude/",
     ".github/",
     "*.mp4",
     "*.gif",
-    "*.tape",
 ]
 
 [dependencies]

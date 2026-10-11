@@ -238,6 +238,8 @@ one pull request:
 9. ✅ Custom themes from files in `~/.typerush/themes/`, on top of a
    built-in or from scratch, listed and picked like the built-in ones
 10. ✅ Review, end-to-end test, docs, version 0.7.0
+11. ✅ Release prep (a second pull request): dependency updates, a new
+    launch video recorded from 0.7.0, the README rewritten for new users
 
 **Added to v0.7 beyond the plan:**
 

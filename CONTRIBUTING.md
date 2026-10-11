@@ -20,6 +20,19 @@ take it from there.
 
 ---
 
+## Ways to help without writing code
+
+- **Report a bug** — what you did, what you expected, what happened, and
+  your OS and terminal. The [bug form](https://github.com/withrvr/typerush/issues/new/choose)
+  asks for exactly that.
+- **Try it on your setup** — a terminal, font or OS we haven't tested, and
+  tell us how it looks.
+- **Suggest content** — quotes, code snippets, a theme you'd like built in.
+- **Improve the docs** — if something in [USAGE](docs/USAGE.md) confused you,
+  it'll confuse the next person too.
+
+---
+
 ## Project layout
 
 See [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) for the full breakdown.
@@ -68,8 +81,8 @@ cd typerush
 cargo build
 ```
 
-The first build pulls in ~40 crates and takes ~60 seconds. Subsequent builds
-are incremental and finish in under a second.
+The first build downloads and compiles the dependencies, which takes a
+minute or two. After that, builds are incremental and take seconds.
 
 ### Running during development
 
@@ -171,17 +184,40 @@ Keep one logical change per commit when you can — it makes review easier.
 
 1. Fork the repo and create a branch off `main`.
 2. Make your change. Add or update tests if relevant.
-3. Run the full check:
+3. Run the full check (the same commands CI runs):
    ```bash
-   cargo fmt --check
-   cargo clippy --all-targets -- -D warnings
-   cargo test
+   cargo fmt --all -- --check
+   cargo clippy --all-targets --locked -- -D warnings
+   cargo test --all-targets --locked
+   cargo +1.88.0 check --locked      # the oldest Rust we support
+   cargo audit                       # known security advisories
    ```
-4. Push and [open a PR](https://github.com/withrvr/typerush/pulls).
-5. Use the PR template — it asks the questions reviewers care about.
+   The last two are optional locally (`rustup toolchain install 1.88.0`,
+   `cargo install cargo-audit`) — CI runs them either way.
+4. Update the docs your change touches: `CHANGELOG.md` (`[Unreleased]`),
+   [`docs/USAGE.md`](docs/USAGE.md) for anything a user sees, and an entry
+   in [`docs/LEARNINGS.md`](docs/LEARNINGS.md).
+5. Push and [open a PR](https://github.com/withrvr/typerush/pulls).
+6. Use the PR template — it asks the questions reviewers care about.
 
-CI runs the same checks on Linux, macOS, and Windows. A green CI is required
-to merge.
+CI runs the tests on Linux, macOS, and Windows, builds on Rust 1.88, and
+audits the dependencies. A green CI is required to merge.
+
+---
+
+## Where things are documented
+
+| File | For |
+| --- | --- |
+| [`README.md`](README.md) | New users: what TypeRush is and how to get it. Also shown on crates.io — keep it short, plain-language, and free of diagrams. |
+| [`docs/USAGE.md`](docs/USAGE.md) | The full user guide: every mode, key, flag and setting. |
+| [`docs/DEVELOPMENT.md`](docs/DEVELOPMENT.md) | Running from source, safe test configs, end-to-end testing in tmux. |
+| [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) | How the code is laid out, and recipes for new modes, themes and settings. |
+| [`docs/LEARNINGS.md`](docs/LEARNINGS.md) | Past bugs and features: symptom → cause → fix → the test that guards it. |
+| [`docs/ROADMAP.md`](docs/ROADMAP.md) | What each version planned and shipped, and ideas for later. |
+| [`docs/RELEASE.md`](docs/RELEASE.md) | Cutting a release: checks, publishing to crates.io, the tag. |
+| [`docs/brag/`](docs/brag/README.md) | The launch video in the README, and how to rebuild it. |
+| [`CHANGELOG.md`](CHANGELOG.md) | What changed in every release. |
 
 ---
 

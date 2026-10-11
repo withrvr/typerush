@@ -4,232 +4,126 @@
 
 [![Crates.io](https://img.shields.io/crates/v/typerush)](https://crates.io/crates/typerush)
 [![License: MIT](https://img.shields.io/badge/license-MIT-blue)](LICENSE)
-[![Build](https://img.shields.io/github/actions/workflow/status/withrvr/typerush/ci.yml?branch=main&label=build)](https://github.com/withrvr/typerush/actions/workflows/ci.yml)
+[![Build](https://github.com/withrvr/typerush/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/withrvr/typerush/actions/workflows/ci.yml)
 
-```
-████████ ██    ██ ██████  ███████ ██████  ██    ██ ███████ ██   ██
-   ██     ██  ██  ██   ██ ██      ██   ██ ██    ██ ██      ██   ██
-   ██      ████   ██████  █████   ██████  ██    ██ ███████ ███████
-   ██       ██    ██      ██      ██   ██ ██    ██      ██ ██   ██
-   ██       ██    ██      ███████ ██   ██  ██████  ███████ ██   ██
-```
+<a href="docs/brag/brag.mp4"><img src="docs/brag/brag.gif" alt="TypeRush in action: a fast typing run with live speed, its results chart, the new practice modes, the stats history, and the color themes" width="100%"></a>
 
-## 🎬 Launch video
+**[▶ Watch with sound (23 seconds)](docs/brag/brag.mp4)**
 
-<a href="docs/brag/brag.mp4"><img src="docs/brag/brag.gif" alt="TypeRush launch video: live WPM and accuracy, four themes, and stats history, all in the terminal" width="100%"></a>
+TypeRush is a typing trainer that runs in your terminal, the text window
+where you type commands. Pick a test, type, and see your speed and accuracy
+change with every key. When you're done you get a chart of the whole run,
+and over time you can watch yourself get faster.
 
-The clip above loops silently. **[▶ Watch it with sound (MP4, 23s)](docs/brag/brag.mp4)**
+It's one small, free program. No browser, no account, no internet, no ads.
+Everything it saves stays on your computer.
 
 ---
 
-## 👀 Preview
+## Why you'll like it
 
-![TypeRush demo](https://raw.githubusercontent.com/withrvr/typerush/main/assets/demo.gif)
+- **See your speed live.** Words per minute (WPM) and accuracy update as you
+  type, and every finished run gets a second-by-second chart.
+- **Practice the way you want.** Sprints of 15 to 120 seconds, a set number
+  of words, famous quotes, real code in seven languages, or zen mode with no
+  timer at all.
+- **Train your weak spots.** TypeRush remembers the words you get wrong and
+  builds a run out of them. It also shows which keys slow you down.
+- **Race yourself.** A second cursor moves at your best speed, so you can see
+  whether you're ahead or behind.
+- **Watch your progress.** Personal bests, streaks, a speed trend, a level
+  that grows as you practice, and a year-long activity calendar.
+- **A new challenge every day.** The daily challenge gives everyone the same
+  words for the day.
+- **Make it yours.** Four color themes built in, or make your own with a tiny
+  file. Change settings from inside the app, no text editor needed.
+- **Works everywhere.** Windows, macOS and Linux, with keyboard or mouse.
 
-TypeRush is a beautiful, fast typing-speed trainer that runs **entirely in your terminal**.
-No browser. No internet. No installer. Just one tiny binary, ready in a single command.
+### New in 0.7
 
-Whether you want to break your personal best, practise code typing, or just unwind
-with a quote — TypeRush meets you where you already work: the command line.
+- **Drill your misses:** a run made of the words you've gotten wrong lately.
+- **Race your best:** the pace cursor shows your best run (or any speed you
+  pick) while you type.
+- **Type blind:** no colors and no numbers until the end, so you stop
+  watching the screen.
+- **Stop on error:** a mistake has to be fixed before you can go on.
+- **Repeat a run:** press `F6` after a run to type the same words again.
+- **Your own themes:** drop a color file in `~/.typerush/themes/`.
 
----
-
-## ✨ Why TypeRush
-
-- 🚀 **Instant feedback** — see your WPM and accuracy climb keystroke by keystroke
-- 🎯 **Honest scoring** — every character counts, the space between words included
-- 🖱 **Keyboard or mouse** — arrow-key menu, or click any option and footer hint
-- 🎨 **Themes built-in** — `dark`, `light`, `monokai`, `dracula`, or roll your own colors
-- ⏱ **Eight built-in modes** — Time, Words, Quote, Code, Symbols, Zen, Custom-file, and a Daily challenge
-- 📅 **Daily challenge** — the same 40 words for everyone on a given day, with today's best
-- 🔁 **Replay any session** — type the exact same words again and see how you compare
-- ⏸ **Pause** — `Ctrl+P` / `F2` stops the clock and hides the text
-- 📊 **A chart of every run** — WPM, raw speed and mistakes second by second, plus raw WPM, consistency and a correct / incorrect / missed breakdown
-- 🏅 **Levels, XP and a profile** — earn XP for time typed, see your bests side by side and a year of practice on an activity calendar
-- 🎯 **Practice your way** — practise the words you got wrong, stop on errors, blind mode, a pace cursor racing your best, cursor styles
-- 🖌 **Your own themes** — drop a small TOML file in `~/.typerush/themes/`
-- 🔤 **Seven code languages** — Rust, Python, JavaScript, Go, Java, SQL, Shell
-- 📚 **10k-word pool & punctuation/number drills** — toggle them with `b` / `p` / `n` in the menu when you want a tougher session
-- 🗂  **Personal snippet library** — drop `.txt` files in `~/.typerush/snippets/`, each with its own personal best
-- 💾 **Tracks your progress** — every session saved locally, with charts and a personal best; export it as CSV
-- ⚙️ **Settings without a text editor** — an in-app Settings screen, or `typerush config set …`
-- 🌍 **Runs everywhere** — Linux · macOS · Windows · WSL · Git Bash
-- 📦 **One binary, zero setup** — `cargo install typerush` and you're done
+Everything that changed is in the [changelog](CHANGELOG.md).
 
 ---
 
-## 🚀 Install
+## Get TypeRush
+
+### Option 1: download it (no setup)
+
+1. Go to the [latest release](https://github.com/withrvr/typerush/releases/latest).
+2. Download the file for your computer:
+
+   | Your computer | File to download |
+   | --- | --- |
+   | Windows | `typerush-…-x86_64-pc-windows-msvc.zip` |
+   | Mac with an Apple chip (M1 or newer) | `typerush-…-aarch64-apple-darwin.tar.gz` |
+   | Mac with an Intel chip | `typerush-…-x86_64-apple-darwin.tar.gz` |
+   | Linux | `typerush-…-x86_64-unknown-linux-gnu.tar.gz` |
+
+3. Unzip it (double-click the file).
+4. Start it:
+   - **Windows:** double-click `typerush.exe`. If Windows warns you about an
+     unknown app, click **More info**, then **Run anyway**.
+   - **Mac:** double-click `typerush`. If macOS says it can't check the app,
+     open **System Settings → Privacy & Security** and click **Open Anyway**.
+     It asks only once, because the app isn't from the App Store.
+   - **Linux:** open a terminal in that folder and run `./typerush`.
+
+### Option 2: install with Rust
+
+If you have [Rust](https://rustup.rs) installed, one command builds and
+installs it:
 
 ```bash
 cargo install typerush
 ```
 
-That's it. Run `typerush` and start typing.
-
-> Don't have Rust? Install it in 30 seconds: [https://rustup.rs](https://rustup.rs)
-
-Pre-built binaries for Linux, macOS, and Windows are also available on the
-[Releases page](https://github.com/withrvr/typerush/releases) — download, unzip, run.
+Then type `typerush` in any terminal to start.
 
 ---
 
-## 🎮 Quick start
+## Start typing
 
-Open the interactive menu:
+Run `typerush` to open the menu. Pick a test with the arrow keys (or the
+mouse) and press `Enter`.
+
+| Key | What it does |
+| --- | --- |
+| `Enter` | start a test |
+| `Tab` or `F5` | restart while typing |
+| `Esc` | finish the test, or go back to the menu |
+| `F6` | type the same words again (after a run) |
+| `?` or `F1` | show every key |
+| `Ctrl+C` | quit |
+
+You can also start a test straight from the terminal:
 
 ```bash
-typerush
-```
-
-Or jump straight into a mode:
-
-```bash
-typerush --time 30            # 30-second timed sprint
-typerush --words 50           # 50 random English words
-typerush --quote              # one programming quote
-typerush --code rust          # rust | python | js | go | java | sql | shell
-typerush --symbols 25         # programming-punctuation drill
-typerush --daily              # today's daily challenge
-typerush --missed             # practise the words you've got wrong lately
-typerush --replay             # type your last session again, word for word
-typerush --zen                # zen mode — no timer, no pressure
-typerush --file my_text.txt   # type anything you want
-typerush --big                # use the 10,000-word English pool
-typerush --punctuation        # sprinkle punctuation onto random words
-typerush --numbers            # mix number tokens into random words
-typerush --no-punctuation     # plain run, even if your config turns it on
-typerush --theme monokai      # try a different theme
-typerush --list-themes        # see all built-in themes
-typerush --list-snippets      # see every snippet in ~/.typerush/snippets/
-```
-
-And a few things that don't open the app:
-
-```bash
-typerush export stats.csv             # your history as CSV (leave out the file to print it)
-typerush config show                  # every setting, and the value in use
-typerush config set theme dracula     # change one (your comments in the file are kept)
-typerush --init-config                # write a starter ~/.typerush/config.toml
+typerush --time 30       # type for 30 seconds
+typerush --words 50      # type 50 words
+typerush --daily         # today's daily challenge
+typerush --missed        # practice the words you got wrong
 ```
 
 ---
 
-## 🎯 Modes at a glance
+## Learn more
 
-| Mode    | What it's for                                                       |
-| ------- | ------------------------------------------------------------------- |
-| Time    | Sprint! Type as many words as you can in 15/30/60/120s              |
-| Words   | Hit a fixed target — 10, 25, 50, or 100 words                       |
-| Quote   | Famous programming quote, one round                                 |
-| Code    | Real Rust / Python / JS / Go / Java / SQL / Shell snippets          |
-| Symbols | Drill punctuation: `(){};=>`, `&&`, `?.`, `<T>` and friends         |
-| Zen     | No timer, no score. Just type and breathe.                          |
-| Custom  | Any text file via `--file` or `.txt` in `~/.typerush/snippets/`     |
-| Daily   | Today's 40 words — the same for everyone, new every day             |
+- 📖 [User guide](docs/USAGE.md): every mode, key, option and setting
+- 📝 [Changelog](CHANGELOG.md): what's new in each version
+- 🐞 [Report a bug or ask for a feature](https://github.com/withrvr/typerush/issues/new/choose)
+- 🤝 [Help build TypeRush](CONTRIBUTING.md): setup, how the code is laid out, how to send a change
 
----
-
-## ⌨️ A few keys to know
-
-| Key             | Action                          |
-| --------------- | ------------------------------- |
-| `Enter`         | start / restart a session       |
-| `Esc`           | back to menu / end session      |
-| `Tab` / `F5`    | restart the current mode        |
-| `F6`            | the same words again (Results)  |
-| `Ctrl+P` / `F2` | pause / resume while typing     |
-| `Tab`           | jump to your stats history      |
-| `c`             | settings (from the menu)        |
-| `u`             | profile (from the menu)         |
-| `?` / `F1`      | open the keybindings overlay    |
-| `Ctrl+C`        | quit                            |
-
-The mouse works too: click a menu option, a stats row, a setting's `‹ ›`, or
-any footer hint.
-
-Full keymap: see [`docs/USAGE.md`](docs/USAGE.md).
-
----
-
-## 📈 Track your progress
-
-Every (non-zen) session is saved to `~/.typerush/stats.json`. The Stats screen
-shows your personal best, average accuracy, a trend sparkline, and every run
-in a scrolling list — plus, as of v0.3:
-
-- 🔥 **Daily streak** — consecutive days you've practiced
-- 📅 **7- and 30-day WPM averages**
-- ⌨️ **Per-key accuracy heatmap** — find the keys that slow you down
-- 🏅 **Per-mode personal bests** — a separate record for `time-30s`, `words-50`, etc.
-
-And as of v0.4.1, **stats by category**: flip through every mode with `←` / `→`
-to see its own summary, trend and full session list, or a table of your best
-in every mode — with a ★ on each record-holding run.
-
-New in v0.5: pick any session in the list and press `Enter` to **replay it
-word for word** (Results then shows how you did against the original), and
-press `e` to **export your history as CSV**.
-
-New in v0.6:
-
-- 📊 **Results chart** — the run second by second: WPM, raw speed, and a
-  dot for every mistake; with **raw WPM**, **consistency** (how even your
-  pace was) and **correct / incorrect / missed** characters
-- 🔎 **Filter and sort your history** — by date range (`d`), word settings
-  (`w`), and sort by WPM, raw, accuracy, consistency or time (`s`, `r`)
-- 🏅 **Profile** (`u` in the menu) — your **level and XP** (one XP per
-  second typed), runs started vs completed, time and keys typed, your best
-  for every time and word count side by side, and an **activity calendar**
-  of the last year
-
----
-
-## 🎨 Make it yours
-
-Open **Settings** from the menu (`c`) to pick a theme — it changes as you
-pick — the mode the menu starts on, and the word settings; they're saved to
-`~/.typerush/config.toml` straight away. Or from the shell:
-
-```bash
-typerush config set theme monokai
-typerush config set defaults.time_seconds 30
-```
-
-`typerush --init-config` writes a starter [`config.toml`](config.example.toml)
-with every setting explained, and you can also edit it by hand:
-
-```toml
-theme = "monokai"
-
-[defaults]
-mode = "time"
-time_seconds = 30
-```
-
-See [`docs/USAGE.md`](docs/USAGE.md#configuration--typerushconfigtoml) for
-the full reference.
-
----
-
-## 📚 More documentation
-
-- 📖 [USAGE](docs/USAGE.md) — all keybindings, modes, CLI flags, config
-- 🏛 [ARCHITECTURE](docs/ARCHITECTURE.md) — how the code is laid out
-- 🛠 [DEVELOPMENT](docs/DEVELOPMENT.md) — local dev workflow, cargo-watch, sandbox config
-- 🗺 [ROADMAP](docs/ROADMAP.md) — what's done, what's next
-- 🤝 [CONTRIBUTING](CONTRIBUTING.md) — dev setup, conventions, how to help
-- 📝 [CHANGELOG](CHANGELOG.md) — what changed in every release
-
----
-
-## 💬 Get involved
-
-- 🐞 Found a bug? [Open an issue](https://github.com/withrvr/typerush/issues/new/choose)
-- 💡 Got an idea? [Request a feature](https://github.com/withrvr/typerush/issues/new/choose)
-- ❤️ Like the project? Give it a star — it really helps!
-
----
+If you like TypeRush, a ⭐ on GitHub helps other people find it.
 
 ## License
 
-[MIT](LICENSE)
+[MIT](LICENSE). Free to use, change and share.

@@ -1,30 +1,51 @@
-# /brag plan: TypeRush
+# TypeRush v0.7.0 — launch video plan
 
-**What it is:** a typing-speed trainer that runs entirely in your terminal. It's one Rust binary, installed with `cargo install typerush`.
-**Who it's for:** developers who live in the command line and want to type faster without opening a browser.
-**What sets it apart:** it needs no browser, no internet and no installer. You get live WPM and accuracy as you type, six modes (including real code snippets), four themes, and local stats history.
-**Most impressive claim:** "No browser. No internet. No installer. Just one tiny binary."
-**Visual hook:** the headline itself gets typed out, TypeRush-style. It starts as grey pending text, turns green as it's typed, and shows one red typo that gets corrected.
-**Share caption:** "Type faster, right in your terminal."
+**What it is:** a typing trainer that runs in your terminal. Type, see your
+speed and accuracy live, get a chart of every run, and watch yourself get
+faster over time.
 
-## Angle
-The real app, typed for real. Every terminal frame in the video is the actual `typerush` v0.2.0 binary. It ran in a pseudo-terminal and was recorded cell by cell. The WPM, accuracy, results and stats screens are what the app printed.
+**Who it's for:** anyone who wants to type faster — and especially people who
+already live in a terminal and don't want a browser tab for it.
 
-The typist is a script reading the words off the screen. Five practice runs at increasing speed came first, so the trend chart has an honest climb: 60.0 → 69.2 → 76.9 → 86.0 → 92.8 → 105.2 WPM.
+**What sets it apart:** it's one small program, no browser, no account, no
+internet. Your history stays on your machine. v0.7 adds practice modes:
+drill the words you miss, race your own best, type blind.
 
-## Tone
-`default`: punchy, playful and clean. It uses the Catppuccin Mocha terminal palette (the same theme as the repo's own VHS demo), with Inter for captions and DejaVu Sans Mono for the terminal.
+**Most impressive claim (real):** the typist in the video goes from 50 wpm
+to 116 wpm across nine real runs, and the app's own Stats screen shows the
+climb with a ★ on the best one.
 
-## Storyboard (22.5s, 1920×1080, 30fps)
+**Visual hook:** a real run being typed at speed, zoomed in, WPM ticking up,
+under one question: "How fast do you type?"
 
-| # | Time | Scene | On screen |
-|---|---|---|---|
-| 1 | 0.0–3.2 | **Hook** | "Type faster." is typed out letter by letter, with one red typo that's corrected. Then "Right in your terminal." |
-| 2 | 3.2–6.0 | **Reveal** | A terminal window rises in, `$ typerush` is typed, and the real menu appears. The selection moves through the modes. Caption: "A typing trainer that lives in your terminal." |
-| 3 | 6.0–13.0 | **Live typing** | The real `--words 10` session: words go green as they're typed, and WPM and accuracy update live, then the results screen shows 105.2 WPM (+12 vs last). Caption: "Live WPM and accuracy, keystroke by keystroke." |
-| 4 | 13.0–16.0 | **Themes** | The same mid-session screen in `dark`, `monokai`, `dracula` and `light`, each with its `--theme` flag. Caption: "Four built-in themes. Or bring your own colors." |
-| 5 | 16.0–18.8 | **Stats** | The real Stats screen: best WPM, average accuracy, the trend, and recent sessions. Caption: "Every session saved, right on your machine." |
-| 6 | 18.8–22.5 | **Outro** | The real TYPERUSH banner, `cargo install typerush`, "One binary. No browser. No internet.", the supported platforms, and the repo URL. |
+**Real UI shown:** every terminal frame is the real `typerush` 0.7.0 binary,
+recorded cell by cell. Words, WPM, accuracy, chart and stats are what the
+app printed.
+
+**Tone:** default — punchy, clean, playful. Dark stage, the app's own cyan
+and green as accents.
+
+**Share caption:** TypeRush 0.7 — a typing trainer that lives in your
+terminal. Drill the words you miss, race your best, type blind.
+`cargo install typerush`
+
+## Storyboard (1920×1080, 30 fps, 21 s)
+
+| # | Time | Scene | On screen | Text (held to read) |
+|---|------|-------|-----------|---------------------|
+| 1 | 0.0–3.0 | Hook | Real run, zoomed on the words line, typed at speed; live wpm in the header | "How fast do you type?" |
+| 2 | 3.0–5.8 | Reveal | Camera pulls back to the menu with the TYPERUSH banner; selection steps down to `missed` | "TypeRush" + "A typing trainer for your terminal." |
+| 3 | 5.8–9.2 | Highlight 1 | The hero run's Results: 116.4 wpm, ★ new best, the second-by-second chart; slow push in on the chart | "Every run, charted second by second." |
+| 4 | 9.2–13.4 | Highlight 2 (v0.7) | Three cuts, 1.4 s each: missed-words run, pace cursor racing the best, blind run | "New in 0.7" badge; "Drill the words you miss." / "Race your best." / "Type blind." |
+| 5 | 13.4–16.2 | Highlight 3 | Stats: nine runs climbing, ★ under the best; sessions list | "Watch yourself get faster." |
+| 6 | 16.2–18.0 | Themes | Same typing screen flips dark → monokai → dracula → light → a custom theme | "Your colors, your terminal." |
+| 7 | 18.0–21.0 | Outro | `cargo install typerush` typed in a prompt, then wordmark | "TypeRush" · "Free · Linux · macOS · Windows" |
+
+Transitions: soft — old content out, new in (no muddy crossfades); camera
+moves on the terminal window between scenes.
 
 ## Sound
-Synthesized in D major at 124 BPM: a bright pluck arpeggio, a warm pad and a soft kick. The typing scene gets soft key clicks, timed to the recorded keystrokes and pitched to the key. There's a chime when results appear, a whoosh on each theme cut, and a bloom on the outro.
+
+One piece at 120 BPM in A minor: soft kick and hats, warm bass and pad,
+a bright pluck on scene changes. Key clicks follow the real keystrokes of
+each typing clip, low in the mix. A soft chime on "★ new best".

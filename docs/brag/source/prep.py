@@ -1,41 +1,35 @@
-"""Bundle the terminal recordings into data.js for brag.html, and keystroke times into keys.json.
-
-Consecutive identical frames are dropped (the renderer shows the last frame at or before t).
-Keystroke times come from the typing take: every change of the typing-box row
-(the first row after the box's top border), ignoring the timer row.
-"""
+"""Bundle the recordings into data.js (deduped screens) and keys.json (keystroke times)."""
 import json
-import os
 
-HERE = os.path.dirname(os.path.abspath(__file__))
-NAMES = ["menu", "typing", "stats", "theme-dark", "theme-monokai", "theme-dracula", "theme-light"]
-
-out = {}
-for name in NAMES:
-    d = json.load(open(os.path.join(HERE, name + ".json")))
-    frames, prev = [], None
+CLIPS = ["hero", "menu", "stats", "missed", "pace", "blind",
+         "theme-monokai", "theme-dracula", "theme-light", "theme-ocean"]
+clips, keys = {}, {}
+for name in CLIPS:
+    d = json.load(open(name + ".json"))
+    screens, index, frames = [], {}, []
+    last_cur, ks = None, []
     for f in d["frames"]:
-        key = json.dumps(f["rows"])
-        if key != prev:
-            frames.append({"t": f["t"], "rows": f["rows"]})
-        prev = key
-    out[name] = {"cols": d["cols"], "rows": d["rows"], "frames": frames}
-
-# keystrokes: changes to the box's first content row in the typing take
-typing = json.load(open(os.path.join(HERE, "typing.json")))
-keys, prev = [], None
-for f in typing["frames"]:
-    lines = ["".join(r[0] for r in row) for row in f["rows"]]
-    tops = [i for i, l in enumerate(lines) if "┌ typerush" in l]
-    if not tops:
-        continue  # results screen
-    row = json.dumps(f["rows"][tops[0] + 1])
-    if prev is not None and row != prev:
-        keys.append(f["t"])
-    prev = row
-
-with open(os.path.join(HERE, "data.js"), "w") as fh:
-    fh.write("window.REC = " + json.dumps(out, separators=(",", ":")) + ";\n")
-with open(os.path.join(HERE, "keys.json"), "w") as fh:
-    json.dump(keys, fh)
-print({k: len(v["frames"]) for k, v in out.items()}, "keys:", len(keys), keys[:3], keys[-3:])
+        rows = [[[r[0], r[1], r[2], int(r[3]), int(r[4]), int(r[5])] for r in row] for row in f["rows"]]
+        k = json.dumps(rows, separators=(",", ":"))
+        if k not in index:
+            index[k] = len(screens)
+            screens.append(rows)
+        if not frames or frames[-1][1] != index[k]:
+            frames.append([f["t"], index[k]])
+        # the typing caret: the cyan underlined cell; it moves once per key
+        cur = None
+        for y, row in enumerate(rows[:12]):
+            x = 0
+            for r in row:
+                if r[1] == "00cdcd" and r[4] and len(r[0]) == 1:
+                    cur = (x, y)
+                x += len(r[0])
+        if cur and last_cur and cur != last_cur:
+            ks.append(f["t"])
+        last_cur = cur or last_cur
+    clips[name] = {"cols": d["cols"], "rows": d["rows"], "marks": d["marks"],
+                   "frames": frames, "screens": screens}
+    keys[name] = ks
+    print(name, len(d["frames"]), "frames ->", len(screens), "screens,", len(ks), "keys")
+open("data.js", "w").write("const DATA = " + json.dumps(clips, separators=(",", ":")) + ";\n")
+json.dump(keys, open("keys.json", "w"))
