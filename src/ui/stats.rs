@@ -30,12 +30,12 @@ pub fn render(f: &mut Frame, app: &App, area: Rect) -> &'static [super::Hint] {
     // Layout:
     //   0 — title bar with the category (2 rows)
     //   1 — summary (left) + key accuracy (right) (8 rows)
-    //   2 — WPM sparkline (5 rows)
+    //   2 — WPM sparkline: three rows of bars and a row of ★ (6 rows)
     //   3 — sessions or bests table (fills remaining space)
     let layout = Layout::vertical([
         Constraint::Length(2),
         Constraint::Length(8),
-        Constraint::Length(5),
+        Constraint::Length(6),
         Constraint::Min(4),
     ])
     .split(area);
@@ -321,7 +321,8 @@ fn render_key_heatmap(
 }
 
 /// Render the WPM sparkline: as many of the category's latest sessions as
-/// the box has room for — one bar per cell — titled with how many show.
+/// the box has room for — one bar per cell — titled with how many show,
+/// with a ★ under each bar that is a mode's best.
 fn render_sparkline(
     f: &mut Frame,
     app: &App,
@@ -347,11 +348,29 @@ fn render_sparkline(
         n if n == view.indices.len() => format!(" wpm trend (all {n}) "),
         n => format!(" wpm trend (last {n}) "),
     };
+    // The bars, and under them a row with a ★ under each session that
+    // holds its mode's best (the same ★ as in the sessions list).
+    let inner = block.inner(area);
+    f.render_widget(block.title(title), area);
+    if inner.height < 2 {
+        return;
+    }
+    let [bars, stars] = Layout::vertical([Constraint::Min(1), Constraint::Length(1)]).areas(inner);
     let spark = Sparkline::default()
-        .block(block.title(title))
         .data(&recent)
         .style(Style::default().fg(theme.accent));
-    f.render_widget(spark, area);
+    f.render_widget(spark, bars);
+    let star_style = Style::default()
+        .fg(theme.secondary)
+        .add_modifier(Modifier::BOLD);
+    let marks: Vec<Span> = shown
+        .iter()
+        .map(|i| match view.best_indices.contains(i) {
+            true => Span::styled("★", star_style),
+            false => Span::raw(" "),
+        })
+        .collect();
+    f.render_widget(Paragraph::new(Line::from(marks)), stars);
 }
 
 /// Width of the Mode column in both tables: the sessions table's columns

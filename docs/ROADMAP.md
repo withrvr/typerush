@@ -239,11 +239,32 @@ one pull request:
    built-in or from scratch, listed and picked like the built-in ones
 10. ✅ Review, end-to-end test, docs, version 0.7.0
 
-**Added to v0.7 along the way:**
+**Added to v0.7 beyond the plan:**
 
-- ✅ `missed` can be the start mode; `--missed`
-- ✅ The Settings list scrolls on a short terminal
-- ✅ The menu's trailing blank line gives way before the banner at 80×24
+Found while building it:
+
+- ✅ `missed` can be the start mode (`mode = "missed"`), and `--missed`
+  starts it from the shell
+- ✅ The Settings list scrolls on a short terminal (it has thirteen rows
+  now), with `▲ / ▼ more` on the border
+- ✅ The menu's trailing blank line gives way before the banner, so the
+  whole menu still fits 80×24 with the new row
+
+Asked for after using it:
+
+- ✅ Results chart labelled on round numbers: at least four labels per
+  axis, as many as fit, each on its value (the x labels are drawn by hand —
+  ratatui's own sit in equal slots, off their ticks)
+- ✅ Stats WPM trend shows as many sessions as the box is wide (it was the
+  last 20), titled with how many
+- ✅ A ★ under each bar of the trend that holds its mode's best, on a row
+  of its own
+- ✅ Nothing drawn against a box's side
+  ([#20](https://github.com/withrvr/typerush/issues/20)): two cells of
+  padding on the chart, the trend and the Stats tables; a help box wide
+  enough for its longest line; no marker in Settings' first cell (the
+  selected row shows by its bold label and highlighted value)
+- ✅ A blank line of padding above and below the help text
 
 ---
 

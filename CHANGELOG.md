@@ -56,12 +56,15 @@ your best, type blind — and make TypeRush look the way you want.
 - **The Results chart is labelled on round numbers:** at least four labels
   on each axis and as many as fit, every label on its value.
 - **The Stats WPM trend shows as many sessions as the box is wide** (it
-  was the last 20), and says how many.
+  was the last 20), and says how many; a ★ under a bar marks a session
+  holding its mode's best, as in the sessions list.
 - **Nothing is drawn against a box's side any more** ([#20]): the chart,
   the WPM trend and the Stats tables are inset like the text in every other
   box, the help box is wide enough for its longest line, and Settings shows
   the selected row by its label and value rather than a marker in the
   border's first cell.
+- **The help box has a blank line above and below its text** (two
+  two-line entries became one line each, so it still fits 80×24 whole).
 
 ---
 

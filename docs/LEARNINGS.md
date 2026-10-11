@@ -95,6 +95,12 @@ rule that keeps it fixed).
   vertical border (a `│` run, overlays included) on every screen and fails
   on anything drawn beside it — checked to fail with the old padding and
   help width.
+- **The help box had no room to breathe.** Padding above and below meant
+  two more rows in a box that already used all 23 at 80×24; two entries
+  that wrapped onto a second line (`p n b`, `Mouse`) were reworded to one
+  line each — and the first rewording ran into the right border, which
+  `nothing_touches_a_box_border` caught. Guard: `help_fits_80x24` checks
+  the blank rows above and below.
 - **`--list-themes` flattened a TOML error** into one line of `?`s
   (`printable` replaces the newlines). Fix: printed line by line, as the
   error modal does. Found driving the release binary.
@@ -132,6 +138,10 @@ rule that keeps it fixed).
   `names` needs none. Tests never install, so they only see built-ins.
 - **F6 repeat is a replay.** The run's words are now seen, so it's saved
   as `+replay` and compared with the run — the same rule as any replay.
+- **The trend's stars use the list's ★ rule** (`StatsView::best_indices`:
+  the session holding each mode's best), on a row of their own under the
+  bars, so a best is never hidden behind a tall bar. The trend box grew one
+  row; the sessions list shows one fewer at 80×24.
 
 ---
 

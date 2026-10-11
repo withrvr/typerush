@@ -671,8 +671,20 @@ mod tests {
             .iter()
             .position(|r| r.contains("TypeRush — keybindings"));
         let last = rows.iter().position(|r| r.contains("Snippets ~/.typerush"));
-        assert_eq!(last.zip(title).map(|(l, t)| l - t), Some(20), "{dump}");
-        assert!(rows[last.unwrap() + 1].contains("click to close"), "{dump}");
+        assert_eq!(last.zip(title).map(|(l, t)| l - t), Some(18), "{dump}");
+        // A blank line of padding inside the box above the first line and
+        // below the last.
+        let (title, last) = (title.unwrap(), last.unwrap());
+        let blank_inside = |row: &str| {
+            let cells: Vec<char> = row.chars().collect();
+            let left = cells.iter().position(|c| *c == '│').unwrap();
+            let right = cells.iter().rposition(|c| *c == '│').unwrap();
+            cells[left + 1..right].iter().all(|c| *c == ' ')
+        };
+        assert!(rows[title - 2].contains("┌ help"), "{dump}");
+        assert!(blank_inside(&rows[title - 1]), "no padding above: {dump}");
+        assert!(blank_inside(&rows[last + 1]), "no padding below: {dump}");
+        assert!(rows[last + 2].contains("click to close"), "{dump}");
         for text in ["Ctrl+P  F2", "menu: settings", "replay, export CSV"] {
             assert!(dump.contains(text), "{text:?} missing:\n{dump}");
         }
@@ -850,6 +862,41 @@ mod tests {
             .max()
             .unwrap();
         assert_eq!(lowest, 74, "a bar in every cell of the bottom row");
+    }
+
+    /// The trend has a row under its bars with a ★ under each session that
+    /// holds its mode's best — only those, each under its own bar.
+    #[test]
+    fn wpm_trend_stars_the_bests() {
+        let mut app = App::new(None, builtin::DARK, Mode::Time(15));
+        app.screen = crate::app::Screen::Stats;
+        // time-30s: best is the 3rd session (index 2); words-25: the 5th.
+        app.stats_cache = Some(vec![
+            record(40.0, "time-30s"),
+            record(45.0, "time-30s"),
+            record(70.0, "time-30s"),
+            record(30.0, "words-25"),
+            record(60.0, "words-25"),
+            record(50.0, "time-30s"),
+        ]);
+        let rows = stats_rows(&app);
+        let title = rows.iter().position(|r| r.contains("wpm trend")).unwrap();
+        // Three rows of bars, then the stars, then the bottom border.
+        let stars = &rows[title + 4];
+        assert!(rows[title + 5].starts_with('└'), "{rows:#?}");
+        let marks: Vec<usize> = stars
+            .chars()
+            .enumerate()
+            .filter(|(_, c)| *c == '★')
+            .map(|(x, _)| x)
+            .collect();
+        // Bars start three cells in (border, two of padding): sessions 2, 4.
+        assert_eq!(marks, [3 + 2, 3 + 4], "{stars}");
+        let bars_row = &rows[title + 3];
+        assert!(
+            bars_row.chars().nth(3 + 2).is_some_and(|c| c != ' '),
+            "{bars_row}"
+        );
     }
 
     /// A window too short for any table row (three rows tall: the table's
