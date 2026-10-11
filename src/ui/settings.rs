@@ -156,6 +156,7 @@ fn row_line(
         Row::Pool => ("10k words", on_off(view.pool == WordPool::Extended)),
         Row::LiveWpm => ("live wpm", on_off(view.typing.live_wpm)),
         Row::Blind => ("blind", on_off(view.typing.blind)),
+        Row::StopOnError => ("stop on", view.typing.stop_on_error.name().to_string()),
         Row::Reset => unreachable!("drawn above"),
     };
     let label = Span::styled(

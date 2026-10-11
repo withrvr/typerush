@@ -9,7 +9,7 @@ use std::path::{Path, PathBuf};
 
 use super::{Colors, Config};
 use crate::app::Mode;
-use crate::options::TypingOptions;
+use crate::options::{StopOnError, TypingOptions};
 use crate::storage;
 use crate::theme::{self, builtin, ThemePalette};
 use crate::words::{CodeLang, WordDecor, WordPool};
@@ -67,6 +67,8 @@ pub struct CliOverrides<'a> {
     pub numbers: Option<bool>,
     /// `--blind` → `Some(true)`.
     pub blind: Option<bool>,
+    /// `--stop-on-error <off|letter|word>`.
+    pub stop_on_error: Option<StopOnError>,
 }
 
 /// Read and resolve `~/.typerush/config.toml`, then apply CLI overrides on
@@ -181,9 +183,12 @@ fn resolve_with(raw: Config, cli: CliOverrides<'_>) -> (ResolvedConfig, Vec<Stri
     if let Some(n) = cli.numbers {
         word_decor.numbers = n;
     }
-    let mut typing = resolve_typing(raw.typing.as_ref());
+    let mut typing = resolve_typing(raw.typing.as_ref(), &mut warnings);
     if let Some(blind) = cli.blind {
         typing.blind = blind;
+    }
+    if let Some(stop) = cli.stop_on_error {
+        typing.stop_on_error = stop;
     }
 
     (
@@ -198,15 +203,28 @@ fn resolve_with(raw: Config, cli: CliOverrides<'_>) -> (ResolvedConfig, Vec<Stri
     )
 }
 
-/// The `[typing]` section, each unset value its default.
-fn resolve_typing(typing: Option<&super::Typing>) -> TypingOptions {
+/// The `[typing]` section, each unset value its default; an unknown name
+/// is a warning and the default.
+fn resolve_typing(typing: Option<&super::Typing>, warnings: &mut Vec<String>) -> TypingOptions {
     let defaults = TypingOptions::default();
     let Some(typing) = typing else {
         return defaults;
     };
+    let stop_on_error = match typing.stop_on_error.as_deref() {
+        None => defaults.stop_on_error,
+        Some(name) => StopOnError::from_name(name).unwrap_or_else(|| {
+            warnings.push(format!(
+                "unknown stop_on_error '{}', using 'off' (try {})",
+                crate::text::printable(name),
+                StopOnError::NAMES.join(", ")
+            ));
+            defaults.stop_on_error
+        }),
+    };
     TypingOptions {
         live_wpm: typing.live_wpm.unwrap_or(defaults.live_wpm),
         blind: typing.blind.unwrap_or(defaults.blind),
+        stop_on_error,
     }
 }
 
@@ -453,6 +471,28 @@ mod tests {
             let (_, warnings) = resolve(raw, None);
             assert!(warnings.is_empty(), "{name}: {warnings:?}");
         }
+    }
+
+    /// `stop_on_error` takes off / letter / word; anything else warns and
+    /// is off.
+    #[test]
+    fn stop_on_error_from_the_config() {
+        let typing = |name: &str| Config {
+            typing: Some(crate::config::Typing {
+                stop_on_error: Some(name.into()),
+                ..Default::default()
+            }),
+            ..Default::default()
+        };
+        let (resolved, warnings) = resolve(typing("Letter"), None);
+        assert!(warnings.is_empty());
+        assert_eq!(resolved.typing.stop_on_error, StopOnError::Letter);
+        let (resolved, warnings) = resolve(typing("strict"), None);
+        assert_eq!(resolved.typing.stop_on_error, StopOnError::Off);
+        assert!(
+            warnings[0].contains("unknown stop_on_error 'strict'"),
+            "{warnings:?}"
+        );
     }
 
     #[test]
@@ -878,12 +918,14 @@ mod tests {
                 punctuation: Some(true),
                 numbers: Some(true),
                 blind: Some(true),
+                stop_on_error: Some(StopOnError::Word),
             },
         );
         assert!(
             resolved.typing.blind,
             "--blind applies on a broken file too"
         );
+        assert_eq!(resolved.typing.stop_on_error, StopOnError::Word);
         assert_eq!(warnings.len(), 1, "{warnings:?}");
         assert!(warnings[0].starts_with("could not parse"), "{warnings:?}");
         assert_eq!(resolved.palette, builtin::MONOKAI);

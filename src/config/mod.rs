@@ -24,6 +24,7 @@
 //! [typing]                      # v0.7.0 — how a run behaves and looks
 //! live_wpm = true               # show WPM and accuracy while typing
 //! blind = false                 # no right/wrong colors, numbers only at the end
+//! stop_on_error = "off"         # off | letter | word
 //!
 //! [colors]                      # optional — overrides slots of the chosen theme
 //! accent = "#FF00FF"
@@ -64,6 +65,8 @@ pub struct Typing {
     pub live_wpm: Option<bool>,
     /// Blind mode: no right/wrong colors, no numbers until the end.
     pub blind: Option<bool>,
+    /// `off` | `letter` | `word`: whether a mistake must be fixed first.
+    pub stop_on_error: Option<String>,
 }
 
 /// Default mode + per-mode defaults. Pre-selects the matching row in the menu

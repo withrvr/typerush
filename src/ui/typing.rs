@@ -305,8 +305,15 @@ fn render_words(f: &mut Frame, app: &App, area: Rect) {
     //    run onto it.
     let is_zen_mode = matches!(app.mode, Mode::Zen);
     let blind = app.options.blind;
+    // A key refused by stop-on-error turns the cursor the mistake color
+    // until the right key (or a backspace) comes.
+    let cursor_color = if app.rejected_key && !blind {
+        app.theme.incorrect
+    } else {
+        app.theme.accent
+    };
     let cursor_style = Style::default()
-        .fg(app.theme.accent)
+        .fg(cursor_color)
         .add_modifier(Modifier::UNDERLINED);
     let mut lines: Vec<Vec<Span>> = vec![Vec::new(); end_line - first_line];
     let first_word = word_starts

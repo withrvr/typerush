@@ -59,6 +59,12 @@ where
     check_count(count, MAX)
 }
 
+/// Value parser for `--stop-on-error`.
+fn stop_on_error(value: &str) -> Result<options::StopOnError, String> {
+    options::StopOnError::from_name(value)
+        .ok_or_else(|| format!("not one of {}", options::StopOnError::NAMES.join(", ")))
+}
+
 /// Command-line interface. Run with no args to open the interactive menu; pass
 /// any of the mode flags to skip the menu and jump straight into a session.
 #[derive(Parser, Debug)]
@@ -138,6 +144,11 @@ struct Cli {
     #[arg(long)]
     blind: bool,
 
+    /// Stop on error for this run of TypeRush: off | letter (a wrong key
+    /// doesn't move the cursor) | word (a wrong word can't be left).
+    #[arg(long, value_name = "WHEN", value_parser = stop_on_error)]
+    stop_on_error: Option<options::StopOnError>,
+
     /// One-shot theme override: dark | light | monokai | dracula.
     /// Takes precedence over the `theme` setting in `~/.typerush/config.toml`.
     #[arg(long)]
@@ -182,6 +193,7 @@ impl Cli {
             punctuation: switch(self.punctuation, self.no_punctuation),
             numbers: switch(self.numbers, self.no_numbers),
             blind: self.blind.then_some(true),
+            stop_on_error: self.stop_on_error,
         }
     }
 }
@@ -2095,6 +2107,26 @@ mod tests {
             text.contains("[typing]\nlive_wpm = false\nblind = true"),
             "{text}"
         );
+
+        app.settings_select(row(settings::Row::StopOnError));
+        press(&mut app, KeyCode::Right); // off → letter
+        press(&mut app, KeyCode::Right); // → word
+        assert_eq!(app.options.stop_on_error, options::StopOnError::Word);
+        press(&mut app, KeyCode::Right); // wraps → off
+        assert_eq!(app.options.stop_on_error, options::StopOnError::Off);
+        let text = std::fs::read_to_string(&config_file).unwrap();
+        assert!(text.contains("stop_on_error = \"off\""), "{text}");
+    }
+
+    /// `--stop-on-error` takes off / letter / word, nothing else.
+    #[test]
+    fn stop_on_error_flag() {
+        let cli = Cli::try_parse_from(["typerush", "--stop-on-error", "letter"]).unwrap();
+        assert_eq!(
+            cli.overrides().stop_on_error,
+            Some(options::StopOnError::Letter)
+        );
+        assert!(Cli::try_parse_from(["typerush", "--stop-on-error", "always"]).is_err());
     }
 
     /// The menu's settings option opens the screen too.

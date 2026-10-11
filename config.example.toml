@@ -52,11 +52,13 @@ symbol_count = 25
 
 # -----------------------------------------------------------------------------
 # Typing — how a run behaves and looks while you type. The Settings screen
-# changes these too; `--blind` turns blind mode on for one launch.
+# changes these too; `--blind` and `--stop-on-error` set them for one launch.
 # -----------------------------------------------------------------------------
 # [typing]
 # live_wpm = true        # show WPM and accuracy while typing
 # blind = false          # no right/wrong colors while typing; numbers at the end
+# stop_on_error = "off"  # "off" | "letter" (a wrong key doesn't move the cursor)
+#                        #  | "word" (a word with a mistake can't be left)
 
 # -----------------------------------------------------------------------------
 # Color overrides — applied ON TOP of the chosen theme.

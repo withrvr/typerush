@@ -17,6 +17,7 @@ use super::load::{
 };
 use super::Config;
 use crate::app::Mode;
+use crate::options::StopOnError;
 use crate::storage::write_atomic;
 use crate::text::printable;
 use crate::theme::{builtin, color, ThemePalette};
@@ -41,6 +42,8 @@ pub enum Kind {
     Switch,
     /// A color: `#RRGGBB`, an ANSI name or `reset`.
     Color,
+    /// One of a fixed set of names.
+    Choice(&'static [&'static str]),
 }
 
 /// One setting of `config.toml`, by its dotted name (`defaults.mode`).
@@ -96,6 +99,10 @@ pub const KEYS: &[Key] = &[
     Key {
         name: "typing.blind",
         kind: Kind::Switch,
+    },
+    Key {
+        name: "typing.stop_on_error",
+        kind: Kind::Choice(&StopOnError::NAMES),
     },
     Key {
         name: "colors.accent",
@@ -224,6 +231,10 @@ pub fn check(key: &Key, raw: &str) -> Result<Setting, String> {
         },
         // Written back the one way the parser reads it (`#A6E22E`,
         // `dark_gray`), so a printed value is always one of those.
+        Kind::Choice(names) => match names.contains(&lower.as_str()) {
+            true => text(&lower),
+            false => Err(format!("not one of {}", names.join(", "))),
+        },
         Kind::Color => match color::parse_color(raw) {
             Ok(parsed) => text(&color::color_name(parsed)),
             Err(error) => Err(error.to_string()),
@@ -294,6 +305,7 @@ fn file_value(config: &Config, name: &str) -> Option<String> {
         "words.numbers" => switch(words?.numbers),
         "typing.live_wpm" => switch(config.typing.as_ref()?.live_wpm),
         "typing.blind" => switch(config.typing.as_ref()?.blind),
+        "typing.stop_on_error" => config.typing.as_ref()?.stop_on_error.clone(),
         "colors.accent" => colors?.accent.clone(),
         "colors.secondary" => colors?.secondary.clone(),
         "colors.correct" => colors?.correct.clone(),
@@ -322,6 +334,7 @@ fn default_value(key: &Key, theme: &ThemePalette) -> Setting {
         "words.punctuation" | "words.numbers" => Setting::Switch(false),
         "typing.live_wpm" => Setting::Switch(true),
         "typing.blind" => Setting::Switch(false),
+        "typing.stop_on_error" => text("off"),
         "colors.accent" => color(theme.accent),
         "colors.secondary" => color(theme.secondary),
         "colors.correct" => color(theme.correct),
@@ -528,6 +541,7 @@ mod tests {
         let Typing {
             live_wpm: _,
             blind: _,
+            stop_on_error: _,
         } = Typing::default();
         let Colors {
             accent: _,
@@ -541,9 +555,9 @@ mod tests {
             neutral: _,
             background: _,
         } = Colors::default();
-        // 1 theme + 5 defaults + 3 words + 2 typing + 9 colors (10 minus
+        // 1 theme + 5 defaults + 3 words + 3 typing + 9 colors (10 minus
         // `extra`).
-        assert_eq!(KEYS.len(), 1 + 5 + 3 + 2 + 9);
+        assert_eq!(KEYS.len(), 1 + 5 + 3 + 3 + 9);
     }
 
     /// One valid value for each kind of setting, as typed by a person.
@@ -557,6 +571,7 @@ mod tests {
             Kind::Pool => "10k",
             Kind::Switch => "on",
             Kind::Color => "#A6E22E",
+            Kind::Choice(names) => names[names.len() - 1],
         }
     }
 

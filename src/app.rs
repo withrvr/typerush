@@ -21,6 +21,7 @@ use std::time::{Duration, Instant};
 use ratatui::crossterm::event::{KeyCode, KeyModifiers};
 use ratatui::layout::Rect;
 
+use crate::options::StopOnError;
 use crate::state::{self, AppState};
 use crate::storage::{ResultsComparison, SessionRecord, StatsView};
 use crate::theme::ThemePalette;
@@ -574,6 +575,8 @@ pub struct App {
     pub timeline: Vec<Second>,
     /// The run was ended with Esc, not by its clock or its last character.
     pub ended_early: bool,
+    /// The last key was refused (stop on error): the cursor shows it.
+    pub rejected_key: bool,
     /// Characters of the text left untyped when the run ended
     /// ([`App::missed_chars`]), worked out once then — Results shows it on
     /// every frame, and a big custom file has a lot of text left.
@@ -693,6 +696,7 @@ impl App {
             key_misses: HashMap::new(),
             timeline: Vec::new(),
             ended_early: false,
+            rejected_key: false,
             missed: 0,
             stats_cache: None,
             stats_view: None,
@@ -1187,6 +1191,7 @@ impl App {
         self.key_misses.clear();
         self.timeline.clear();
         self.ended_early = false;
+        self.rejected_key = false;
         self.missed = 0;
         self.top_up_words();
         self.screen = Screen::Typing;
@@ -1303,7 +1308,20 @@ impl App {
         // Past the end of the word the cursor sits on the space after it.
         let expected_char = active_word.text.chars().nth(cursor_position);
         let target_char = expected_char.unwrap_or(' ');
-        let is_correct = typed_char == target_char;
+        // Stop on error: a key that may not go on is counted as a mistake
+        // and changes nothing else. Letter: any wrong key. Word: anything
+        // at the end of a word that still has a mistake in it (and at the
+        // end of the last word, which has no space to type).
+        let blocked = match self.options.stop_on_error {
+            StopOnError::Off => false,
+            StopOnError::Letter => typed_char != target_char,
+            StopOnError::Word => {
+                expected_char.is_none()
+                    && (is_last_word || active_word.typed != active_word.text || typed_char != ' ')
+            }
+        };
+        self.rejected_key = blocked;
+        let is_correct = typed_char == target_char && !blocked;
         // Per-key stats are kept for the key that *should* have been pressed.
         let key_counts = if is_correct {
             self.correct_chars += 1;
@@ -1323,6 +1341,9 @@ impl App {
             tally.errors += 1;
         }
 
+        if blocked {
+            return;
+        }
         if expected_char.is_none() {
             // Cursor on the space after the word: that slot is a character too.
             active_word.space_missed = !is_correct;
@@ -1333,7 +1354,10 @@ impl App {
         active_word.typed.push(typed_char);
 
         // Last character of the last word typed: there is no trailing space.
-        if is_last_word && cursor_position + 1 == word_len {
+        // Stopping on word errors, the run only ends once the word is right.
+        let word_done = self.options.stop_on_error != StopOnError::Word
+            || active_word.typed == active_word.text;
+        if is_last_word && cursor_position + 1 == word_len && word_done {
             self.advance_word();
         }
     }
@@ -1348,6 +1372,7 @@ impl App {
         if self.is_paused() || self.current_word >= self.words.len() {
             return;
         }
+        self.rejected_key = false;
         let active_word = &mut self.words[self.current_word];
 
         // Cursor at the very start of the current word → step back to the previous one.
@@ -1574,6 +1599,44 @@ mod tests {
         app.repeat_run();
         assert_eq!(app.session_label(), "custom+replay");
         assert_eq!(app.replay.as_ref().unwrap().wpm, wpm, "still the first run");
+    }
+
+    /// Stopping on letters, a wrong key is a mistake that doesn't move the
+    /// cursor; stopping on words, a word with a mistake can't be left — nor
+    /// the run finished on one — until it's fixed.
+    #[test]
+    fn stop_on_error_letter_and_word() {
+        let mut app = custom_app(&["ab", "cd"]);
+        app.options.stop_on_error = StopOnError::Letter;
+        app.handle_char('x');
+        assert_eq!((app.words[0].typed.as_str(), app.rejected_key), ("", true));
+        app.handle_char('a');
+        app.handle_char('b');
+        app.handle_char('x'); // where the space belongs
+        assert_eq!(app.current_word, 0);
+        app.handle_char(' ');
+        assert_eq!((app.current_word, app.rejected_key), (1, false));
+        assert_eq!((app.total_typed_chars, app.correct_chars), (5, 3));
+
+        let mut app = custom_app(&["ab", "cd"]);
+        app.options.stop_on_error = StopOnError::Word;
+        app.handle_char('a');
+        app.handle_char('x'); // typed, it's mid-word
+        assert_eq!(app.words[0].typed, "ax");
+        app.handle_char(' ');
+        assert_eq!(app.current_word, 0, "can't leave a wrong word");
+        app.handle_backspace(false);
+        app.handle_char('b');
+        app.handle_char(' ');
+        assert_eq!(app.current_word, 1);
+        app.handle_char('c');
+        app.handle_char('x'); // last character, wrong
+        assert_eq!(app.screen, Screen::Typing, "not finished on a mistake");
+        app.handle_char('d'); // past the end: refused
+        assert_eq!(app.words[1].typed, "cx");
+        app.handle_backspace(false);
+        app.handle_char('d');
+        assert_eq!(app.screen, Screen::Results);
     }
 
     // ── deeper results (v0.6.0) ────────────────────────────────────────────

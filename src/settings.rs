@@ -21,11 +21,12 @@ pub enum Row {
     Pool,
     LiveWpm,
     Blind,
+    StopOnError,
     Reset,
 }
 
 /// Every row, in order.
-pub const ROWS: [Row; 8] = [
+pub const ROWS: [Row; 9] = [
     Row::Theme,
     Row::Start,
     Row::Punctuation,
@@ -33,6 +34,7 @@ pub const ROWS: [Row; 8] = [
     Row::Pool,
     Row::LiveWpm,
     Row::Blind,
+    Row::StopOnError,
     Row::Reset,
 ];
 
@@ -194,6 +196,20 @@ impl App {
                     .is_some()
                 {
                     self.options.blind = on;
+                }
+            }
+            Row::StopOnError => {
+                use crate::options::StopOnError;
+                let names = StopOnError::NAMES;
+                let at = names
+                    .iter()
+                    .position(|n| *n == view.typing.stop_on_error.name());
+                let name = names[cycle(at, names.len(), forward)];
+                if self
+                    .save_settings(&[("typing.stop_on_error", name.to_string())])
+                    .is_some()
+                {
+                    self.options.stop_on_error = StopOnError::from_name(name).unwrap_or_default();
                 }
             }
             Row::Reset => {}
