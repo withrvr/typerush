@@ -383,6 +383,8 @@ fn run_app(terminal: &mut Tui, cli: Cli) -> Result<()> {
             break;
         }
     }
+    // Runs started since the last save (a run left with Ctrl+C included).
+    app.save_run_count();
     Ok(())
 }
 
@@ -791,6 +793,9 @@ fn after_input(app: &mut App, last_screen: Screen, session_saved: &mut bool, sta
     }
     if app.screen == Screen::Typing {
         *session_saved = false;
+    } else if last_screen == Screen::Typing {
+        // A run just ended (or was left): keep its "started" count.
+        app.save_run_count();
     }
 
     // History is read from disk once; every save hands back the updated list,
@@ -1318,6 +1323,7 @@ mod tests {
         let state_file = dir.path().join("state.json");
         let remembered = state::AppState {
             last_custom_file: Some("/kept/notes.txt".into()),
+            ..Default::default()
         };
         state::save_to_path(&state_file, &remembered).unwrap();
 
@@ -1369,6 +1375,7 @@ mod tests {
             vec![snippet("drill"), snippet("essay"), snippet("hello")],
             state::AppState {
                 last_custom_file: Some("/home/me/notes.txt".into()),
+                ..Default::default()
             },
             None,
         );

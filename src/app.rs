@@ -601,6 +601,12 @@ pub struct App {
     /// Where `app_state` is saved. `None` means "don't persist" — the
     /// default, so tests never write to the real home directory.
     pub state_file: Option<PathBuf>,
+    /// Runs started since `app_state` was last saved: counted on a run's
+    /// first key (never in the key path's disk writes) and saved by
+    /// [`App::save_run_count`] when a run ends and on quit.
+    pub runs_started_unsaved: u64,
+    /// When the first of those runs started, for `counting_since`.
+    pub first_unsaved_run: Option<chrono::DateTime<chrono::Local>>,
     /// Where `e` on the Stats screen writes the CSV export
     /// (`~/.typerush/stats.csv`). `None` — the default, and in tests unless
     /// they set one — means exporting is off.
@@ -679,6 +685,8 @@ impl App {
             snippets: Vec::new(),
             app_state: AppState::default(),
             state_file: None,
+            runs_started_unsaved: 0,
+            first_unsaved_run: None,
             export_file: None,
             config_file: None,
             settings: None,
@@ -856,6 +864,43 @@ impl App {
             self.app_state = updated;
         }
         self.rebuild_menu();
+    }
+
+    /// Runs started in all: the saved count, the runs since, and the saved
+    /// sessions from before counting began (they were started too).
+    pub fn runs_started(&self) -> u64 {
+        let since = self.app_state.counting_since.or(self.first_unsaved_run);
+        let before = self
+            .stats_cache
+            .as_deref()
+            .unwrap_or(&[])
+            .iter()
+            .filter(|s| since.is_none_or(|since| s.timestamp < since))
+            .count() as u64;
+        self.app_state.runs_started + self.runs_started_unsaved + before
+    }
+
+    /// Add the runs started since the last save to `state.json`. Called
+    /// when a run ends and on quit; a failed write keeps them for the next
+    /// try. Tests (no `state_file`) keep them in memory.
+    pub fn save_run_count(&mut self) {
+        if self.runs_started_unsaved == 0 {
+            return;
+        }
+        let Some(file) = self.state_file.clone() else {
+            return;
+        };
+        // Added to the count on disk, not the one read at start: another
+        // TypeRush window may have saved its runs since.
+        let mut updated = state::load_from_path(&file);
+        updated.runs_started += self.runs_started_unsaved;
+        updated.counting_since = updated.counting_since.or(self.first_unsaved_run);
+        if state::save_to_path(&file, &updated).is_ok() {
+            self.app_state.runs_started = updated.runs_started;
+            self.app_state.counting_since = updated.counting_since;
+            self.runs_started_unsaved = 0;
+            self.first_unsaved_run = None;
+        }
     }
 
     /// Menu ↑/↓: jump to the previous/next row (wrapping), keeping the same
@@ -1192,6 +1237,13 @@ impl App {
         // Paused: the text is hidden and the clock stopped, so nothing types.
         if self.is_paused() {
             return;
+        }
+        // A run's first key starts it. Zen runs aren't counted: they are
+        // never saved, so they could never be completed.
+        if self.started_at.is_none() && self.mode != Mode::Zen {
+            self.runs_started_unsaved += 1;
+            self.first_unsaved_run
+                .get_or_insert_with(chrono::Local::now);
         }
         self.ensure_timer_started();
         if self.current_word >= self.words.len() {
@@ -1541,6 +1593,51 @@ mod tests {
         let mut app = menu_app();
         app.start_game(Mode::Time(15)).unwrap();
         assert_eq!(app.missed_chars(), 0);
+    }
+
+    /// A run counts as started on its first key — once, however many keys
+    /// follow; zen doesn't count. Saved sessions from before counting began
+    /// count too, and saving the count moves it to state.json.
+    #[test]
+    fn runs_started_are_counted_once_and_saved() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut app = menu_app();
+        let old = chrono::Local::now() - chrono::Duration::days(3);
+        app.stats_cache = Some(vec![
+            SessionRecord {
+                timestamp: old,
+                ..SessionRecord::default()
+            };
+            2
+        ]);
+        assert_eq!(app.runs_started(), 2);
+        app.start_game(Mode::Words(5)).unwrap();
+        app.handle_char('x');
+        app.handle_char('y');
+        app.restart().unwrap();
+        app.handle_char('x');
+        app.start_game(Mode::Zen).unwrap();
+        app.handle_char('x');
+        assert_eq!(app.runs_started_unsaved, 2);
+        assert_eq!(app.runs_started(), 4);
+
+        // Another window saved 5 runs meanwhile: they add up.
+        let file = dir.path().join("state.json");
+        let other = state::AppState {
+            runs_started: 5,
+            counting_since: Some(old),
+            ..Default::default()
+        };
+        state::save_to_path(&file, &other).unwrap();
+        app.state_file = Some(file);
+        app.save_run_count();
+        assert_eq!(app.runs_started_unsaved, 0);
+        let saved = state::load_from_path(&dir.path().join("state.json"));
+        assert_eq!(saved.runs_started, 7);
+        assert_eq!(saved.counting_since, Some(old), "the earliest start kept");
+        // 7 counted since `old`; the two saved sessions at `old` aren't
+        // before it, so they aren't added again.
+        assert_eq!(app.runs_started(), 7);
     }
 
     // ── daily challenge (v0.5.0) ───────────────────────────────────────────
@@ -2196,6 +2293,7 @@ mod tests {
             vec![snippet("notes.txt", "/s/notes.txt.txt")],
             AppState {
                 last_custom_file: Some("notes.txt".into()),
+                ..Default::default()
             },
             None,
         );
@@ -2343,6 +2441,7 @@ mod tests {
             vec![snippet("alpha", "/s/alpha.txt")],
             AppState {
                 last_custom_file: Some("/home/me/notes.txt".into()),
+                ..Default::default()
             },
             None,
         );
@@ -2371,6 +2470,7 @@ mod tests {
             Vec::new(),
             AppState {
                 last_custom_file: Some("/old/remembered.txt".into()),
+                ..Default::default()
             },
             None,
         );

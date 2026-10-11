@@ -1,8 +1,9 @@
 //! Small key-value state persisted alongside the stats file.
 //!
-//! `~/.typerush/state.json` remembers UI choices between launches — currently
-//! just the last custom file the user typed (a `--file` path or a snippet),
-//! so the menu's "custom" row can offer it again without the CLI flag.
+//! `~/.typerush/state.json` remembers small things between launches: the
+//! last custom file the user typed (a `--file` path or a snippet), so the
+//! menu's "custom" row can offer it again without the CLI flag, and how many
+//! runs were started, for the Profile screen.
 //!
 //! Like stats persistence, everything here is best-effort: a missing, corrupt
 //! or unreadable file is treated as "no state", never as an error. Callers
@@ -26,6 +27,13 @@ pub struct AppState {
     /// Path of the most recently started custom file. Stored as a string so
     /// the file stays human-readable; non-UTF-8 paths are simply not saved.
     pub last_custom_file: Option<String>,
+    /// Runs started (a key typed) since `counting_since`, saved or not:
+    /// with the completed ones in stats.json, "started vs completed" on the
+    /// Profile screen. Added in v0.6.0.
+    pub runs_started: u64,
+    /// When counting began (the first counted run). Sessions saved before
+    /// then count as started too, since no count was kept.
+    pub counting_since: Option<chrono::DateTime<chrono::Local>>,
 }
 
 /// Path to `~/.typerush/state.json`.
@@ -80,6 +88,8 @@ mod tests {
         let path = dir.path().join("state.json");
         let state = AppState {
             last_custom_file: Some("/tmp/typing-fodder.txt".to_string()),
+            runs_started: 12,
+            counting_since: Some(chrono::Local::now()),
         };
         save_to_path(&path, &state).unwrap();
         assert_eq!(load_from_path(&path), state);
@@ -123,6 +133,7 @@ mod tests {
         let path = dir.path().join("state.json");
         let state = AppState {
             last_custom_file: Some("/tmp/atomic.txt".to_string()),
+            ..AppState::default()
         };
         save_to_path(&path, &state).unwrap();
         let leftovers: Vec<_> = fs::read_dir(dir.path())

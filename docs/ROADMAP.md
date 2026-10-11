@@ -199,7 +199,7 @@ one pull request:
    accuracy, raw, consistency or time
 5. ✅ Level and experience points, earned from time spent typing; the XP a
    run earned on Results
-6. 🔲 Runs started vs completed (a run ended with Esc, restarted or left
+6. ✅ Runs started vs completed (a run ended with Esc, restarted or left
    isn't completed)
 7. 🔲 Profile screen: level, typing since, days typed, streaks, started vs
    completed, time and characters typed, and the best for every time and
