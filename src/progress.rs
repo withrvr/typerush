@@ -73,6 +73,8 @@ impl Level {
 pub struct Day {
     pub runs: usize,
     pub secs: f64,
+    /// The day's best WPM.
+    pub best_wpm: f64,
 }
 
 /// A standard run's best: (wpm, accuracy, runs played), `None` if never played.
@@ -106,6 +108,36 @@ pub struct Profile {
     pub words: [StandardBest; 4],
     /// The mode played most, and how often.
     pub favourite: Option<(String, usize)>,
+    /// The day picked on the calendar (today when the screen opens).
+    pub selected_day: NaiveDate,
+}
+
+/// How far back the calendar reaches: 53 weeks, a whole year's columns.
+pub const CALENDAR_DAYS: u64 = 53 * 7;
+
+impl Profile {
+    /// Move the calendar's day by `days` (negative: back), staying between
+    /// the calendar's first day and today.
+    pub fn move_day(&mut self, days: i64) {
+        let today = chrono::Local::now().date_naive();
+        let first = today - chrono::Days::new(CALENDAR_DAYS - 1);
+        let step = chrono::Days::new(days.unsigned_abs());
+        // Checked: a far jump lands on the edge rather than overflowing.
+        let moved = if days < 0 {
+            self.selected_day.checked_sub_days(step).unwrap_or(first)
+        } else {
+            self.selected_day.checked_add_days(step).unwrap_or(today)
+        };
+        self.selected_day = moved.clamp(first, today);
+    }
+
+    /// Pick `day` (clicked), if it is on the calendar.
+    pub fn select_day(&mut self, day: NaiveDate) {
+        let today = chrono::Local::now().date_naive();
+        if day <= today && day > today - chrono::Days::new(CALENDAR_DAYS) {
+            self.selected_day = day;
+        }
+    }
 }
 
 impl Profile {
@@ -118,6 +150,7 @@ impl Profile {
             let day = days.entry(session.timestamp.date_naive()).or_default();
             day.runs += 1;
             day.secs += session.duration_secs.max(0.0);
+            day.best_wpm = day.best_wpm.max(session.wpm);
         }
         let bests = storage::bests_by_mode(history);
         let best_of = |label: String| -> StandardBest {
@@ -148,6 +181,7 @@ impl Profile {
             times: STANDARD_TIMES.map(|seconds| best_of(format!("time-{seconds}s"))),
             words: STANDARD_WORDS.map(|count| best_of(format!("words-{count}"))),
             favourite,
+            selected_day: chrono::Local::now().date_naive(),
         }
     }
 }
@@ -249,6 +283,34 @@ mod tests {
         assert_eq!(profile.words[1], Some((50.0, 95.0, 1)));
         assert_eq!(profile.favourite, Some(("time-30s".into(), 3)));
         assert_eq!(Profile::new(&[], 0).level, Level::default());
+    }
+
+    /// The calendar's day moves by days and weeks, never past today or
+    /// before the calendar's first day; a click picks a day on it.
+    #[test]
+    fn calendar_day_stays_on_the_calendar() {
+        let today = chrono::Local::now().date_naive();
+        let mut profile = Profile::new(&[], 0);
+        assert_eq!(profile.selected_day, today);
+        profile.move_day(1);
+        assert_eq!(profile.selected_day, today, "not past today");
+        profile.move_day(i64::MAX);
+        assert_eq!(profile.selected_day, today);
+        profile.move_day(-7);
+        assert_eq!(profile.selected_day, today - chrono::Days::new(7));
+        profile.move_day(i64::MIN);
+        assert_eq!(
+            profile.selected_day,
+            today - chrono::Days::new(CALENDAR_DAYS - 1)
+        );
+        profile.select_day(today - chrono::Days::new(3));
+        assert_eq!(profile.selected_day, today - chrono::Days::new(3));
+        profile.select_day(today + chrono::Days::new(1));
+        assert_eq!(
+            profile.selected_day,
+            today - chrono::Days::new(3),
+            "a future day"
+        );
     }
 
     #[test]

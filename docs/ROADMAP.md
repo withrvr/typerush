@@ -204,7 +204,7 @@ one pull request:
 7. ✅ Profile screen: level, typing since, days typed, streaks, started vs
    completed, time and characters typed, and the best for every time and
    word count side by side
-8. 🔲 Activity calendar on the Profile screen: a year of days shaded by how
+8. ✅ Activity calendar on the Profile screen: a year of days shaded by how
    long you typed, with a day you can pick to see its runs
 9. 🔲 Review, end-to-end test, docs, version 0.6.0
 

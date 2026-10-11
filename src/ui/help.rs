@@ -30,7 +30,7 @@ pub fn render(f: &mut Frame, app: &App, screen: Rect) -> &'static [super::Hint] 
 
     let lines = vec![
         heading("  TypeRush — keybindings"),
-        Line::from("  ↑/↓ ←/→  hjkl    move: menu, stats, settings"),
+        Line::from("  ↑/↓ ←/→  hjkl    move: menu, lists, calendar"),
         Line::from("  Enter  Space     start, choose, change"),
         Line::from("  Ctrl+R  F5       restart (results: Enter too)"),
         Line::from("  Ctrl+P  F2       pause / resume a run"),

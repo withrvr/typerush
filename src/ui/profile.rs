@@ -17,7 +17,7 @@ use crate::text::{printable, shorten};
 /// Render the Profile screen. Returns the footer hints.
 pub fn render(f: &mut Frame, app: &App, area: Rect) -> &'static [super::Hint] {
     let theme = &app.theme;
-    let [title_area, top, _calendar] = Layout::vertical([
+    let [title_area, top, calendar] = Layout::vertical([
         Constraint::Length(2),
         Constraint::Length(11),
         Constraint::Min(0),
@@ -47,13 +47,138 @@ pub fn render(f: &mut Frame, app: &App, area: Rect) -> &'static [super::Hint] {
         Layout::horizontal([Constraint::Percentage(50), Constraint::Percentage(50)]).areas(top);
     render_summary(f, app, left, profile);
     render_bests(f, app, right, profile);
+    render_calendar(f, app, calendar, profile);
 
     const HINTS: &[super::Hint] = &[
+        // The days themselves are clickable.
+        ("←/→ week", None),
+        ("↑/↓ day", None),
         ("Esc menu", key(KeyCode::Esc)),
         ("? help", key(KeyCode::Char('?'))),
         ("q quit", key(KeyCode::Char('q'))),
     ];
     HINTS
+}
+
+/// Cells left of the calendar's first week: the box's two-cell inset and
+/// the day names ("Mon ").
+const DAY_GUTTER: u16 = 6;
+
+/// How much a day was typed, 0–4, against the busiest day shown: 0 is
+/// none, 4 the busiest quarter.
+fn shade(secs: f64, busiest: f64) -> usize {
+    if secs <= 0.0 || busiest <= 0.0 {
+        return 0;
+    }
+    ((secs / busiest * 4.0).ceil() as usize).clamp(1, 4)
+}
+
+/// The activity calendar: a column per week (Monday on top), the current
+/// week last, as many weeks as fit up to a year; each day shaded by how
+/// long you typed, in glyphs that get denser (`· ░ ▒ ▓ █`, not color
+/// alone). The picked day is highlighted and described on the bottom
+/// border; a click picks a day.
+fn render_calendar(f: &mut Frame, app: &App, area: Rect, profile: &Profile) {
+    use chrono::{Datelike, Days};
+    if area.height < 4 {
+        return;
+    }
+    let theme = &app.theme;
+    let today = chrono::Local::now().date_naive();
+    let inner_width = area.width.saturating_sub(2);
+    let weeks = u64::from(inner_width.saturating_sub(DAY_GUTTER)).clamp(1, 53);
+    let this_monday = today - Days::new(u64::from(today.weekday().num_days_from_monday()));
+    let first_day = this_monday - Days::new(7 * (weeks - 1));
+    let shown = profile.days.range(first_day..=today);
+    let busiest = shown.clone().map(|(_, day)| day.secs).fold(0.0, f64::max);
+    let typed_days = shown.filter(|(_, day)| day.runs > 0).count();
+
+    // Month names over the week a month starts in, when there's room.
+    let mut months = " ".repeat(DAY_GUTTER as usize);
+    for week in 0..weeks {
+        let monday = first_day + Days::new(7 * week);
+        let starts_month = week == 0 || (monday - Days::new(7)).month() != monday.month();
+        let column = DAY_GUTTER as usize + week as usize;
+        // Only if the last name (and its space) ends before this column.
+        if starts_month && months.chars().count() <= column {
+            let name = monday.format("%b").to_string();
+            months.push_str(&" ".repeat(column - months.chars().count()));
+            months.push_str(&name);
+            months.push(' ');
+        }
+    }
+    let mut lines = vec![Line::styled(months, Style::default().fg(theme.pending))];
+
+    let glyphs = ["·", "░", "▒", "▓", "█"];
+    let inner = Block::default().borders(Borders::ALL).inner(area);
+    let mut targets = app.click_targets.borrow_mut();
+    for weekday in 0..7u64 {
+        let name = match weekday {
+            0 => "Mon ",
+            2 => "Wed ",
+            4 => "Fri ",
+            _ => "    ",
+        };
+        let mut spans = vec![Span::styled(
+            format!("  {name}"),
+            Style::default().fg(theme.pending),
+        )];
+        for week in 0..weeks {
+            let day = first_day + Days::new(7 * week + weekday);
+            if day > today {
+                spans.push(Span::raw(" "));
+                continue;
+            }
+            let level = profile.days.get(&day).map_or(0, |d| shade(d.secs, busiest));
+            let style = if day == profile.selected_day {
+                super::selected_style(theme)
+            } else if level == 0 {
+                Style::default().fg(theme.pending)
+            } else {
+                Style::default().fg(theme.accent)
+            };
+            spans.push(Span::styled(glyphs[level], style));
+            let cell = Rect::new(
+                inner.x + DAY_GUTTER + week as u16,
+                inner.y + 1 + weekday as u16,
+                1,
+                1,
+            )
+            .intersection(inner);
+            if !cell.is_empty() {
+                let back = (today - day).num_days() as usize;
+                targets.push((cell, crate::app::ClickAction::Select(back)));
+            }
+        }
+        lines.push(Line::from(spans));
+    }
+    drop(targets);
+
+    let picked = profile.selected_day;
+    let details = match profile.days.get(&picked) {
+        Some(day) => format!(
+            " {} · {} run{} · {} · best {:.1} ",
+            picked.format("%a %Y-%m-%d"),
+            day.runs,
+            if day.runs == 1 { "" } else { "s" },
+            super::stats::format_duration(day.secs),
+            day.best_wpm
+        ),
+        None => format!(" {} · no typing ", picked.format("%a %Y-%m-%d")),
+    };
+    let block = Block::default()
+        .borders(Borders::ALL)
+        .border_style(Style::default().fg(theme.pending))
+        .title(format!(
+            " activity · {typed_days} day{} typed ",
+            if typed_days == 1 { "" } else { "s" }
+        ))
+        .title_bottom(Span::styled(details, Style::default().fg(theme.neutral)))
+        .title_bottom(
+            Line::styled(" less · ░ ▒ ▓ █ more ", Style::default().fg(theme.pending))
+                .right_aligned(),
+        );
+    f.render_widget(Paragraph::new(lines).block(block), area);
 }
 
 /// `81,234`: a count with thousands separated.
@@ -245,6 +370,19 @@ fn render_bests(f: &mut Frame, app: &App, area: Rect, profile: &Profile) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// A day's shade is its share of the busiest day, in quarters; any
+    /// typing at all is at least the lightest shade.
+    #[test]
+    fn shades_by_quarter_of_the_busiest_day() {
+        assert_eq!(shade(0.0, 100.0), 0);
+        assert_eq!(shade(1.0, 100.0), 1);
+        assert_eq!(shade(25.0, 100.0), 1);
+        assert_eq!(shade(26.0, 100.0), 2);
+        assert_eq!(shade(75.0, 100.0), 3);
+        assert_eq!(shade(100.0, 100.0), 4);
+        assert_eq!(shade(5.0, 0.0), 0);
+    }
 
     #[test]
     fn thousands_are_separated() {

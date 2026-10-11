@@ -560,10 +560,23 @@ fn handle_mouse(app: &mut App, mouse: MouseEvent) {
     }
 }
 
-/// Select row `row` of the list on screen (a clicked Stats table row).
+/// Select row `row` of the list on screen: a clicked Stats table row, or
+/// on the Profile calendar the day `row` days before today.
 fn select_row(app: &mut App, row: usize) {
-    if let Some(view) = app.stats_view.as_mut() {
-        view.select_row(row);
+    match app.screen {
+        Screen::Profile => {
+            if let Some(profile) = app.profile.as_mut() {
+                let today = chrono::Local::now().date_naive();
+                if let Some(day) = today.checked_sub_days(chrono::Days::new(row as u64)) {
+                    profile.select_day(day);
+                }
+            }
+        }
+        _ => {
+            if let Some(view) = app.stats_view.as_mut() {
+                view.select_row(row);
+            }
+        }
     }
 }
 
@@ -619,9 +632,20 @@ fn handle_menu_key(app: &mut App, code: KeyCode, _mods: KeyModifiers) {
     }
 }
 
-/// Keymap for the Profile screen: Esc / `m` / Tab back to the menu, `q`
-/// quits.
+/// Keymap for the Profile screen: the arrows pick a calendar day, Esc /
+/// `m` / Tab back to the menu, `q` quits.
 fn handle_profile_key(app: &mut App, code: KeyCode) {
+    // The calendar's day: ←/→ a week, ↑/↓ a day, Home today.
+    if let Some(profile) = app.profile.as_mut() {
+        match code {
+            KeyCode::Left | KeyCode::Char('h') => return profile.move_day(-7),
+            KeyCode::Right | KeyCode::Char('l') => return profile.move_day(7),
+            KeyCode::Up | KeyCode::Char('k') => return profile.move_day(-1),
+            KeyCode::Down | KeyCode::Char('j') => return profile.move_day(1),
+            KeyCode::Home => return profile.select_day(chrono::Local::now().date_naive()),
+            _ => {}
+        }
+    }
     match code {
         KeyCode::Esc | KeyCode::Char('m') | KeyCode::Tab => app.screen = Screen::Menu,
         KeyCode::Char('q') => app.should_quit = true,
@@ -2135,6 +2159,7 @@ mod tests {
         assert!(title.contains("+6 xp  ·  ★ level 2!"), "{title}");
 
         app.restart().unwrap();
+        app.words = vec![Word::new("hello".into()), Word::new("world".into())];
         app.started_at = Some(std::time::Instant::now() - Duration::from_secs(4));
         for ch in "hello world".chars() {
             app.handle_char(ch);
@@ -2177,6 +2202,60 @@ mod tests {
         app.menu_index = app.menu.iter().position(|m| m.label == "profile").unwrap();
         handle_key(&mut app, KeyCode::Enter, KeyModifiers::NONE);
         assert_eq!(app.screen, Screen::Profile);
+    }
+
+    /// The calendar shades each day typed and describes the picked one: the
+    /// arrows move it by weeks and days, a click picks a day, Home is today.
+    #[test]
+    fn profile_calendar_picks_days() {
+        let dir = tempfile::tempdir().unwrap();
+        let stats_file = dir.path().join("stats.json");
+        let today = chrono::Local::now();
+        let three_days_ago = today - chrono::Days::new(3);
+        for (when, secs) in [
+            (three_days_ago, 30.0),
+            (three_days_ago, 30.0),
+            (today, 120.0),
+        ] {
+            let record = SessionRecord {
+                wpm: 50.0,
+                mode: "quote".into(),
+                duration_secs: secs,
+                timestamp: when,
+                ..SessionRecord::default()
+            };
+            storage::save_session_to_path(&stats_file, &record).unwrap();
+        }
+        let mut app = App::new(None, ThemePalette::default(), Mode::Time(15));
+        handle_key(&mut app, KeyCode::Char('u'), KeyModifiers::NONE);
+        after_input(&mut app, Screen::Menu, &mut false, &stats_file);
+        let dump = screen(&app, 80, 24).join("\n");
+        assert!(dump.contains("activity · 2 days typed"), "{dump}");
+        assert!(dump.contains("1 run · 2m · best 50.0"), "{dump}");
+        assert!(
+            dump.contains('█') && dump.contains('▒'),
+            "busiest and half: {dump}"
+        );
+
+        handle_key(&mut app, KeyCode::Up, KeyModifiers::NONE);
+        handle_key(&mut app, KeyCode::Up, KeyModifiers::NONE);
+        handle_key(&mut app, KeyCode::Up, KeyModifiers::NONE);
+        let picked = three_days_ago.date_naive();
+        assert_eq!(app.profile.as_ref().unwrap().selected_day, picked);
+        let dump = screen(&app, 80, 24).join("\n");
+        assert!(dump.contains("2 runs · 1m · best 50.0"), "{dump}");
+
+        handle_key(&mut app, KeyCode::Home, KeyModifiers::NONE);
+        handle_key(&mut app, KeyCode::Left, KeyModifiers::NONE);
+        let week_ago = today.date_naive() - chrono::Days::new(7);
+        assert_eq!(app.profile.as_ref().unwrap().selected_day, week_ago);
+        let dump = screen(&app, 80, 24).join("\n");
+        assert!(dump.contains("· no typing"), "{dump}");
+
+        draw(&app);
+        let cell = target_cell(&app, ClickAction::Select(3));
+        click(&mut app, cell);
+        assert_eq!(app.profile.as_ref().unwrap().selected_day, picked);
     }
 
     // ── saving ───────────────────────────────────────────────────────────────

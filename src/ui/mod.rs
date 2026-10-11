@@ -477,7 +477,7 @@ mod tests {
             (24, Screen::Stats, "←/→ category"),
             (24, Screen::Help, "Esc / F1 close"),
             (24, Screen::Settings, "↑/↓ setting"),
-            (24, Screen::Profile, "Esc menu"),
+            (24, Screen::Profile, "←/→ week"),
             (40, Screen::Results, "Enter / F5 restart"),
         ] {
             let mut app = App::new(None, builtin::DARK, Mode::Time(15));
