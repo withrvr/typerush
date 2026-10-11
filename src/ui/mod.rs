@@ -20,6 +20,7 @@
 
 pub mod help;
 pub mod menu;
+pub mod profile;
 pub mod results;
 pub mod settings;
 pub mod stats;
@@ -55,6 +56,7 @@ pub fn render(frame: &mut Frame, app: &App) {
         Screen::Results => results::render(frame, app, body),
         Screen::Stats => stats::render(frame, app, body),
         Screen::Settings => settings::render(frame, app, body),
+        Screen::Profile => profile::render(frame, app, body),
         Screen::Help => help::render(frame, app, body),
     };
     render_footer(frame, app, footer, hints);
@@ -475,6 +477,7 @@ mod tests {
             (24, Screen::Stats, "←/→ category"),
             (24, Screen::Help, "Esc / F1 close"),
             (24, Screen::Settings, "↑/↓ setting"),
+            (24, Screen::Profile, "Esc menu"),
             (40, Screen::Results, "Enter / F5 restart"),
         ] {
             let mut app = App::new(None, builtin::DARK, Mode::Time(15));
@@ -541,6 +544,7 @@ mod tests {
             Screen::Results,
             Screen::Stats,
             Screen::Settings,
+            Screen::Profile,
         ] {
             app.screen = screen;
             let rows = rows_of(&app);
@@ -568,6 +572,7 @@ mod tests {
                 // Not "theme": the selected row has the ➤ in its gutter; not
                 // "punctuation": it fills the label column but one cell.
                 Screen::Settings => &["start mode", "numbers", "10k words"],
+                Screen::Profile => &["level", "xp", "since", "days typed", "streak", "started"],
                 _ => &[],
             };
             for label in labels {

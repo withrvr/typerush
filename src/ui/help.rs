@@ -39,7 +39,7 @@ pub fn render(f: &mut Frame, app: &App, screen: Rect) -> &'static [super::Hint] 
         Line::from("  p  n  b          menu: punctuation, numbers,"),
         Line::from("                   10k words (time & words runs)"),
         Line::from("  Tab  s           stats (only Tab on results)"),
-        Line::from("  c                menu: settings"),
+        Line::from("  c  u             menu: settings, profile"),
         Line::from("  Enter  e         stats: replay, export CSV"),
         Line::from("  a d w s r        stats: all/dates/words/sort"),
         Line::from("  ?  F1            help (only F1 on results)"),

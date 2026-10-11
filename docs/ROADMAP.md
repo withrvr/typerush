@@ -201,7 +201,7 @@ one pull request:
    run earned on Results
 6. ✅ Runs started vs completed (a run ended with Esc, restarted or left
    isn't completed)
-7. 🔲 Profile screen: level, typing since, days typed, streaks, started vs
+7. ✅ Profile screen: level, typing since, days typed, streaks, started vs
    completed, time and characters typed, and the best for every time and
    word count side by side
 8. 🔲 Activity calendar on the Profile screen: a year of days shaded by how

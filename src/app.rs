@@ -41,6 +41,8 @@ pub enum Screen {
     Stats,
     /// Change the saved settings (`~/.typerush/config.toml`).
     Settings,
+    /// Level, totals, bests side by side and the activity calendar.
+    Profile,
     /// Floating keybindings overlay (any screen can toggle it on).
     Help,
 }
@@ -270,6 +272,8 @@ pub enum MenuAction {
     ShowStats,
     /// Open the Settings screen.
     ShowSettings,
+    /// Open the Profile screen.
+    ShowProfile,
     /// Quit the application.
     Quit,
 }
@@ -303,8 +307,8 @@ pub fn default_menu() -> Vec<MenuItem> {
 ///
 /// Categories with several options come first (time, words, code, symbols,
 /// custom), then the single runs (daily, quote, zen), then one row with
-/// the actions that don't start a game (`stats`, `settings`, `quit`) side
-/// by side.
+/// the actions that don't start a game (`stats`, `profile`, `settings`,
+/// `quit`) side by side.
 pub fn build_menu(snippets: &[Snippet], last_custom_file: Option<&Path>) -> Vec<MenuItem> {
     use crate::words::CodeLang;
     let start = |group, label: &str, mode| MenuItem {
@@ -315,7 +319,7 @@ pub fn build_menu(snippets: &[Snippet], last_custom_file: Option<&Path>) -> Vec<
         custom_path: None,
     };
     // The actions that don't start a game share the last row, with no
-    // heading: "stats  settings  quit".
+    // heading: "stats  profile  settings  quit".
     let other = |label: &str, action| MenuItem {
         group: "app",
         label: label.to_string(),
@@ -367,6 +371,7 @@ pub fn build_menu(snippets: &[Snippet], last_custom_file: Option<&Path>) -> Vec<
     menu.push(start("zen", "zen", Mode::Zen));
 
     menu.push(other("stats", MenuAction::ShowStats));
+    menu.push(other("profile", MenuAction::ShowProfile));
     menu.push(other("settings", MenuAction::ShowSettings));
     menu.push(other("quit", MenuAction::Quit));
     menu
@@ -621,6 +626,11 @@ pub struct App {
     /// screen is entered and after each change.
     pub settings: Option<crate::settings::SettingsView>,
 
+    // --- profile (v0.6.0) ---
+    /// What the Profile screen shows, worked out from the history when the
+    /// screen is entered (not coming back from help).
+    pub profile: Option<crate::progress::Profile>,
+
     // --- replay (v0.5.0) ---
     /// The session being typed again, while replaying one. Restarting
     /// replays it again; starting any other game clears it.
@@ -690,6 +700,7 @@ impl App {
             export_file: None,
             config_file: None,
             settings: None,
+            profile: None,
             replay: None,
             click_targets: RefCell::new(Vec::new()),
             pressed_target: None,
@@ -1436,7 +1447,7 @@ mod tests {
         let mut app = menu_app(); // time · 30s (column 1)
         app.menu_move_row(false);
         assert_eq!(app.menu[app.menu_index].group, "app");
-        assert_eq!(app.menu[app.menu_index].label, "settings");
+        assert_eq!(app.menu[app.menu_index].label, "profile");
         app.menu_move_row(true);
         assert_eq!(app.menu[app.menu_index].group, "time");
     }
@@ -2036,7 +2047,7 @@ mod tests {
             ["time", "words", "code", "symbols", "custom", "daily", "quote", "zen", "app"]
         );
         assert_eq!(row("daily"), ["daily"]);
-        assert_eq!(row("app"), ["stats", "settings", "quit"]);
+        assert_eq!(row("app"), ["stats", "profile", "settings", "quit"]);
     }
 
     #[test]

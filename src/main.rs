@@ -467,6 +467,7 @@ fn handle_key(app: &mut App, code: KeyCode, mods: KeyModifiers) {
         Screen::Results => handle_results_key(app, code, mods),
         Screen::Stats => handle_stats_key(app, code, mods),
         Screen::Settings => handle_settings_key(app, code),
+        Screen::Profile => handle_profile_key(app, code),
         Screen::Help => {}
     }
 }
@@ -598,6 +599,7 @@ fn handle_menu_key(app: &mut App, code: KeyCode, _mods: KeyModifiers) {
                 }
                 MenuAction::ShowStats => app.screen = Screen::Stats,
                 MenuAction::ShowSettings => app.screen = Screen::Settings,
+                MenuAction::ShowProfile => app.screen = Screen::Profile,
                 MenuAction::Quit => app.should_quit = true,
             }
         }
@@ -611,6 +613,17 @@ fn handle_menu_key(app: &mut App, code: KeyCode, _mods: KeyModifiers) {
         }
         KeyCode::Tab | KeyCode::Char('s') => app.screen = Screen::Stats,
         KeyCode::Char('c') => app.screen = Screen::Settings,
+        KeyCode::Char('u') => app.screen = Screen::Profile,
+        KeyCode::Char('q') => app.should_quit = true,
+        _ => {}
+    }
+}
+
+/// Keymap for the Profile screen: Esc / `m` / Tab back to the menu, `q`
+/// quits.
+fn handle_profile_key(app: &mut App, code: KeyCode) {
+    match code {
+        KeyCode::Esc | KeyCode::Char('m') | KeyCode::Tab => app.screen = Screen::Menu,
         KeyCode::Char('q') => app.should_quit = true,
         _ => {}
     }
@@ -801,7 +814,11 @@ fn after_input(app: &mut App, last_screen: Screen, session_saved: &mut bool, sta
     // History is read from disk once; every save hands back the updated list,
     // so the cache stays current without re-reading the file. The render path
     // never touches disk.
-    if matches!(app.screen, Screen::Stats | Screen::Results) && app.stats_cache.is_none() {
+    if matches!(
+        app.screen,
+        Screen::Stats | Screen::Results | Screen::Profile
+    ) && app.stats_cache.is_none()
+    {
         app.stats_cache = Some(storage::load_sessions_from_path(stats_file).unwrap_or_default());
     }
     // Results comparisons and the Stats summary (streak, averages, key
@@ -819,6 +836,13 @@ fn after_input(app: &mut App, last_screen: Screen, session_saved: &mut bool, sta
     // other way in rebuilds the view (a game may have been saved since).
     // Straight after a run it opens on that run's mode; otherwise it stays
     // on the category that was showing.
+    // The profile is added up on the way in (not coming back from help),
+    // never per frame.
+    if app.screen == Screen::Profile && !matches!(last_screen, Screen::Profile | Screen::Help) {
+        let started = app.runs_started();
+        let sessions = app.stats_cache.as_deref().unwrap_or(&[]);
+        app.profile = Some(progress::Profile::new(sessions, started));
+    }
     // Settings are read from the file on the way in (not coming back from
     // help), so an edit made outside — `typerush config set` — shows up.
     if app.screen == Screen::Settings && !matches!(last_screen, Screen::Settings | Screen::Help) {
@@ -2118,6 +2142,41 @@ mod tests {
         after_input(&mut app, Screen::Typing, &mut false, &stats_file);
         let title = screen(&app, 80, 24)[0].clone();
         assert!(title.contains("+4 xp  ·  level 2  ·  1%"), "{title}");
+    }
+
+    // ── profile (v0.6.0) ─────────────────────────────────────────────────────
+
+    /// `u` (or the menu's profile option) opens the Profile, added up from
+    /// the history on the way in; Esc goes back. Help and back keeps it.
+    #[test]
+    fn profile_opens_from_the_menu_and_adds_up() {
+        let dir = tempfile::tempdir().unwrap();
+        let stats_file = dir.path().join("stats.json");
+        for (mode, wpm) in [("time-30s", 61.0), ("words-25", 72.5), ("time-30s", 64.0)] {
+            saved(&stats_file, mode, "", wpm);
+        }
+        let mut app = App::new(None, ThemePalette::default(), Mode::Time(15));
+        handle_key(&mut app, KeyCode::Char('u'), KeyModifiers::NONE);
+        assert_eq!(app.screen, Screen::Profile);
+        after_input(&mut app, Screen::Menu, &mut false, &stats_file);
+        let profile = app.profile.as_ref().unwrap();
+        assert_eq!((profile.sessions, profile.started), (3, 3));
+        let rows = screen(&app, 80, 24);
+        let dump = rows.join("\n");
+        assert!(
+            dump.contains("  time  wpm   acc    words wpm   acc"),
+            "{dump}"
+        );
+        assert!(dump.contains("30s   64.0  0%"), "{dump}");
+        assert!(dump.contains("25    72.5"), "{dump}");
+        assert!(dump.contains("most played  time-30s (2)"), "{dump}");
+        assert!(dump.contains("completed   3 (100%)"), "{dump}");
+
+        handle_key(&mut app, KeyCode::Esc, KeyModifiers::NONE);
+        assert_eq!(app.screen, Screen::Menu);
+        app.menu_index = app.menu.iter().position(|m| m.label == "profile").unwrap();
+        handle_key(&mut app, KeyCode::Enter, KeyModifiers::NONE);
+        assert_eq!(app.screen, Screen::Profile);
     }
 
     // ── saving ───────────────────────────────────────────────────────────────

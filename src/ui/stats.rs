@@ -121,7 +121,7 @@ pub fn render(f: &mut Frame, app: &App, area: Rect) -> &'static [super::Hint] {
 }
 
 /// `1h 05m`, `12m`, `45s`: time spent typing, at a glance.
-fn format_duration(secs: f64) -> String {
+pub(super) fn format_duration(secs: f64) -> String {
     let secs = secs as u64;
     match (secs / 3600, secs / 60 % 60) {
         (0, 0) => format!("{secs}s"),
