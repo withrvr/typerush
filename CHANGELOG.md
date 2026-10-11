@@ -13,6 +13,49 @@ _No unreleased changes yet._
 
 ---
 
+## [0.7.0] — practice modes
+
+More ways to practise: drill your mistakes, make every error count, race
+your best, type blind — and make TypeRush look the way you want.
+
+### Added
+
+- **Practise missed words:** every session keeps the words you got wrong
+  (even ones you fixed). The `missed` menu row (or `--missed`) builds a run
+  from your most-missed recent words.
+- **Repeat a run:** `F6` on Results types the same words again, as a
+  replay compared with the run you just finished.
+- **Quick restart on `Tab`** while typing (like `F5` / `Ctrl+R`).
+- **A `[typing]` section** in `config.toml`, all of it also on the Settings
+  screen and in `typerush config`:
+  - `live_wpm` — hide WPM and accuracy while typing;
+  - `blind` — no right/wrong colors while typing, numbers only at the end
+    (`--blind`);
+  - `stop_on_error` — `letter` (a wrong key doesn't move the cursor) or
+    `word` (a word with a mistake can't be left until it's fixed)
+    (`--stop-on-error`);
+  - `cursor` — `underline`, `block` or `bar`;
+  - `sound` — the terminal's bell on mistakes or on every key;
+  - `pace` — a second cursor moving at your best for the mode (on a
+    replay, the original run) or at a target WPM (`--pace`);
+  - `idle_limit` — a run with that many seconds without a key (10 by
+    default) isn't saved, and Results says why.
+- **Custom themes:** a TOML file in `~/.typerush/themes/` is a theme named
+  after the file, on top of a built-in; pick it like any other.
+  `--list-themes` lists them and notes hard-to-read colors.
+- `missed` can be the start mode (`mode = "missed"`).
+
+### Changed
+
+- The typing footer says `Tab / F5 restart`; the Results footer gains
+  `F6 repeat` (`Ctrl+C` still quits there, as everywhere).
+- On a short terminal the Settings list scrolls with the selection.
+- The blank line under the menu's last option gives way before the banner
+  on a terminal too short for both.
+- The help overlay lists `Tab` and `F6`.
+
+---
+
 ## [0.6.0] — profile and deeper results
 
 See more of every run, and of all of them: a chart and new figures on
@@ -572,7 +615,8 @@ keyboard alternates** for accessibility.
   dedicated docs.
 - Demo GIF uses absolute GitHub raw URL for correct display on crates.io.
 
-[Unreleased]: https://github.com/withrvr/typerush/compare/v0.6.0...HEAD
+[Unreleased]: https://github.com/withrvr/typerush/compare/v0.7.0...HEAD
+[0.7.0]: https://github.com/withrvr/typerush/compare/v0.6.0...v0.7.0
 [0.6.0]: https://github.com/withrvr/typerush/compare/v0.5.0...v0.6.0
 [0.5.0]: https://github.com/withrvr/typerush/compare/v0.4.1...v0.5.0
 [0.4.1]: https://github.com/withrvr/typerush/compare/v0.4.0...v0.4.1

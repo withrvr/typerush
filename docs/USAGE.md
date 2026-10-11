@@ -22,6 +22,7 @@ typerush --code rust          # code: rust | python | js | go | java | sql | she
 typerush --zen                # zen mode (no timer, no stats)
 typerush --symbols 25         # programming-symbols drill of N tokens
 typerush --daily              # today's daily challenge
+typerush --missed             # practise the words you've got wrong lately
 typerush --replay             # type the last saved session again, word for word
 typerush --replay 3           # …or the third most recent one
 typerush --file <path>        # type any text file you have
@@ -106,6 +107,7 @@ combined with the run flags above (`typerush --time 30 export` is refused).
 | Symbols | Programming punctuation: `=>`, `(){};`, `&&`, `?.`, `<T>` … (25 / 50 tokens) | you complete the last token |
 | Custom  | A text file: `--file`, a snippet, or the file you typed last          | you complete the last word       |
 | Daily   | Today's challenge: 40 words, the same for everyone on a given day      | you complete the last word       |
+| Missed  | The words you've got wrong lately, shuffled (at least 25)             | you complete the last word       |
 
 ### The daily challenge
 
@@ -122,6 +124,17 @@ category.
 
 (The words depend on the date and on TypeRush's word list, so two
 different versions of TypeRush could give different words on the same day.)
+
+### Practising missed words
+
+Every session keeps the words you got wrong — a word counts when you
+pressed a wrong key in it or on its space, even if you fixed it. The
+`missed` menu row (or `--missed`, or `mode = "missed"` to start on it)
+builds a run from them: from your last 100 sessions, the 50 words you've
+missed most often (the most recent first when two tie), shuffled and
+repeated so the run has at least 25 words. It's saved as `missed`, with its
+own best. Sessions keep their missed words from TypeRush 0.7 on; before you
+have any, it says so.
 
 ### Replaying a session
 
@@ -185,8 +198,8 @@ needs `Shift` held while dragging.
 Modes are grouped by category, the ones with a choice of options first:
 `time`, `words`, `code`, `symbols` and `custom` show a heading with their
 options on the line below (a row too wide for the menu continues on the next
-line). Then come the single runs `daily`, `quote` and `zen`, and `stats`,
-`profile`, `settings` and `quit` share the last row:
+line). Then come the single runs `daily`, `missed`, `quote` and `zen`, and
+`stats`, `profile`, `settings` and `quit` share the last row:
 
 ```mermaid
 flowchart TD
@@ -214,7 +227,7 @@ flowchart TD
         direction LR
         stats ~~~ profile ~~~ settings ~~~ quit
     end
-    time ~~~ words ~~~ code ~~~ symbols ~~~ custom ~~~ daily ~~~ quote ~~~ zen ~~~ app
+    time ~~~ words ~~~ code ~~~ symbols ~~~ custom ~~~ daily ~~~ missed ~~~ quote ~~~ zen ~~~ app
 ```
 
 The bottom border of the list shows the three word settings — `p
@@ -257,7 +270,7 @@ for the whole list does it scroll, and then the border shows `▲ more` /
 | `Ctrl+Backspace` | Delete the entire current word (`Alt+Backspace` too) |
 | `Ctrl+W`         | Same — delete the entire current word            |
 | `Ctrl+H`         | Same — most terminals send this when you press `Ctrl+Backspace` |
-| `Ctrl+R` / `F5`  | Restart the same mode with a new word list (a replay: the same words) |
+| `Tab` / `F5` / `Ctrl+R` | Restart the same mode with a new word list (a replay: the same words) |
 | `Ctrl+P` / `F2`  | Pause / resume                                  |
 | `Esc`            | End the session and go to the results screen    |
 
@@ -272,6 +285,7 @@ or the time saved in your stats.
 | Key             | Action                            |
 | --------------- | --------------------------------- |
 | `Enter` / `F5` / `Ctrl+R` | Restart the same mode   |
+| `F6`            | The same words again (a replay of this run) |
 | `Tab`           | Open the stats history            |
 | `Esc`           | Back to the menu                  |
 | `F1`            | Help                              |
@@ -350,7 +364,10 @@ Open it from the menu (`c`, or the `settings` option on the last row).
 | `Esc`                 | Cancel a pending reset, else back to the menu (`m` / `Tab` too) |
 | `q`                   | Quit                                                |
 
-See [Changing settings](#changing-settings) for what each one does.
+See [Changing settings](#changing-settings) for what each one does, and
+[Typing options](#typing-options) for the typing rows. On a terminal too
+short for every row, the list scrolls with the selection (`▲ more` /
+`▼ more` on the border).
 
 ---
 
@@ -504,8 +521,8 @@ won't replace a config you already have.
 Three ways, all writing the same file:
 
 - **The Settings screen** (`c` in the menu): theme, start mode (the menu row
-  highlighted at launch), punctuation, numbers, 10k words, and reset to
-  defaults. A change is saved straight away and used straight away — a
+  highlighted at launch), punctuation, numbers, 10k words, the
+  [typing options](#typing-options), and reset to defaults. A change is saved straight away and used straight away — a
   theme shows as you pick it.
 - **`typerush config set NAME VALUE`** from the shell. `typerush config
   show` lists every setting with the value in use (`# default` where the
@@ -529,13 +546,19 @@ Setting names, as `config show` lists them:
 
 | Name | Values |
 | ---- | ------ |
-| `theme` | `dark`, `light`, `monokai`, `dracula` |
-| `defaults.mode` | `time`, `words`, `quote`, `code`, `zen`, `symbols`, `daily` |
+| `theme` | `dark`, `light`, `monokai`, `dracula`, or [one of your own](#your-own-themes) |
+| `defaults.mode` | `time`, `words`, `quote`, `code`, `zen`, `symbols`, `daily`, `missed` |
 | `defaults.time_seconds` | 1 – 3600 |
 | `defaults.word_count`, `defaults.symbol_count` | 1 – 10,000 |
 | `defaults.code_lang` | `rust`, `python`, `js`, `go`, `java`, `sql`, `shell` |
 | `words.pool` | `common`, `extended` |
 | `words.punctuation`, `words.numbers` | `true` / `false` (`on` / `off` too) |
+| `typing.live_wpm`, `typing.blind` | `true` / `false` |
+| `typing.stop_on_error` | `off`, `letter`, `word` |
+| `typing.cursor` | `underline`, `block`, `bar` |
+| `typing.sound` | `off`, `errors`, `keys` |
+| `typing.pace` | `off`, `best`, or a WPM from 1 to 300 |
+| `typing.idle_limit` | seconds, 0 (off) to 600 |
 | `colors.accent`, `colors.secondary`, `colors.correct`, `colors.incorrect`, `colors.pending`, `colors.mode_tag`, `colors.error`, `colors.neutral`, `colors.background` | `#RRGGBB`, an ANSI name, or `reset` |
 
 ### Themes
@@ -552,8 +575,33 @@ Built-in themes (run `typerush --list-themes` to print them):
 | --------- | -------------------------------------------------- |
 | `dark`    | Default — cyan / green / yellow on a dark terminal |
 | `light`   | Softer palette for light-background terminals      |
-| `monokai` | Classic Sublime/TextMate — pink/green/yellow       |
+| `monokai` | Warm dark — pink/green/yellow on `#272822`         |
 | `dracula` | Purple/pink/cyan on `#282a36`                      |
+
+### Your own themes
+
+Drop a TOML file in `~/.typerush/themes/` and it's a theme, named after the
+file (`ocean.toml` is `ocean`; letters, digits, `-` and `_`, not a built-in
+name). It starts from a built-in theme — `base = "dracula"`, or `dark` when
+it doesn't say — and sets any of the color slots
+[`[colors]`](#per-slot-color-overrides) takes:
+
+```toml
+# ~/.typerush/themes/ocean.toml
+base = "dark"
+background = "#0B1D2A"
+neutral    = "#D8E6F0"
+accent     = "#4FC3F7"
+pending    = "#7A8C99"
+```
+
+Pick it like a built-in one: `theme = "ocean"`, `--theme ocean`, the
+Settings screen, `typerush config set theme ocean`. `typerush
+--list-themes` lists your themes after the built-in ones, and notes (on
+stderr) any text color under 4.5:1 against the background — the contrast
+every built-in theme keeps. A file that can't be read, or a color that
+doesn't parse, is reported when TypeRush starts; the theme is left out,
+or that slot keeps the base's color.
 
 ### Per-slot color overrides
 
@@ -619,6 +667,49 @@ config file — the Settings screen does, if you want the change to stay.
 Runs with any of these settings keep their own personal bests: the mode label
 gets `+10k`, `+p` and/or `+n` (`time-30s+p`, `words-50+10k+p+n`), so a
 harder run is only ever compared with runs played the same way.
+
+### Typing options
+
+How a run behaves and looks while you type — the `[typing]` section, all
+also on the Settings screen:
+
+```toml
+[typing]
+live_wpm = true          # show WPM and accuracy while typing
+blind = false            # no right/wrong colors; numbers only at the end
+stop_on_error = "off"    # "off" | "letter" | "word"
+cursor = "underline"     # "underline" | "block" | "bar"
+sound = "off"            # "off" | "errors" | "keys"
+pace = "off"             # "off" | "best" | a WPM, e.g. 60
+idle_limit = 10          # seconds without a key before a run isn't saved; 0 = never
+```
+
+- **live wpm** off hides WPM and accuracy while typing; the clock and mode
+  stay.
+- **blind** shows what you type in one color, right or wrong (a wrong space
+  isn't marked either), and no numbers until Results. `--blind` for one
+  launch.
+- **stop on error**: `letter` — a wrong key doesn't move the cursor; type
+  the right one. `word` — wrong letters are typed, but you can't leave a
+  word with a mistake in it (nor finish the run on one) until it's fixed.
+  A refused key counts as a mistake, and the cursor turns the mistake color
+  until the right key or a backspace. `--stop-on-error letter|word` for one
+  launch.
+- **cursor**: `underline` (the character underlined), `block` (the
+  character in a solid block) or `bar` (a thin bar before it — the
+  terminal's own cursor, set back to your terminal's shape when TypeRush
+  exits).
+- **key sound**: the terminal's bell on every key (`keys`) or only on
+  mistakes (`errors`). Some terminals flash instead of beeping, or are set
+  to stay quiet.
+- **pace**: a second cursor, underlined in another color, that moves at
+  your best for the mode you're playing (`best`; on a replay, the original
+  run's speed) or at a target WPM — so you can see whether you're ahead.
+  `--pace best|WPM` for one launch. Zen has none, and neither does a mode
+  you haven't played yet.
+- **idle limit**: a run with a stretch of that many seconds without a key
+  isn't saved — Results says so (`not saved: 34 s without a key (the limit
+  is 10 s)`). Paused time doesn't count; walking away from a time run does.
 
 ### Precedence
 

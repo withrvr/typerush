@@ -110,7 +110,7 @@ in v0.3, as the category-grouped menu.)
 
 ## 🚧 In progress
 
-- 🚧 Release v0.2.1, v0.3.0, v0.4.0, v0.4.1, v0.5.0 and v0.6.0: git tags, GitHub release binaries,
+- 🚧 Release v0.2.1, v0.3.0, v0.4.0, v0.4.1, v0.5.0, v0.6.0 and v0.7.0: git tags, GitHub release binaries,
   crates.io. The latest published release is v0.2.0 — pre-built binaries on
   the [Releases page](https://github.com/withrvr/typerush/releases) and
   `cargo install typerush` both started with v0.1.1 / v0.2.0.
@@ -214,12 +214,12 @@ one pull request:
 - ✅ The CSV export gains raw WPM, consistency, missed and completed
 - ✅ `profile` joins `stats`, `settings` and `quit` on the menu's last row
 
-## 🚧 v0.7 — Practice modes
+## ✅ v0.7 — Practice modes
 
 Worked in this order, one commit (or a few) per step, on one branch and
 one pull request:
 
-1. 🚧 Plan (this section)
+1. ✅ Plan (this section)
 2. ✅ Quick restart on `Tab` while typing, and repeat the run you just
    finished (the same words) from Results with `F6`
 3. ✅ A `[typing]` section in the config and on the Settings screen:
@@ -237,11 +237,21 @@ one pull request:
    default) is not saved, and Results says why
 9. ✅ Custom themes from files in `~/.typerush/themes/`, on top of a
    built-in or from scratch, listed and picked like the built-in ones
-10. 🔲 Review, end-to-end test, docs, version 0.7.0
+10. ✅ Review, end-to-end test, docs, version 0.7.0
+
+**Added to v0.7 along the way:**
+
+- ✅ `missed` can be the start mode; `--missed`
+- ✅ The Settings list scrolls on a short terminal
+- ✅ The menu's trailing blank line gives way before the banner at 80×24
 
 ---
 
 ## 🔲 Planned
+
+Nothing is planned past v0.7 yet — the ideas below are candidates.
+[Open an issue](https://github.com/withrvr/typerush/issues/new/choose) to
+suggest one.
 
 ---
 

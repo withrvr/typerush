@@ -56,6 +56,64 @@ rule that keeps it fixed).
 
 ---
 
+## v0.7.0 — practice modes
+
+### Bugs (caught before they shipped)
+
+- **Settings outgrew short terminals.** Seven typing rows took Settings
+  from six rows to thirteen; at 80×24 they fit, but on a shorter window the
+  last rows — reset to defaults among them — were cut off with no way to
+  reach them. Fix: the list scrolls with the selection, with `▲ / ▼ more`
+  on the border, like the menu. Guard:
+  `settings_scroll_on_a_short_terminal`. Lesson: every list that grows
+  needs a plan for the screen it no longer fits.
+- **The menu at 80×24 again.** The `missed` row pushed the menu with a
+  snippet library past a standard terminal (the compact banner would have
+  gone). Fix: the blank line under the last option now gives way first —
+  after the gaps between categories, before the banner.
+  `whole_menu_fits_80x24_at_launch` caught it.
+- **Custom themes listed in byte order** (`Ocean` before `forest_2`).
+  Fix: sorted ignoring case, like snippets. Found by the discovery test.
+- **`--list-themes` flattened a TOML error** into one line of `?`s
+  (`printable` replaces the newlines). Fix: printed line by line, as the
+  error modal does. Found driving the release binary.
+
+### Features and changes
+
+- **One shape for every choice setting.** `stop_on_error`, `cursor` and
+  `sound` are enums with `NAMES` / `name` / `from_name`; the loader
+  resolves them through one `named` helper and `typerush config` checks
+  them with `Kind::Choice(&NAMES)`, so Settings, the CLI, the config and
+  `config set` can't disagree about the names. `pace` (a word or a number)
+  and `idle_limit` (seconds, 0 = off) have their own kinds; `pace = 60` and
+  `pace = "60"` both parse through an untagged `TextOrNumber`, because a
+  type error in TOML makes the loader drop the whole file.
+- **Stop on error is decided before anything moves.** A blocked key is
+  tallied (it counts against accuracy) and returns early; the last word of
+  a text has no space, so in `word` mode the run's end waits on it too.
+- **The bar cursor is the terminal's own.** A drawn bar would take a cell
+  and shift the line — the jitter the steady cursor was built to avoid. The
+  real cursor costs no room; its shape is set when the option changes and
+  reset on exit and in the panic hook.
+- **The key sound is a BEL byte.** An audio library would need system
+  audio headers on Linux to even build; the bell is one byte, and
+  terminals already let people choose how it sounds (or flashes).
+- **Pace counts in one stream** — word characters plus one per space —
+  the same way the cursor advances, so the ghost never drifts from the
+  text. `best` is looked up when the run begins; `App::history` loads
+  stats.json then if no screen has, never per frame.
+- **Missed words are marked as they happen** (`Word::had_error`), not
+  derived from the final text: a mistake you fixed is still a word worth
+  practising. Words from stats.json are filtered like a custom file's.
+- **Custom themes are installed once, globally.** Passing a theme list to
+  every lookup (config, CLI, `config set`, Settings, `--list-themes`)
+  would touch every caller; a `OnceLock` read by `builtin::by_name` and
+  `names` needs none. Tests never install, so they only see built-ins.
+- **F6 repeat is a replay.** The run's words are now seen, so it's saved
+  as `+replay` and compared with the run — the same rule as any replay.
+
+---
+
 ## v0.6.0 — profile and deeper results
 
 ### Bugs (caught before they shipped)

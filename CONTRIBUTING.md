@@ -30,13 +30,14 @@ The TL;DR:
 - `src/app.rs` — application state machine
 - `src/settings.rs` — the Settings screen's state and actions
 - `src/progress.rs` — levels, XP and the Profile screen's summary
+- `src/options.rs` — the `[typing]` settings (blind, stop on error, cursor, pace, …)
 - `src/game.rs` — character matcher
 - `src/storage.rs` — JSON stats persistence
 - `src/state.rs` — `state.json` (the last custom file)
 - `src/text.rs` — safe display of user-supplied names and text
 - `src/config/*.rs` — `config.toml` loading, CLI overrides, and editing it in
   place (`edit.rs`, for `typerush config` and Settings)
-- `src/theme/*.rs` — built-in themes and colour parsing
+- `src/theme/*.rs` — built-in themes, custom theme files, colour parsing
 - `src/ui/*.rs` — one file per screen
 - `src/words/*.rs` — word sources (pools, quotes, code, symbols, snippets)
 
