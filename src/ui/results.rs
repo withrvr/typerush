@@ -314,6 +314,9 @@ fn render_chart(f: &mut Frame, app: &App, area: Rect) {
             .data(&errors),
     ];
     let chart = Chart::new(datasets)
+        // The chart draws its lines on a canvas of its own, which fills its
+        // cells with the terminal's colors unless given the theme's.
+        .style(super::base_style(theme))
         .block(block)
         .legend_position(None)
         .x_axis(

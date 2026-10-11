@@ -81,10 +81,17 @@ rule that keeps it fixed).
   `dracula`. Cause: they cleared their area with ratatui's `Clear`, which
   resets cells to the terminal's own colors, undoing the theme's
   background paint. Fix: one `ui::clear` that clears and repaints the
-  theme's base style, used by all three. Guards:
+  theme's base style, used by all three. Then the Results chart's plot was
+  reported black too: `Chart` draws on a canvas of its own that fills its
+  cells with the terminal's colors unless the chart is given a style — and
+  the first version of the screen-wide test drew Results with no run to
+  chart, so it never saw one. Fix: the chart gets the theme's base style;
+  the test now draws a real chart. Guards:
   `overlays_use_the_theme_background`, and
-  `every_screen_is_on_the_theme_background` — every screen and overlay on
-  every painted theme, no cell in the terminal's own colors.
+  `every_screen_is_on_the_theme_background` — every screen, with real data
+  in every widget, on every painted theme: no cell in the terminal's own
+  colors. Lesson: a check over "every screen" only covers the widgets the
+  test actually makes draw.
 - **A test passed by luck.** `results_show_xp_and_level_up` typed "hello
   world" after `restart()`, which deals new random words; it passed only
   while a frame happened to finish. Fix: set the words after restarting.

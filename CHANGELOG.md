@@ -59,10 +59,9 @@ practice on a calendar.
 
 ### Fixed
 
-- **The help box and the error / notice boxes now use the theme's
-  colors.** They were drawn on the terminal's own background — a black box
-  on `light`, `monokai` and `dracula` — wherever they opened (the menu,
-  Results, Stats…).
+- **The help box, the error / notice boxes and the Results chart now use
+  the theme's colors.** They were drawn on the terminal's own background —
+  black on `light`, `monokai` and `dracula`.
 
 ---
 

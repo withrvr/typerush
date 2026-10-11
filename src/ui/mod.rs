@@ -67,7 +67,7 @@ pub fn render(frame: &mut Frame, app: &App) {
 /// The style every cell starts from: the theme's background, and (on
 /// themes that paint one) its foreground, so text drawn without a color is
 /// never the terminal's own.
-fn base_style(theme: &crate::theme::ThemePalette) -> Style {
+pub fn base_style(theme: &crate::theme::ThemePalette) -> Style {
     let base = Style::default().bg(theme.background);
     if theme.background == Color::Reset {
         base
@@ -349,7 +349,18 @@ mod tests {
                 app.stats_cache = Some(vec![record(61.0, "words-5")]);
                 app.screen = screen;
                 if screen == Screen::Results {
-                    app.notice = Some("exported 1 session".into());
+                    // A run long enough to chart: the chart draws on a
+                    // canvas of its own, which must be on the theme too.
+                    let end = std::time::Instant::now();
+                    app.ended_at = Some(end);
+                    app.started_at = Some(end - std::time::Duration::from_secs(10));
+                    app.timeline = (0..10)
+                        .map(|i| crate::app::Second {
+                            typed: 4 + i % 3,
+                            correct: 4,
+                            errors: i % 3,
+                        })
+                        .collect();
                 }
                 let mut terminal = Terminal::new(TestBackend::new(80, 24)).unwrap();
                 terminal.draw(|f| render(f, &app)).unwrap();
