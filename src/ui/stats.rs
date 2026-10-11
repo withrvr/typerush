@@ -9,7 +9,7 @@
 
 use ratatui::{
     prelude::*,
-    widgets::{Block, Borders, Cell, Paragraph, Row, Sparkline, Table},
+    widgets::{Block, Borders, Cell, Padding, Paragraph, Row, Sparkline, Table},
 };
 
 use ratatui::crossterm::event::{KeyCode, KeyModifiers};
@@ -320,7 +320,8 @@ fn render_key_heatmap(
     f.render_widget(table, area);
 }
 
-/// Render the WPM sparkline: the category's last 20 sessions.
+/// Render the WPM sparkline: as many of the category's latest sessions as
+/// the box has room for — one bar per cell — titled with how many show.
 fn render_sparkline(
     f: &mut Frame,
     app: &App,
@@ -329,24 +330,33 @@ fn render_sparkline(
     view: &storage::StatsView,
 ) {
     let theme = &app.theme;
-    let recent: Vec<u64> = view.indices[view.indices.len().saturating_sub(20)..]
+    // Two cells of padding, as text has in every box.
+    let block = Block::default()
+        .borders(Borders::ALL)
+        .padding(Padding::horizontal(2))
+        .border_style(Style::default().fg(theme.pending));
+    let room = block.inner(area).width as usize;
+    let shown = &view.indices[view.indices.len().saturating_sub(room)..];
+    let recent: Vec<u64> = shown
         .iter()
         .map(|&i| sessions[i].wpm.max(0.0) as u64)
         .collect();
+    let title = match shown.len() {
+        0 => " wpm trend ".to_string(),
+        1 => " wpm trend (1 session) ".to_string(),
+        n if n == view.indices.len() => format!(" wpm trend (all {n}) "),
+        n => format!(" wpm trend (last {n}) "),
+    };
     let spark = Sparkline::default()
-        .block(
-            Block::default()
-                .borders(Borders::ALL)
-                .border_style(Style::default().fg(theme.pending))
-                .title(" wpm trend (last 20) "),
-        )
+        .block(block.title(title))
         .data(&recent)
         .style(Style::default().fg(theme.accent));
     f.render_widget(spark, area);
 }
 
-/// Width of the Mode column in both tables.
-const MODE_WIDTH: usize = 18;
+/// Width of the Mode column in both tables: the sessions table's columns
+/// then fill 80 columns exactly, padding included.
+const MODE_WIDTH: usize = 17;
 
 /// Rows of a bordered table with a header that fit in `area`, and the first
 /// of `total` rows to show: the view's scroll, moved just enough to keep the
@@ -371,7 +381,7 @@ fn visible_rows(area: Rect, total: usize, view: &storage::StatsView) -> (usize, 
 /// Make each drawn row of a table in `area` clickable: a click selects it.
 /// Rows start under the top border and the header.
 fn register_rows(app: &App, area: Rect, first: usize, shown: usize) {
-    let inner = area.inner(Margin::new(1, 1));
+    let inner = area.inner(Margin::new(1 + TABLE_PADDING, 1));
     let mut targets = app.click_targets.borrow_mut();
     for row in 0..shown {
         let y = inner.y + 1 + row as u16;
@@ -410,12 +420,18 @@ fn table_block<'a>(
     } else {
         format!(" {name} · {}–{} of {total} ", first + 1, first + shown)
     };
+    // Two cells of padding, as text has in every box: the ★ column keeps
+    // off the border.
     Block::default()
         .borders(Borders::ALL)
+        .padding(Padding::horizontal(TABLE_PADDING))
         .border_style(Style::default().fg(app.theme.pending))
         .title(title)
         .title_bottom(chips)
 }
+
+/// Cells between a table's border and its first column.
+const TABLE_PADDING: u16 = 2;
 
 /// The filter chips on a table's bottom border — `d dates all time`,
 /// `w words any`, and on the sessions list `s sort date ↓` and `r reverse` —
@@ -569,7 +585,7 @@ fn render_sessions_table(
         [
             Constraint::Length(1),
             Constraint::Length(16),
-            Constraint::Length(MODE_WIDTH as u16), // fits "words-100+10k+p+n"
+            Constraint::Length(MODE_WIDTH as u16), // fits "words-100+10k+p+n" (17)
             Constraint::Length(7),
             Constraint::Length(7),
             Constraint::Length(7),

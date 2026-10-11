@@ -53,6 +53,15 @@ your best, type blind — and make TypeRush look the way you want.
 - The blank line under the menu's last option gives way before the banner
   on a terminal too short for both.
 - The help overlay lists `Tab` and `F6`.
+- **The Results chart is labelled on round numbers:** at least four labels
+  on each axis and as many as fit, every label on its value.
+- **The Stats WPM trend shows as many sessions as the box is wide** (it
+  was the last 20), and says how many.
+- **Nothing is drawn against a box's side any more** ([#20]): the chart,
+  the WPM trend and the Stats tables are inset like the text in every other
+  box, the help box is wide enough for its longest line, and Settings shows
+  the selected row by its label and value rather than a marker in the
+  border's first cell.
 
 ---
 
@@ -627,3 +636,4 @@ keyboard alternates** for accessibility.
 [0.1.1]: https://github.com/withrvr/typerush/releases/tag/v0.1.1
 [#8]: https://github.com/withrvr/typerush/issues/8
 [#4]: https://github.com/withrvr/typerush/issues/4
+[#20]: https://github.com/withrvr/typerush/issues/20

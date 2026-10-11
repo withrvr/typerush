@@ -309,7 +309,9 @@ What Results shows:
 - **mode** and its best (`today best` for the daily challenge).
 - **A chart of the run, second by second**: the WPM so far (the line that
   ends at your WPM), the raw speed of each second, and a dot on each second
-  with a mistake. Runs under two seconds, and zen, have no chart.
+  with a mistake. Both axes are labelled on round numbers — at least four
+  labels each, more on a bigger terminal. Runs under two seconds, and zen,
+  have no chart.
 
 **Consistency** is how even your speed was: 100% means the same number of
 keys every second. It is 100 minus how far the keys per second spread from
@@ -431,7 +433,7 @@ Opened from the menu, it stays on the category you were looking at last.
 | ------- | ------------- |
 | **Summary (left)** | Best WPM · Average accuracy · Session count · Last WPM · **Daily streak** · **7-day avg WPM** · **30-day avg WPM** · **Time typed** |
 | **Key accuracy (right)** | Up to 5 of your worst keys (≥ 3 presses). Colour-coded: red < 80%, amber < 93%, green otherwise. Shows `no key data yet` until enough data is collected. |
-| **WPM trend** | Sparkline of the category's last 20 sessions |
+| **WPM trend** | One bar per session, as many of the category's latest as the box is wide (all of them when they fit); the title says how many |
 | **Sessions** | Every session in the category, newest first, with date, mode, WPM, raw WPM, accuracy, consistency (`—` before v0.6) and time; `↑` / `↓` move the highlighted row and `Enter` replays it. A `★` marks the session holding its mode's best. The title says which rows are showing (`1–5 of 42`). |
 
 **Filters and sorting.** The chips on the list's bottom border — `d dates

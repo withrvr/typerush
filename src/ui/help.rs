@@ -52,7 +52,9 @@ pub fn render(f: &mut Frame, app: &App, screen: Rect) -> &'static [super::Hint] 
         dim("  Snippets ~/.typerush/snippets/*.txt"),
     ];
 
-    const WIDTH: u16 = 50;
+    // The longest line is 48 cells: two more keep it off the right border,
+    // as the two in front keep it off the left.
+    const WIDTH: u16 = 52;
     // Narrower than the box, lines wrap and need more rows: take the full
     // height instead of guessing how many.
     let height = if screen.width < WIDTH {

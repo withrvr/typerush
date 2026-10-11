@@ -124,7 +124,9 @@ pub fn render(f: &mut Frame, app: &App, area: Rect) -> &'static [super::Hint] {
     HINTS
 }
 
-/// One row: the ➤ marker in the two-cell gutter, its label, its value. The
+/// One row: its label two cells in, then its value. The selected row
+/// shows by its label (bold, in the secondary color) and its value in the
+/// highlight — nothing is drawn against the border. The
 /// clickable parts come back as (x offset in the box, width, key): ‹ and ›
 /// act like ← and →, the value like Enter.
 fn row_line(
@@ -135,12 +137,8 @@ fn row_line(
 ) -> (Line<'static>, Vec<(u16, u16, KeyCode)>) {
     let theme = &app.theme;
     let selected = view.selected == index;
-    // Text starts two cells in from the border, as in every box; the ➤
-    // marker sits in that gutter.
-    let marker = |cells: usize| {
-        let text = if selected { "➤" } else { " " };
-        Span::styled(format!("{text:<cells$}"), Style::default().fg(theme.accent))
-    };
+    // Text starts two cells in from the border, as in every box.
+    let gutter = || Span::raw("  ");
     let chip_style = |style: Style| {
         if selected {
             selected_style(theme)
@@ -155,23 +153,19 @@ fn row_line(
 
     if row == Row::Reset {
         let (text, hint) = if view.confirm_reset {
-            (
-                " Enter again to reset every setting ",
-                "  ·  Esc keeps them",
-            )
+            ("Enter again to reset every setting", "  ·  Esc keeps them")
         } else {
-            (" reset to defaults ", "")
+            ("reset to defaults", "")
         };
+        // In the label column, highlighted when selected.
         let chip = Span::styled(text, chip_style(Style::default().fg(theme.neutral)));
         let width = chip.width() as u16;
-        // A one-cell marker: the chip's own leading space puts its text in
-        // the label column.
         let line = Line::from(vec![
-            marker(1),
+            gutter(),
             chip,
             Span::styled(hint, Style::default().fg(theme.pending)),
         ]);
-        return (line, vec![(1, width, KeyCode::Enter)]);
+        return (line, vec![(2, width, KeyCode::Enter)]);
     }
 
     let (name, value) = match row {
@@ -219,7 +213,7 @@ fn row_line(
         (value_x + 1 + width, 1, KeyCode::Right),
     ];
     let line = Line::from(vec![
-        marker(2),
+        gutter(),
         label,
         Span::styled("‹", arrow),
         chip,

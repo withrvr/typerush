@@ -74,6 +74,27 @@ rule that keeps it fixed).
   `whole_menu_fits_80x24_at_launch` caught it.
 - **Custom themes listed in byte order** (`Ocean` before `forest_2`).
   Fix: sorted ignoring case, like snippets. Found by the discovery test.
+- **Chart labels off their values.** Asked for more axis labels, the
+  first version handed ratatui five or more x labels — and they drifted:
+  ratatui spreads the middle x labels over equal slots (label *i* centered
+  at (i + ½)·width/count), not at their values; its y labels are placed
+  proportionally and were fine. Found driving the release binary
+  (`0s … 1s 2s 3s … 4s`). Fix: two blank x labels keep the row, and
+  `draw_x_labels` writes each label centered on its own column, found from
+  the axis corner ratatui drew. Guard: `chart_is_drawn_under_the_results`
+  checks the labels are evenly spaced. Ticks are round (1, 2, 2.5, 5 ×
+  10ⁿ), at least four, as many as fit, and each axis ends on its last
+  label so labels sit on values.
+- **Content against box borders** ([#20]). The chart's y labels, the WPM
+  trend's bars and the Stats tables' ★ column started in a box's first
+  cell; two help lines filled their box; Settings put its ➤ in the first
+  cell. Fix: two cells of padding on those boxes (the tables' Mode column
+  one cell narrower so the sessions table still fits 80 columns), a wider
+  help box, no marker on Settings (the selected row shows by its bold label
+  and highlighted value). Guard: `nothing_touches_a_box_border` finds every
+  vertical border (a `│` run, overlays included) on every screen and fails
+  on anything drawn beside it — checked to fail with the old padding and
+  help width.
 - **`--list-themes` flattened a TOML error** into one line of `?`s
   (`printable` replaces the newlines). Fix: printed line by line, as the
   error modal does. Found driving the release binary.
@@ -420,3 +441,4 @@ rule that keeps it fixed).
   nothing is left to type.
 
 [#8]: https://github.com/withrvr/typerush/issues/8
+[#20]: https://github.com/withrvr/typerush/issues/20
