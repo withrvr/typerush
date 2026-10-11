@@ -53,7 +53,8 @@ with a throwaway `HOME` — never the real `~/.typerush` — following
 - Every mouse action has a keyboard equivalent; clicks fire on release.
 - `config.toml` is only written through `config::edit` (comments kept,
   values checked by the loader's rules); a new setting needs a `KEYS`
-  entry. New modes need a label `Mode::from_label` reads back (replay).
+  entry, and a typing option the steps in ARCHITECTURE's "When you add a
+  typing option". New modes need a label `Mode::from_label` reads back (replay).
 - Footer hints must fit 80 columns, and the menu and help overlay must fit
   80×24 — tests check both; count the cells before adding one.
 - Anything added up over the history or the whole run (XP, the profile,

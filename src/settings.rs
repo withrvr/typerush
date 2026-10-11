@@ -19,16 +19,30 @@ pub enum Row {
     Punctuation,
     Numbers,
     Pool,
+    LiveWpm,
+    Blind,
+    StopOnError,
+    Pace,
+    Cursor,
+    Sound,
+    IdleLimit,
     Reset,
 }
 
 /// Every row, in order.
-pub const ROWS: [Row; 6] = [
+pub const ROWS: [Row; 13] = [
     Row::Theme,
     Row::Start,
     Row::Punctuation,
     Row::Numbers,
     Row::Pool,
+    Row::LiveWpm,
+    Row::Blind,
+    Row::StopOnError,
+    Row::Pace,
+    Row::Cursor,
+    Row::Sound,
+    Row::IdleLimit,
     Row::Reset,
 ];
 
@@ -171,6 +185,21 @@ impl App {
                     self.word_pool = pool;
                 }
             }
+            // The typing rows change the values in use (`--blind` and the
+            // other flags included), then save the new one.
+            row @ (Row::LiveWpm
+            | Row::Blind
+            | Row::StopOnError
+            | Row::Pace
+            | Row::Cursor
+            | Row::Sound
+            | Row::IdleLimit) => {
+                let mut next = self.options;
+                let (key, value) = next_typing(&mut next, row, forward);
+                if self.save_settings(&[(key, value)]).is_some() {
+                    self.options = next;
+                }
+            }
             Row::Reset => {}
         }
     }
@@ -246,6 +275,7 @@ impl App {
         self.theme = defaults.palette;
         self.word_pool = defaults.word_pool;
         self.word_decor = defaults.word_decor;
+        self.options = defaults.typing;
         self.menu_index = best_menu_match(&self.menu, defaults.default_mode);
         self.settings = Some(SettingsView::load(Some(&path), selected));
     }
@@ -262,6 +292,7 @@ fn start_settings(mode: Mode) -> Vec<(&'static str, String)> {
         Mode::Zen => "zen",
         Mode::Symbols(_) => "symbols",
         Mode::Daily => "daily",
+        Mode::Missed => "missed",
         // Never offered (see `start_modes`).
         Mode::Custom => "time",
     };
@@ -276,6 +307,58 @@ fn start_settings(mode: Mode) -> Vec<(&'static str, String)> {
         _ => {}
     }
     settings
+}
+
+/// Move typing setting `row` of `options` to its next (or previous) value;
+/// the config key and the value as written.
+fn next_typing(
+    options: &mut crate::options::TypingOptions,
+    row: Row,
+    forward: bool,
+) -> (&'static str, String) {
+    use crate::options::{CursorStyle, KeySound, Pace, StopOnError, IDLE_CHOICES};
+    match row {
+        Row::LiveWpm => {
+            options.live_wpm = !options.live_wpm;
+            ("typing.live_wpm", options.live_wpm.to_string())
+        }
+        Row::Blind => {
+            options.blind = !options.blind;
+            ("typing.blind", options.blind.to_string())
+        }
+        Row::StopOnError => {
+            let name = step(&StopOnError::NAMES, options.stop_on_error.name(), forward);
+            options.stop_on_error = StopOnError::from_name(name).unwrap_or_default();
+            ("typing.stop_on_error", name.to_string())
+        }
+        Row::Cursor => {
+            let name = step(&CursorStyle::NAMES, options.cursor.name(), forward);
+            options.cursor = CursorStyle::from_name(name).unwrap_or_default();
+            ("typing.cursor", name.to_string())
+        }
+        Row::Sound => {
+            let name = step(&KeySound::NAMES, options.sound.name(), forward);
+            options.sound = KeySound::from_name(name).unwrap_or_default();
+            ("typing.sound", name.to_string())
+        }
+        Row::Pace => {
+            options.pace = step(&Pace::CHOICES, options.pace, forward);
+            ("typing.pace", options.pace.name())
+        }
+        Row::IdleLimit => {
+            let seconds = step(&IDLE_CHOICES, options.idle_limit.unwrap_or(0), forward);
+            options.idle_limit = (seconds > 0).then_some(seconds);
+            ("typing.idle_limit", seconds.to_string())
+        }
+        _ => unreachable!("not a typing row: {row:?}"),
+    }
+}
+
+/// The item after (or before) `current` in `choices`, wrapping; the first
+/// (or last) when `current` isn't one of them.
+fn step<T: Copy + PartialEq>(choices: &[T], current: T, forward: bool) -> T {
+    let at = choices.iter().position(|choice| *choice == current);
+    choices[cycle(at, choices.len(), forward)]
 }
 
 /// Index after (or before) `at` in a list of `len`, wrapping; the first

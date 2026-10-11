@@ -10,7 +10,7 @@
 //! theme = "monokai"            # built-in name: dark | light | monokai | dracula
 //!
 //! [defaults]
-//! mode = "time"                 # time | words | quote | code | zen | symbols | daily
+//! mode = "time"                 # time | words | quote | code | zen | symbols | daily | missed
 //! time_seconds = 15             # default duration for time mode
 //! word_count = 25               # default count for words mode
 //! code_lang = "rust"            # rust | python | js | go | java | sql | shell
@@ -20,6 +20,15 @@
 //! pool = "common"               # "common" (default, ~430 frequent words) | "extended" (10k)
 //! punctuation = false           # sprinkle commas/periods/quotes on ~25% of words
 //! numbers = false               # replace ~12% of slots with random 1–4 digit numbers
+//!
+//! [typing]                      # v0.7.0 — how a run behaves and looks
+//! live_wpm = true               # show WPM and accuracy while typing
+//! blind = false                 # no right/wrong colors, numbers only at the end
+//! stop_on_error = "off"         # off | letter | word
+//! cursor = "underline"          # underline | block | bar
+//! sound = "off"                 # off | errors | keys (the terminal bell)
+//! pace = "off"                  # off | best | a WPM such as 60
+//! idle_limit = 10               # a run idle this long isn't saved; 0 = never
 //!
 //! [colors]                      # optional — overrides slots of the chosen theme
 //! accent = "#FF00FF"
@@ -47,6 +56,48 @@ pub struct Config {
     pub colors: Option<Colors>,
     /// Word source / decoration toggles (v0.4.0).
     pub words: Option<Words>,
+    /// How a run behaves and looks while typing (v0.7.0).
+    pub typing: Option<Typing>,
+}
+
+/// `[typing]` section: how a run behaves and looks while you type. Added
+/// in v0.7.0.
+#[derive(Debug, Default, Deserialize, PartialEq)]
+#[serde(deny_unknown_fields)]
+pub struct Typing {
+    /// Show WPM and accuracy while typing (default true).
+    pub live_wpm: Option<bool>,
+    /// Blind mode: no right/wrong colors, no numbers until the end.
+    pub blind: Option<bool>,
+    /// `off` | `letter` | `word`: whether a mistake must be fixed first.
+    pub stop_on_error: Option<String>,
+    /// `underline` | `block` | `bar`.
+    pub cursor: Option<String>,
+    /// `off` | `errors` | `keys`: when the terminal bell sounds.
+    pub sound: Option<String>,
+    /// `"off"` | `"best"` | a WPM (`60` or `"60"`): the pace cursor.
+    pub pace: Option<TextOrNumber>,
+    /// Seconds without a key after which a run isn't saved; 0 = never.
+    pub idle_limit: Option<u64>,
+}
+
+/// A value written either as text or as a whole number (`pace = 60` and
+/// `pace = "best"` are both natural to write).
+#[derive(Debug, Deserialize, PartialEq, Clone)]
+#[serde(untagged)]
+pub enum TextOrNumber {
+    Number(i64),
+    Text(String),
+}
+
+impl TextOrNumber {
+    /// The value as text: `60`, `best`.
+    pub fn text(&self) -> String {
+        match self {
+            TextOrNumber::Number(number) => number.to_string(),
+            TextOrNumber::Text(text) => text.clone(),
+        }
+    }
 }
 
 /// Default mode + per-mode defaults. Pre-selects the matching row in the menu

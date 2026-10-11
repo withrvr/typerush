@@ -72,6 +72,27 @@ fn parse_named(name: &str) -> Result<Color> {
     }
 }
 
+/// WCAG contrast ratio between two RGB colors (1.0–21.0); `None` when
+/// either isn't RGB — a terminal palette color has no fixed value.
+pub fn contrast(a: Color, b: Color) -> Option<f64> {
+    fn luminance(color: Color) -> Option<f64> {
+        let Color::Rgb(r, g, b) = color else {
+            return None;
+        };
+        let channel = |c: u8| {
+            let c = f64::from(c) / 255.0;
+            if c <= 0.04045 {
+                c / 12.92
+            } else {
+                ((c + 0.055) / 1.055).powf(2.4)
+            }
+        };
+        Some(0.2126 * channel(r) + 0.7152 * channel(g) + 0.0722 * channel(b))
+    }
+    let (a, b) = (luminance(a)?, luminance(b)?);
+    Some((a.max(b) + 0.05) / (a.min(b) + 0.05))
+}
+
 /// `color` written the way [`parse_color`] reads it: `#RRGGBB`, an ANSI
 /// name (`dark_gray`) or `reset` — for printing config values.
 pub fn color_name(color: Color) -> String {

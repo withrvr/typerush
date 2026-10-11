@@ -14,6 +14,7 @@ mod app;
 mod commands;
 mod config;
 mod game;
+mod options;
 mod progress;
 mod settings;
 mod state;
@@ -26,13 +27,14 @@ mod words;
 use std::{
     io::{stdout, Stdout},
     panic,
-    path::{Path, PathBuf},
+    path::PathBuf,
     time::{Duration, Instant},
 };
 
 use anyhow::Result;
 use clap::Parser;
 use ratatui::crossterm::{
+    cursor::SetCursorStyle,
     event::{
         self, DisableMouseCapture, EnableMouseCapture, Event, KeyCode, KeyEventKind, KeyModifiers,
         MouseButton, MouseEvent, MouseEventKind,
@@ -56,6 +58,22 @@ where
 {
     let count = value.parse::<T>().map_err(|_| "not a whole number")?;
     check_count(count, MAX)
+}
+
+/// Value parser for `--pace`.
+fn pace(value: &str) -> Result<options::Pace, String> {
+    options::Pace::from_name(value).ok_or_else(|| {
+        format!(
+            "not off, best or a WPM from 1 to {}",
+            options::Pace::MAX_WPM
+        )
+    })
+}
+
+/// Value parser for `--stop-on-error`.
+fn stop_on_error(value: &str) -> Result<options::StopOnError, String> {
+    options::StopOnError::from_name(value)
+        .ok_or_else(|| format!("not one of {}", options::StopOnError::NAMES.join(", ")))
 }
 
 /// Command-line interface. Run with no args to open the interactive menu; pass
@@ -98,6 +116,10 @@ struct Cli {
     #[arg(long)]
     daily: bool,
 
+    /// Skip the menu and practise the words you've got wrong lately.
+    #[arg(long)]
+    missed: bool,
+
     /// Skip the menu and start a programming-symbols drill of N tokens (25/50).
     #[arg(long, value_parser = count::<usize, MAX_COUNT>)]
     symbols: Option<usize>,
@@ -131,6 +153,21 @@ struct Cli {
     #[arg(long, value_name = "N", num_args = 0..=1, default_missing_value = "1",
           value_parser = count::<usize, MAX_COUNT>)]
     replay: Option<usize>,
+
+    /// Blind mode for this run of TypeRush: no right/wrong colors while
+    /// typing, and the numbers only at the end.
+    #[arg(long)]
+    blind: bool,
+
+    /// Stop on error for this run of TypeRush: off | letter (a wrong key
+    /// doesn't move the cursor) | word (a wrong word can't be left).
+    #[arg(long, value_name = "WHEN", value_parser = stop_on_error)]
+    stop_on_error: Option<options::StopOnError>,
+
+    /// A pace cursor for this run of TypeRush: `best` (your best for the
+    /// mode) or a target WPM, 1–300.
+    #[arg(long, value_name = "PACE", value_parser = pace)]
+    pace: Option<options::Pace>,
 
     /// One-shot theme override: dark | light | monokai | dracula.
     /// Takes precedence over the `theme` setting in `~/.typerush/config.toml`.
@@ -175,14 +212,21 @@ impl Cli {
             }),
             punctuation: switch(self.punctuation, self.no_punctuation),
             numbers: switch(self.numbers, self.no_numbers),
+            blind: self.blind.then_some(true),
+            stop_on_error: self.stop_on_error,
+            pace: self.pace,
         }
     }
 }
 
 fn main() -> Result<()> {
     let cli = Cli::parse();
+    // Custom themes are read first: every theme lookup after this — the
+    // config, --theme, --list-themes, `config set theme` — sees them.
+    let (themes, theme_warnings) = theme::custom::discover_in(&theme::custom::themes_dir());
+    theme::custom::install(themes);
     if cli.list_themes {
-        print_themes_and_exit();
+        print_themes_and_exit(&theme_warnings);
     }
     if cli.list_snippets {
         print_snippets_and_exit();
@@ -211,7 +255,7 @@ fn main() -> Result<()> {
     }
     install_panic_hook();
     let mut terminal = setup_terminal()?;
-    let run_result = run_app(&mut terminal, cli);
+    let run_result = run_app(&mut terminal, cli, theme_warnings);
     let restored = restore_terminal(&mut terminal);
     if let Err(error) = run_result {
         // The run's error is the one that matters; still mention a failed
@@ -234,11 +278,20 @@ fn print_error_and_exit(error: &anyhow::Error) -> ! {
     std::process::exit(1);
 }
 
-/// Print every built-in theme name on its own line and exit with status 0.
-/// Intended for shell completion / discoverability.
-fn print_themes_and_exit() -> ! {
+/// Print every theme name — built-in, then custom — on its own line and
+/// exit with status 0 (for shell completion and scripts). Problems with
+/// theme files, and custom text colors that are hard to read, go to stderr.
+fn print_themes_and_exit(warnings: &[String]) -> ! {
     for theme_name in builtin::names() {
         println!("{}", theme_name);
+    }
+    for line in warnings.iter().flat_map(|warning| warning.lines()) {
+        eprintln!("note: {}", text::printable(line));
+    }
+    for theme in theme::custom::installed() {
+        for note in theme::custom::contrast_notes(&theme.palette) {
+            eprintln!("note: theme {}: {note}", theme.name);
+        }
     }
     std::process::exit(0);
 }
@@ -291,7 +344,8 @@ fn restore_terminal(terminal: &mut Tui) -> Result<()> {
     let screen = execute!(
         terminal.backend_mut(),
         LeaveAlternateScreen,
-        DisableMouseCapture
+        DisableMouseCapture,
+        SetCursorStyle::DefaultUserShape
     );
     let cursor = terminal.show_cursor();
     raw?;
@@ -307,7 +361,12 @@ fn install_panic_hook() {
     let original = panic::take_hook();
     panic::set_hook(Box::new(move |info| {
         let _ = disable_raw_mode();
-        let _ = execute!(stdout(), LeaveAlternateScreen, DisableMouseCapture);
+        let _ = execute!(
+            stdout(),
+            LeaveAlternateScreen,
+            DisableMouseCapture,
+            SetCursorStyle::DefaultUserShape
+        );
         original(info);
     }));
 }
@@ -317,10 +376,13 @@ fn install_panic_hook() {
 /// `tick_rate` is 100ms — small enough that the WPM display feels live, large
 /// enough that we're not busy-looping. `event::poll` blocks for the remainder
 /// of the tick interval so keystrokes are still handled instantly.
-fn run_app(terminal: &mut Tui, cli: Cli) -> Result<()> {
-    let (resolved, warnings) = config::load::load_or_default_with(cli.overrides());
+fn run_app(terminal: &mut Tui, cli: Cli, theme_warnings: Vec<String>) -> Result<()> {
+    let (resolved, config_warnings) = config::load::load_or_default_with(cli.overrides());
+    // A broken theme file is a warning like a broken config.
+    let warnings: Vec<String> = theme_warnings.into_iter().chain(config_warnings).collect();
     let mut app = App::new(cli.file.clone(), resolved.palette, resolved.default_mode);
     app.set_word_source(resolved.word_pool, resolved.word_decor);
+    app.options = resolved.typing;
     let state_file = state::state_path();
     app.load_custom_sources(
         words::snippets::discover_snippets(),
@@ -335,15 +397,26 @@ fn run_app(terminal: &mut Tui, cli: Cli) -> Result<()> {
     }
     app.export_file = Some(storage::data_dir().join("stats.csv"));
     app.config_file = Some(config::load::config_path());
-    let stats_file = storage::stats_path();
-    apply_cli_autostart(&mut app, &cli, &stats_file)?;
+    app.stats_file = Some(storage::stats_path());
+    apply_cli_autostart(&mut app, &cli)?;
 
     let tick_rate = Duration::from_millis(100);
     let mut last_tick = Instant::now();
     let mut last_screen = app.screen;
     let mut session_saved = false;
+    let mut cursor_shape = options::CursorStyle::default();
 
     loop {
+        // The bar cursor is the terminal's own: shape it when the setting
+        // changes (Settings can change it while TypeRush is open).
+        if app.options.cursor != cursor_shape {
+            cursor_shape = app.options.cursor;
+            let shape = match cursor_shape {
+                options::CursorStyle::Bar => SetCursorStyle::SteadyBar,
+                _ => SetCursorStyle::DefaultUserShape,
+            };
+            execute!(terminal.backend_mut(), shape)?;
+        }
         terminal.draw(|frame| ui::render(frame, &app))?;
 
         // Block until either a key event arrives or the tick interval elapses.
@@ -363,6 +436,13 @@ fn run_app(terminal: &mut Tui, cli: Cli) -> Result<()> {
                         continue;
                     }
                     handle_key(&mut app, key.code, key.modifiers);
+                    // The key sound is the terminal's bell: a byte, not a
+                    // dependency on an audio library.
+                    if std::mem::take(&mut app.bell) {
+                        use std::io::Write;
+                        let backend = terminal.backend_mut();
+                        let _ = backend.write_all(b"\x07").and_then(|()| backend.flush());
+                    }
                 }
                 Event::Mouse(mouse) => handle_mouse(&mut app, mouse),
                 _ => {}
@@ -376,7 +456,7 @@ fn run_app(terminal: &mut Tui, cli: Cli) -> Result<()> {
             last_tick = Instant::now();
         }
 
-        after_input(&mut app, last_screen, &mut session_saved, &stats_file);
+        after_input(&mut app, last_screen, &mut session_saved);
         last_screen = app.screen;
 
         if app.should_quit {
@@ -390,8 +470,8 @@ fn run_app(terminal: &mut Tui, cli: Cli) -> Result<()> {
 
 /// If the user passed a mode flag (`--time`, `--words`, `--quote`, `--code`,
 /// `--zen`, `--symbols`, `--daily`, `--replay`, `--file`) skip the menu and start that
-/// mode. `stats_file` is where `--replay` finds its session.
-fn apply_cli_autostart(app: &mut App, cli: &Cli, stats_file: &Path) -> Result<()> {
+/// mode. `--replay` finds its session in `App::history`.
+fn apply_cli_autostart(app: &mut App, cli: &Cli) -> Result<()> {
     if let Some(seconds) = cli.time {
         app.start_game(Mode::Time(seconds))?;
     } else if let Some(word_count) = cli.words {
@@ -406,8 +486,10 @@ fn apply_cli_autostart(app: &mut App, cli: &Cli, stats_file: &Path) -> Result<()
         app.start_game(Mode::Symbols(count))?;
     } else if cli.daily {
         app.start_game(Mode::Daily)?;
+    } else if cli.missed {
+        app.start_game(Mode::Missed)?;
     } else if let Some(back) = cli.replay {
-        let history = storage::load_sessions_from_path(stats_file).unwrap_or_default();
+        let history = app.history().to_vec();
         let Some(record) = history.len().checked_sub(back).map(|i| &history[i]) else {
             anyhow::bail!(
                 "no session {back} back to replay: {} saved so far",
@@ -680,7 +762,9 @@ pub(crate) fn handle_typing_key(app: &mut App, code: KeyCode, mods: KeyModifiers
         KeyCode::F(2) => app.toggle_pause(),
         KeyCode::Char('p') if ctrl => app.toggle_pause(),
         KeyCode::Esc => app.end_early(),
-        KeyCode::F(5) => {
+        // Tab is never in the text (it is split on whitespace): a quick
+        // restart, like F5 and Ctrl+R.
+        KeyCode::F(5) | KeyCode::Tab => {
             if let Err(e) = app.restart() {
                 app.show_error(&e);
             }
@@ -730,8 +814,8 @@ fn is_altgr(typed_char: char, mods: KeyModifiers) -> bool {
 ///
 /// A fast typist is still typing when the run ends, so the next few keys
 /// land here. Only keys nobody presses while typing act — Enter or F5
-/// (or Ctrl+R, as while typing) restart, Esc goes to the menu, Tab to
-/// stats, F1 opens help, Ctrl+C quits —
+/// (or Ctrl+R, as while typing) restart, F6 repeats the same words, Esc
+/// goes to the menu, Tab to stats, F1 opens help, Ctrl+C quits —
 /// so those stray letters, spaces and `?` can't skip the results.
 fn handle_results_key(app: &mut App, code: KeyCode, mods: KeyModifiers) {
     let ctrl_r = code == KeyCode::Char('r') && mods.contains(KeyModifiers::CONTROL);
@@ -746,6 +830,8 @@ fn handle_results_key(app: &mut App, code: KeyCode, mods: KeyModifiers) {
                 app.show_error(&e);
             }
         }
+        // The same words again, as a replay of this run.
+        KeyCode::F(6) => app.repeat_run(),
         KeyCode::Esc => app.screen = Screen::Menu,
         KeyCode::Tab => app.screen = Screen::Stats,
         _ => {}
@@ -819,13 +905,13 @@ fn export_stats(app: &mut App) {
 }
 
 /// Bookkeeping after each round of input, driven by which screen we are on.
-/// `stats_file` is the history file (a temp file in tests).
-fn after_input(app: &mut App, last_screen: Screen, session_saved: &mut bool, stats_file: &Path) {
+/// The history is `App::stats_file` (a temp file in tests, or none).
+fn after_input(app: &mut App, last_screen: Screen, session_saved: &mut bool) {
     // Save each finished game exactly once. The flag is cleared only when a
     // new game starts, so leaving Results for the Help overlay (or an error
     // modal) and coming back can't save the same session again.
     if app.screen == Screen::Results && !*session_saved {
-        save_current_session(app, stats_file);
+        save_current_session(app);
         *session_saved = true;
     }
     if app.screen == Screen::Typing {
@@ -843,7 +929,7 @@ fn after_input(app: &mut App, last_screen: Screen, session_saved: &mut bool, sta
         Screen::Stats | Screen::Results | Screen::Profile
     ) && app.stats_cache.is_none()
     {
-        app.stats_cache = Some(storage::load_sessions_from_path(stats_file).unwrap_or_default());
+        app.history();
     }
     // Results comparisons and the Stats summary (streak, averages, key
     // heatmap) are computed once per visit instead of on every frame.
@@ -906,10 +992,11 @@ fn after_input(app: &mut App, last_screen: Screen, session_saved: &mut bool, sta
 ///   - the mode is Zen (no-stats philosophy)
 ///   - the session is shorter than 1 second
 ///   - the user hasn't typed a single character
+///   - it sat idle for the idle limit or longer (`App::too_idle`)
 ///
 /// File I/O errors are intentionally swallowed — losing a stat row is never a
 /// good reason to crash on the user.
-fn save_current_session(app: &mut App, stats_file: &Path) {
+fn save_current_session(app: &mut App) {
     // Assume not saved until the disk write succeeds; the Results screen
     // reads this to know whether the last history entry is this session.
     app.session_just_saved = false;
@@ -918,6 +1005,10 @@ fn save_current_session(app: &mut App, stats_file: &Path) {
     }
     let duration = app.elapsed().as_secs_f64();
     if duration < 1.0 || app.total_typed_chars == 0 {
+        return;
+    }
+    // A run left idle too long isn't a fair result (Results says why).
+    if app.too_idle().is_some() {
         return;
     }
     let record = SessionRecord {
@@ -943,8 +1034,13 @@ fn save_current_session(app: &mut App, stats_file: &Path) {
         consistency: app.consistency(),
         missed: app.missed,
         ended_early: app.ended_early,
+        mistyped: app.mistyped_words(),
     };
-    match storage::save_session_to_path(stats_file, &record) {
+    // Nowhere to save to (a test that didn't set one): not saved.
+    let Some(stats_file) = app.stats_file.clone() else {
+        return;
+    };
+    match storage::save_session_to_path(&stats_file, &record) {
         Ok(history) => {
             app.stats_cache = Some(history);
             app.session_just_saved = true;
@@ -959,6 +1055,7 @@ mod tests {
     use super::*;
     use crate::app::{Screen, Word};
     use crate::theme::{builtin, ThemePalette};
+    use std::path::Path;
 
     fn make_typing_app() -> App {
         let mut app = App::new(None, ThemePalette::default(), Mode::Time(15));
@@ -1121,7 +1218,7 @@ mod tests {
         let mut app = App::new(None, ThemePalette::default(), Mode::Time(15));
         app.stats_cache = Some(Vec::new());
         app.screen = Screen::Stats;
-        after_input(&mut app, Screen::Menu, &mut false, Path::new("unused"));
+        after_input(&mut app, Screen::Menu, &mut false);
         draw(&app);
         let next = target_cell(&app, ClickAction::Key(KeyCode::Right, KeyModifiers::NONE));
         click(&mut app, next);
@@ -1669,7 +1766,8 @@ mod tests {
         let mut app = make_typing_app(); // words-2
         let (mut saved, mut last) = (false, app.screen);
         let mut step = |app: &mut App| {
-            after_input(app, last, &mut saved, &stats_file);
+            app.stats_file = Some(stats_file.clone());
+            after_input(app, last, &mut saved);
             last = app.screen;
         };
         step(&mut app);
@@ -1704,6 +1802,27 @@ mod tests {
         assert_eq!(app.stats_view.as_ref().unwrap().category_name(), "all");
     }
 
+    /// Tab restarts while typing; F6 on Results (or its footer hint)
+    /// repeats the same words.
+    #[test]
+    fn tab_restarts_and_f6_repeats() {
+        let mut app = make_typing_app();
+        app.handle_char('h');
+        handle_key(&mut app, KeyCode::Tab, KeyModifiers::NONE);
+        assert_eq!((app.screen, app.total_typed_chars), (Screen::Typing, 0));
+
+        let mut app = make_typing_app();
+        for ch in "hello world".chars() {
+            app.handle_char(ch);
+        }
+        draw(&app);
+        let repeat = target_cell(&app, ClickAction::Key(KeyCode::F(6), KeyModifiers::NONE));
+        click(&mut app, repeat);
+        let words: Vec<_> = app.words.iter().map(|w| w.text.as_str()).collect();
+        assert_eq!(words, ["hello", "world"]);
+        assert_eq!(app.session_label(), "words-2+replay");
+    }
+
     // ── replay (v0.5.0) ──────────────────────────────────────────────────────
 
     fn saved(stats_file: &Path, mode: &str, text: &str, wpm: f64) {
@@ -1729,7 +1848,8 @@ mod tests {
         let mut app = App::new(None, ThemePalette::default(), Mode::Time(15));
         let (mut session_saved, mut last) = (false, app.screen);
         let mut step = |app: &mut App| {
-            after_input(app, last, &mut session_saved, &stats_file);
+            app.stats_file = Some(stats_file.clone());
+            after_input(app, last, &mut session_saved);
             last = app.screen;
         };
         handle_key(&mut app, KeyCode::Char('s'), KeyModifiers::NONE);
@@ -1776,7 +1896,7 @@ mod tests {
             ..SessionRecord::default()
         }]);
         app.screen = Screen::Stats;
-        after_input(&mut app, Screen::Menu, &mut false, Path::new("unused"));
+        after_input(&mut app, Screen::Menu, &mut false);
         handle_key(&mut app, KeyCode::Enter, KeyModifiers::NONE);
         assert_eq!(app.screen, Screen::Stats);
         assert!(app
@@ -1797,7 +1917,8 @@ mod tests {
         let start = |args: &[&str]| {
             let cli = Cli::try_parse_from(args).unwrap();
             let mut app = App::new(None, ThemePalette::default(), Mode::Time(15));
-            apply_cli_autostart(&mut app, &cli, &stats_file).map(|()| app.words[0].text.clone())
+            app.stats_file = Some(stats_file.clone());
+            apply_cli_autostart(&mut app, &cli).map(|()| app.words[0].text.clone())
         };
         assert_eq!(start(&["typerush", "--replay"]).unwrap(), "newest");
         assert_eq!(start(&["typerush", "--replay", "2"]).unwrap(), "older");
@@ -1806,12 +1927,62 @@ mod tests {
         assert!(Cli::try_parse_from(["typerush", "--replay", "0"]).is_err());
     }
 
+    /// A saved session keeps its missed words; `--missed` practises them.
+    #[test]
+    fn missed_words_are_saved_and_practised() {
+        let dir = tempfile::tempdir().unwrap();
+        let stats_file = dir.path().join("stats.json");
+        let mut app = make_typing_app(); // "hello world"
+        app.started_at = Some(std::time::Instant::now() - Duration::from_secs(3));
+        for ch in "hellp world".chars() {
+            app.handle_char(ch);
+        }
+        app.stats_file = Some(stats_file.clone());
+        after_input(&mut app, Screen::Typing, &mut false);
+        let saved = storage::load_sessions_from_path(&stats_file).unwrap();
+        assert_eq!(saved[0].mistyped, ["hello"]);
+
+        let cli = Cli::try_parse_from(["typerush", "--missed"]).unwrap();
+        let mut app = App::new(None, ThemePalette::default(), Mode::Time(15));
+        app.stats_file = Some(stats_file.clone());
+        app.stats_file = Some(stats_file.clone());
+        apply_cli_autostart(&mut app, &cli).unwrap();
+        assert_eq!(app.mode, Mode::Missed);
+        assert!(app.words.iter().all(|w| w.text == "hello"));
+    }
+
+    /// A run left idle past the limit isn't saved, and Results says why;
+    /// with the check off it is saved.
+    #[test]
+    fn idle_runs_are_not_saved() {
+        let dir = tempfile::tempdir().unwrap();
+        let stats_file = dir.path().join("stats.json");
+        for (limit, saved) in [(Some(10), false), (None, true)] {
+            let mut app = make_typing_app();
+            app.options.idle_limit = limit;
+            // Twelve seconds pass before the keys come.
+            app.started_at = Some(std::time::Instant::now() - Duration::from_secs(12));
+            for ch in "hello world".chars() {
+                app.handle_char(ch);
+            }
+            app.stats_file = Some(stats_file.clone());
+            after_input(&mut app, Screen::Typing, &mut false);
+            assert_eq!(app.session_just_saved, saved, "{limit:?}");
+            let title = screen(&app, 100, 24)[0].clone();
+            assert_eq!(
+                title.contains("not saved: 12 s without a key (the limit is 10 s)"),
+                !saved,
+                "{title}"
+            );
+        }
+    }
+
     /// `--daily` starts today's challenge straight away.
     #[test]
     fn daily_flag_starts_the_challenge() {
         let cli = Cli::try_parse_from(["typerush", "--daily"]).unwrap();
         let mut app = App::new(None, ThemePalette::default(), Mode::Time(15));
-        apply_cli_autostart(&mut app, &cli, Path::new("unused")).unwrap();
+        apply_cli_autostart(&mut app, &cli).unwrap();
         assert_eq!((app.screen, app.mode), (Screen::Typing, Mode::Daily));
     }
 
@@ -1830,7 +2001,7 @@ mod tests {
         app.started_at = Some(std::time::Instant::now() - Duration::from_secs(60));
         app.handle_char('x');
         app.finish_game();
-        after_input(&mut app, Screen::Typing, &mut true, Path::new("unused"));
+        after_input(&mut app, Screen::Typing, &mut true);
         assert_eq!(app.results_comparison.unwrap().previous_mode_best, None);
         let rows = screen(&app, 80, 24).join("\n");
         assert!(rows.contains("today best  — wpm"), "{rows}");
@@ -1848,7 +2019,7 @@ mod tests {
             ..SessionRecord::default()
         }]);
         app.screen = Screen::Stats;
-        after_input(&mut app, Screen::Menu, &mut false, Path::new("unused"));
+        after_input(&mut app, Screen::Menu, &mut false);
         draw(&app);
         let export = target_cell(
             &app,
@@ -1877,7 +2048,7 @@ mod tests {
         app.config_file = Some(config_file.clone());
         handle_key(&mut app, KeyCode::Char('c'), KeyModifiers::NONE);
         assert_eq!(app.screen, Screen::Settings);
-        after_input(&mut app, Screen::Menu, &mut false, Path::new("unused"));
+        after_input(&mut app, Screen::Menu, &mut false);
         (app, config_file)
     }
 
@@ -1892,7 +2063,7 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let (mut app, config_file) = settings_app(&dir);
         std::fs::write(&config_file, "# mine\n[colors]\nerror = \"#123456\"\n").unwrap();
-        after_input(&mut app, Screen::Menu, &mut false, Path::new("unused"));
+        after_input(&mut app, Screen::Menu, &mut false);
         press(&mut app, KeyCode::Right); // dark → light
         let text = std::fs::read_to_string(&config_file).unwrap();
         // A new top-level key goes above the first section; the comment
@@ -1930,6 +2101,7 @@ mod tests {
         press(&mut app, KeyCode::Left); // wraps to the last run: zen
         assert_eq!(app.settings.as_ref().unwrap().start, Mode::Zen);
         press(&mut app, KeyCode::Left); // → quote
+        press(&mut app, KeyCode::Left); // → missed
         press(&mut app, KeyCode::Left); // → daily
         assert_eq!(app.settings.as_ref().unwrap().start, Mode::Daily);
         let (resolved, warnings) = config::load::load_from(&config_file, CliOverrides::default());
@@ -1959,9 +2131,8 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let (mut app, config_file) = settings_app(&dir);
         press(&mut app, KeyCode::Right); // light theme, saved
-        press(&mut app, KeyCode::End);
-        for _ in 0..5 {
-            press(&mut app, KeyCode::Down);
+        for _ in settings::ROWS {
+            press(&mut app, KeyCode::Down); // to the last row: reset
         }
         press(&mut app, KeyCode::Enter);
         assert!(app.settings.as_ref().unwrap().confirm_reset);
@@ -2027,7 +2198,7 @@ mod tests {
         std::fs::write(&config_file, "theme = = 1").unwrap();
         press(&mut app, KeyCode::Esc);
         press(&mut app, KeyCode::Char('c'));
-        after_input(&mut app, Screen::Menu, &mut false, Path::new("unused"));
+        after_input(&mut app, Screen::Menu, &mut false);
         let rows = screen(&app, 80, 24).join("\n");
         assert!(rows.contains("could not parse"), "{rows}");
         press(&mut app, KeyCode::Right);
@@ -2041,6 +2212,129 @@ mod tests {
             "theme = = 1"
         );
         assert_eq!(app.theme, ThemePalette::default());
+    }
+
+    /// The typing switches on Settings — live wpm, blind — are saved to
+    /// `[typing]` and used at once.
+    #[test]
+    fn settings_typing_switches() {
+        let dir = tempfile::tempdir().unwrap();
+        let (mut app, config_file) = settings_app(&dir);
+        let row = |row| settings::ROWS.iter().position(|r| *r == row).unwrap();
+        app.settings_select(row(settings::Row::LiveWpm));
+        press(&mut app, KeyCode::Enter);
+        app.settings_select(row(settings::Row::Blind));
+        press(&mut app, KeyCode::Right);
+        assert!(!app.options.live_wpm && app.options.blind);
+        let (resolved, warnings) = config::load::load_from(&config_file, CliOverrides::default());
+        assert!(warnings.is_empty(), "{warnings:?}");
+        assert!(!resolved.typing.live_wpm && resolved.typing.blind);
+        let text = std::fs::read_to_string(&config_file).unwrap();
+        assert!(
+            text.contains("[typing]\nlive_wpm = false\nblind = true"),
+            "{text}"
+        );
+
+        app.settings_select(row(settings::Row::StopOnError));
+        press(&mut app, KeyCode::Right); // off → letter
+        press(&mut app, KeyCode::Right); // → word
+        assert_eq!(app.options.stop_on_error, options::StopOnError::Word);
+        press(&mut app, KeyCode::Right); // wraps → off
+        assert_eq!(app.options.stop_on_error, options::StopOnError::Off);
+        let text = std::fs::read_to_string(&config_file).unwrap();
+        assert!(text.contains("stop_on_error = \"off\""), "{text}");
+
+        app.settings_select(row(settings::Row::Cursor));
+        press(&mut app, KeyCode::Left); // underline → bar (wraps)
+        assert_eq!(app.options.cursor, options::CursorStyle::Bar);
+        app.settings_select(row(settings::Row::Sound));
+        press(&mut app, KeyCode::Enter); // off → errors
+        assert_eq!(app.options.sound, options::KeySound::Errors);
+        let (resolved, warnings) = config::load::load_from(&config_file, CliOverrides::default());
+        assert!(warnings.is_empty(), "{warnings:?}");
+        assert_eq!(resolved.typing.cursor, options::CursorStyle::Bar);
+        assert_eq!(resolved.typing.sound, options::KeySound::Errors);
+
+        app.settings_select(row(settings::Row::Pace));
+        press(&mut app, KeyCode::Right); // off → best
+        press(&mut app, KeyCode::Right); // → 30
+        assert_eq!(app.options.pace, options::Pace::Wpm(30));
+        let text = std::fs::read_to_string(&config_file).unwrap();
+        assert!(
+            text.contains("pace = 30\n"),
+            "a WPM is written as a number: {text}"
+        );
+        let (resolved, warnings) = config::load::load_from(&config_file, CliOverrides::default());
+        assert!(warnings.is_empty(), "{warnings:?}");
+        assert_eq!(resolved.typing.pace, options::Pace::Wpm(30));
+    }
+
+    /// `--pace` takes off, best or a WPM in range.
+    #[test]
+    fn pace_flag() {
+        let cli = Cli::try_parse_from(["typerush", "--pace", "75"]).unwrap();
+        assert_eq!(cli.overrides().pace, Some(options::Pace::Wpm(75)));
+        let cli = Cli::try_parse_from(["typerush", "--pace", "best"]).unwrap();
+        assert_eq!(cli.overrides().pace, Some(options::Pace::Best));
+        assert!(Cli::try_parse_from(["typerush", "--pace", "999"]).is_err());
+    }
+
+    /// `--stop-on-error` takes off / letter / word, nothing else.
+    #[test]
+    fn stop_on_error_flag() {
+        let cli = Cli::try_parse_from(["typerush", "--stop-on-error", "letter"]).unwrap();
+        assert_eq!(
+            cli.overrides().stop_on_error,
+            Some(options::StopOnError::Letter)
+        );
+        assert!(Cli::try_parse_from(["typerush", "--stop-on-error", "always"]).is_err());
+    }
+
+    /// On a terminal too short for every setting, the list scrolls to keep
+    /// the selected row in view — reset included, still clickable — and
+    /// the border says there's more; at 80×24 everything fits.
+    #[test]
+    fn settings_scroll_on_a_short_terminal() {
+        let dir = tempfile::tempdir().unwrap();
+        let (mut app, _) = settings_app(&dir);
+        assert!(!screen(&app, 80, 24).join("\n").contains("more"));
+        let reset = settings::ROWS.len() - 1;
+        app.settings_select(reset);
+        let rows = screen(&app, 80, 14);
+        let dump = rows.join("\n");
+        assert!(dump.contains("reset to defaults"), "{dump}");
+        assert!(dump.contains("▲ more"), "{dump}");
+        let mut terminal = Terminal::new(ratatui::backend::TestBackend::new(80, 14)).unwrap();
+        terminal.draw(|f| ui::render(f, &app)).unwrap();
+        target_cell(&app, ClickAction::Setting(reset, KeyCode::Enter)); // clickable
+        app.settings_select(0);
+        let dump = screen(&app, 80, 14).join("\n");
+        assert!(
+            dump.contains("▼ more") && !dump.contains("▲ more"),
+            "{dump}"
+        );
+    }
+
+    /// Review fix: the typing rows show the values in use — `--blind` shows
+    /// as "blind on" though the file doesn't say so — and change from them.
+    #[test]
+    fn settings_typing_rows_follow_the_flags_in_use() {
+        let dir = tempfile::tempdir().unwrap();
+        let (mut app, config_file) = settings_app(&dir);
+        app.options.blind = true; // as --blind sets it
+        app.options.pace = options::Pace::Wpm(80); // as --pace 80
+        let dump = screen(&app, 80, 24).join("\n");
+        assert!(dump.contains("blind       ‹ on ›"), "{dump}");
+        assert!(dump.contains("pace        ‹ 80 ›"), "{dump}");
+        let row = |row| settings::ROWS.iter().position(|r| *r == row).unwrap();
+        app.settings_select(row(settings::Row::Blind));
+        press(&mut app, KeyCode::Enter);
+        assert!(!app.options.blind, "toggled from what was in use");
+        let text = std::fs::read_to_string(&config_file).unwrap();
+        assert!(text.contains("blind = false"), "{text}");
+        app.settings_select(row(settings::Row::Pace));
+        press(&mut app, KeyCode::Right);
+        assert_eq!(app.options.pace, options::Pace::Wpm(90));
     }
 
     /// The menu's settings option opens the screen too.
@@ -2067,7 +2361,8 @@ mod tests {
             app.handle_char(ch);
         }
         handle_key(&mut app, KeyCode::Esc, KeyModifiers::NONE);
-        after_input(&mut app, Screen::Typing, &mut false, &stats_file);
+        app.stats_file = Some(stats_file.clone());
+        after_input(&mut app, Screen::Typing, &mut false);
         let saved = storage::load_sessions_from_path(&stats_file).unwrap();
         let record = &saved[0];
         assert!(record.ended_early);
@@ -2102,7 +2397,7 @@ mod tests {
             },
         ]);
         app.screen = Screen::Stats;
-        after_input(&mut app, Screen::Menu, &mut false, Path::new("unused"));
+        after_input(&mut app, Screen::Menu, &mut false);
         let filters = |app: &App| app.stats_view.as_ref().unwrap().filters;
         handle_key(&mut app, KeyCode::Char('d'), KeyModifiers::NONE);
         assert_eq!(filters(&app).range, storage::DateRange::Today);
@@ -2124,9 +2419,9 @@ mod tests {
         );
 
         handle_key(&mut app, KeyCode::Esc, KeyModifiers::NONE);
-        after_input(&mut app, Screen::Stats, &mut false, Path::new("unused"));
+        after_input(&mut app, Screen::Stats, &mut false);
         handle_key(&mut app, KeyCode::Char('s'), KeyModifiers::NONE);
-        after_input(&mut app, Screen::Menu, &mut false, Path::new("unused"));
+        after_input(&mut app, Screen::Menu, &mut false);
         assert_eq!(filters(&app).words, storage::WordsFilter::Plain, "kept");
 
         handle_key(&mut app, KeyCode::Char('d'), KeyModifiers::NONE); // 7 days
@@ -2154,7 +2449,8 @@ mod tests {
         for ch in "hello world".chars() {
             app.handle_char(ch);
         }
-        after_input(&mut app, Screen::Typing, &mut false, &stats_file);
+        app.stats_file = Some(stats_file.clone());
+        after_input(&mut app, Screen::Typing, &mut false);
         let title = screen(&app, 80, 24)[0].clone();
         assert!(title.contains("+6 xp  ·  ★ level 2!"), "{title}");
 
@@ -2164,7 +2460,8 @@ mod tests {
         for ch in "hello world".chars() {
             app.handle_char(ch);
         }
-        after_input(&mut app, Screen::Typing, &mut false, &stats_file);
+        app.stats_file = Some(stats_file.clone());
+        after_input(&mut app, Screen::Typing, &mut false);
         let title = screen(&app, 80, 24)[0].clone();
         assert!(title.contains("+4 xp  ·  level 2  ·  1%"), "{title}");
     }
@@ -2183,7 +2480,8 @@ mod tests {
         let mut app = App::new(None, ThemePalette::default(), Mode::Time(15));
         handle_key(&mut app, KeyCode::Char('u'), KeyModifiers::NONE);
         assert_eq!(app.screen, Screen::Profile);
-        after_input(&mut app, Screen::Menu, &mut false, &stats_file);
+        app.stats_file = Some(stats_file.clone());
+        after_input(&mut app, Screen::Menu, &mut false);
         let profile = app.profile.as_ref().unwrap();
         assert_eq!((profile.sessions, profile.started), (3, 3));
         let rows = screen(&app, 80, 24);
@@ -2228,7 +2526,8 @@ mod tests {
         }
         let mut app = App::new(None, ThemePalette::default(), Mode::Time(15));
         handle_key(&mut app, KeyCode::Char('u'), KeyModifiers::NONE);
-        after_input(&mut app, Screen::Menu, &mut false, &stats_file);
+        app.stats_file = Some(stats_file.clone());
+        after_input(&mut app, Screen::Menu, &mut false);
         let dump = screen(&app, 80, 24).join("\n");
         assert!(dump.contains("activity · 2 days typed"), "{dump}");
         assert!(dump.contains("1 run · 2m · best 50.0"), "{dump}");
@@ -2270,7 +2569,8 @@ mod tests {
         let mut saved = false;
         let mut last = app.screen;
         let mut step = |app: &mut App| {
-            after_input(app, last, &mut saved, &stats_file);
+            app.stats_file = Some(stats_file.clone());
+            after_input(app, last, &mut saved);
             last = app.screen;
         };
         step(&mut app);

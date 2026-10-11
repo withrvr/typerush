@@ -50,14 +50,14 @@ pub fn render(f: &mut Frame, app: &App, area: Rect) -> &'static [super::Hint] {
         Some((KeyCode::Char('c'), KeyModifiers::CONTROL)),
     );
     const RUNNING: &[super::Hint] = &[
-        ("Ctrl+R / F5 restart", super::key(KeyCode::F(5))),
+        ("Tab / F5 restart", super::key(KeyCode::F(5))),
         ("Ctrl+P / F2 pause", super::key(KeyCode::F(2))),
         ("Esc finish", super::key(KeyCode::Esc)),
         QUIT,
     ];
     const PAUSED: &[super::Hint] = &[
         ("Ctrl+P / F2 resume", super::key(KeyCode::F(2))),
-        ("Ctrl+R / F5 restart", super::key(KeyCode::F(5))),
+        ("Tab / F5 restart", super::key(KeyCode::F(5))),
         ("Esc finish", super::key(KeyCode::Esc)),
         QUIT,
     ];
@@ -135,21 +135,28 @@ fn render_header(f: &mut Frame, app: &App, area: Rect) {
             ),
         ])
     } else {
-        Line::from(vec![
-            Span::styled("  wpm ", Style::default().fg(theme.pending)),
-            Span::styled(
-                format!("{:>3.0}", app.wpm()),
-                Style::default()
-                    .fg(theme.secondary)
-                    .add_modifier(Modifier::BOLD),
-            ),
-            Span::raw("   "),
-            Span::styled("acc ", Style::default().fg(theme.pending)),
-            Span::styled(
-                format!("{:>5.1}%", app.accuracy()),
-                Style::default().fg(theme.correct),
-            ),
-            Span::raw("   "),
+        let mut spans = vec![Span::raw("  ")];
+        // Live numbers only when wanted (typing.live_wpm) and not blind:
+        // blind mode keeps every number for the end.
+        if app.options.show_live_numbers() {
+            spans.extend([
+                Span::styled("wpm ", Style::default().fg(theme.pending)),
+                Span::styled(
+                    format!("{:>3.0}", app.wpm()),
+                    Style::default()
+                        .fg(theme.secondary)
+                        .add_modifier(Modifier::BOLD),
+                ),
+                Span::raw("   "),
+                Span::styled("acc ", Style::default().fg(theme.pending)),
+                Span::styled(
+                    format!("{:>5.1}%", app.accuracy()),
+                    Style::default().fg(theme.correct),
+                ),
+                Span::raw("   "),
+            ]);
+        }
+        spans.extend([
             Span::styled("time ", Style::default().fg(theme.pending)),
             Span::styled(timer_text, Style::default().fg(theme.accent)),
             Span::raw("   "),
@@ -159,7 +166,8 @@ fn render_header(f: &mut Frame, app: &App, area: Rect) {
                 format!("[{}]", crate::text::shorten(&app.session_label(), 32)),
                 Style::default().fg(theme.mode_tag),
             ),
-        ])
+        ]);
+        Line::from(spans)
     };
 
     f.render_widget(Paragraph::new(header), area);
@@ -245,6 +253,12 @@ fn render_words(f: &mut Frame, app: &App, area: Rect) {
     //    character, ~0.2 ms a frame at 10,000 words); cache per word list if a run
     //    ever gets long enough to show up in a profile.
     let mut word_starts = Vec::with_capacity(app.words.len());
+    // Where each word starts in the text read as one stream (each space
+    // between words one character): what the pace cursor counts in. Only
+    // kept when there is a pace cursor.
+    let pace = app.pace_position();
+    let mut word_offsets = Vec::new();
+    let mut offset = 0;
     let mut cursor_line = 0;
     let mut at = (0, 0);
     for (word_index, word) in app.words.iter().enumerate() {
@@ -258,6 +272,10 @@ fn render_words(f: &mut Frame, app: &App, area: Rect) {
             + usize::from(has_space(word_index));
         at = place(at, width.min(max_width));
         word_starts.push(at);
+        if pace.is_some() {
+            word_offsets.push(offset);
+            offset += word.text.chars().count() + 1;
+        }
         let is_active = word_index == app.current_word;
         if at.1 + width <= max_width && !is_active {
             at.1 += width;
@@ -296,9 +314,42 @@ fn render_words(f: &mut Frame, app: &App, area: Rect) {
     //    word that begins before the first visible line: a long word can
     //    run onto it.
     let is_zen_mode = matches!(app.mode, Mode::Zen);
-    let cursor_style = Style::default()
-        .fg(app.theme.accent)
-        .add_modifier(Modifier::UNDERLINED);
+    let blind = app.options.blind;
+    // A key refused by stop-on-error turns the cursor the mistake color
+    // until the right key (or a backspace) comes.
+    let cursor_color = if app.rejected_key && !blind {
+        app.theme.incorrect
+    } else {
+        app.theme.accent
+    };
+    // Underline and block style the character; the bar is the terminal's
+    // own cursor, placed on it below (the character keeps its usual style,
+    // or the mistake color after a refused key).
+    let bar = app.options.cursor == crate::options::CursorStyle::Bar;
+    let cursor_style = match app.options.cursor {
+        crate::options::CursorStyle::Underline => Style::default()
+            .fg(cursor_color)
+            .add_modifier(Modifier::UNDERLINED),
+        crate::options::CursorStyle::Block => super::selected_style(&app.theme).bg(cursor_color),
+        crate::options::CursorStyle::Bar => Style::default().fg(if app.rejected_key && !blind {
+            app.theme.incorrect
+        } else {
+            app.theme.pending
+        }),
+    };
+    let mut bar_at: Option<(usize, usize)> = None;
+    // The pace cursor: the character it has reached, underlined in the
+    // secondary color — never over the real cursor, which wins.
+    let ghost = |word_index: usize, char_index: usize, on_cursor: bool, style: Style| {
+        let index = word_offsets.get(word_index).map(|start| start + char_index);
+        if pace.is_some() && pace == index && !on_cursor {
+            style
+                .fg(app.theme.secondary)
+                .add_modifier(Modifier::UNDERLINED)
+        } else {
+            style
+        }
+    };
     let mut lines: Vec<Vec<Span>> = vec![Vec::new(); end_line - first_line];
     let first_word = word_starts
         .partition_point(|&(line, _)| line < first_line)
@@ -316,41 +367,60 @@ fn render_words(f: &mut Frame, app: &App, area: Rect) {
         // the character it sits on. The space between words is a character
         // like any other: the cursor lands on it once the word is typed.
         let space = has_space(word_index).then(|| {
-            let style = if word.space_missed {
+            // Blind: a wrong space isn't shown either.
+            let style = if word.space_missed && !blind {
                 // A colored blank is invisible — underline so the wrong space shows.
-                style_for_char(CharState::Incorrect, is_zen_mode, &app.theme)
+                style_for_char(CharState::Incorrect, is_zen_mode, blind, &app.theme)
                     .add_modifier(Modifier::UNDERLINED)
             } else if is_active_word && typed_char_count >= char_states.len() {
                 cursor_style
             } else {
                 Style::default()
             };
-            (' ', style)
+            let on_cursor = is_active_word && typed_char_count >= char_states.len();
+            let style = ghost(word_index, char_states.len(), on_cursor, style);
+            (' ', style, on_cursor)
         });
         let styled = char_states
             .iter()
             .enumerate()
             .map(|(char_index, (ch, state))| {
-                let style = if is_active_word && char_index == typed_char_count {
+                let on_cursor = is_active_word && char_index == typed_char_count;
+                // The bar leaves the character's style alone, unless a key
+                // was just refused.
+                let style = if on_cursor && (!bar || app.rejected_key) {
                     cursor_style
                 } else {
-                    style_for_char(*state, is_zen_mode, &app.theme)
+                    style_for_char(*state, is_zen_mode, blind, &app.theme)
                 };
-                (*ch, style)
+                let style = ghost(word_index, char_index, on_cursor, style);
+                (*ch, style, on_cursor)
             });
-        for (ch, style) in styled.chain(space) {
+        for (ch, style, on_cursor) in styled.chain(space) {
             let cells = ch.width().unwrap_or(0);
             at = place(at, cells);
             if (first_line..end_line).contains(&at.0) {
                 lines[at.0 - first_line].push(Span::styled(ch.to_string(), style));
+                if on_cursor {
+                    bar_at = Some((at.0 - first_line, at.1));
+                }
             }
             at.1 += cells;
         }
     }
 
-    let words_paragraph = Paragraph::new(lines.into_iter().map(Line::from).collect::<Vec<_>>())
-        .block(words_block(app));
+    let block = words_block(app);
+    let inner = block.inner(area);
+    let words_paragraph =
+        Paragraph::new(lines.into_iter().map(Line::from).collect::<Vec<_>>()).block(block);
     f.render_widget(words_paragraph, area);
+    // The bar: the terminal's cursor, on the character to type next.
+    if let (true, Some((line, column))) = (bar, bar_at) {
+        let position = Position::new(inner.x + column as u16, inner.y + line as u16);
+        if inner.contains(position) {
+            f.set_cursor_position(position);
+        }
+    }
 }
 
 /// Picks a foreground color/modifier for one character based on whether it
@@ -359,7 +429,13 @@ fn render_words(f: &mut Frame, app: &App, area: Rect) {
 /// Zen mode intentionally desaturates everything to the theme's muted shades
 /// (with correct chars in `neutral`) so the screen stays calm and the user
 /// isn't distracted by score-shaped feedback.
-fn style_for_char(state: CharState, is_zen_mode: bool, theme: &ThemePalette) -> Style {
+///
+/// Blind mode shows typed text in one neutral color, right or wrong: you
+/// see where you are, not how you're doing.
+fn style_for_char(state: CharState, is_zen_mode: bool, blind: bool, theme: &ThemePalette) -> Style {
+    if blind && state != CharState::Pending {
+        return Style::default().fg(theme.neutral);
+    }
     if is_zen_mode {
         return match state {
             CharState::Correct => Style::default().fg(theme.neutral),
@@ -384,6 +460,7 @@ mod tests {
     use crate::app::Word;
     use crate::theme::builtin;
     use ratatui::{backend::TestBackend, Terminal};
+    use std::time::{Duration, Instant};
 
     /// The cell the cursor is drawn on (accent + underline), if on screen.
     fn cursor_cell(app: &App, width: u16, height: u16) -> Option<(u16, u16)> {
@@ -472,6 +549,134 @@ mod tests {
         );
         let footer = paused.lines().last().unwrap();
         assert!(footer.starts_with("  Ctrl+P / F2 resume"), "{footer}");
+    }
+
+    /// With the live WPM hidden the header keeps only the clock and mode;
+    /// blind mode hides them too and shows typed text in one neutral color,
+    /// right or wrong (a wrong space included) — nothing in the wrong color.
+    #[test]
+    fn hidden_numbers_and_blind_mode() {
+        let mut app = App::new(None, builtin::MONOKAI, Mode::Time(15));
+        app.start_game(Mode::Words(3)).unwrap();
+        app.words = vec![Word::new("abc".into()), Word::new("def".into())];
+        for ch in "axcx".chars() {
+            app.handle_char(ch);
+        }
+        let draw = |app: &App| {
+            let mut terminal = Terminal::new(TestBackend::new(80, 24)).unwrap();
+            terminal.draw(|f| crate::ui::render(f, app)).unwrap();
+            terminal.backend().buffer().clone()
+        };
+        let header = |buffer: &ratatui::buffer::Buffer| -> String {
+            (0..80).map(|x| buffer[(x, 0)].symbol()).collect()
+        };
+        assert!(header(&draw(&app)).starts_with("  wpm"));
+        app.options.live_wpm = false;
+        let shown = header(&draw(&app));
+        assert!(
+            shown.starts_with("  time") && !shown.contains("acc"),
+            "{shown}"
+        );
+
+        app.options = crate::options::TypingOptions {
+            blind: true,
+            ..Default::default()
+        };
+        let buffer = draw(&app);
+        assert!(
+            header(&buffer).starts_with("  time"),
+            "no numbers when blind"
+        );
+        let wrong = buffer.content().iter().any(|cell| {
+            cell.fg == builtin::MONOKAI.incorrect || cell.fg == builtin::MONOKAI.correct
+        });
+        assert!(!wrong, "a right/wrong color while blind");
+    }
+
+    /// Underline and block style the character to type next; the bar puts
+    /// the terminal's own cursor on it, leaving its style alone — until a
+    /// key is refused, when it takes the mistake color.
+    #[test]
+    fn cursor_styles() {
+        use crate::options::CursorStyle;
+        let mut app = App::new(None, builtin::MONOKAI, Mode::Time(15));
+        app.start_game(Mode::Words(2)).unwrap();
+        app.words = vec![Word::new("abc".into()), Word::new("de".into())];
+        app.handle_char('a');
+        let theme = builtin::MONOKAI;
+        let mut terminal = Terminal::new(TestBackend::new(80, 24)).unwrap();
+        let mut cell_of_b = |app: &App| {
+            terminal.draw(|f| crate::ui::render(f, app)).unwrap();
+            let buffer = terminal.backend().buffer().clone();
+            let at = (0..24)
+                .flat_map(|y| (0..80).map(move |x| (x, y)))
+                .find(|&(x, y)| buffer[(x, y)].symbol() == "b")
+                .unwrap();
+            (
+                buffer[at].clone(),
+                at,
+                terminal.get_cursor_position().unwrap(),
+            )
+        };
+
+        let (cell, ..) = cell_of_b(&app);
+        assert!(cell.modifier.contains(Modifier::UNDERLINED) && cell.fg == theme.accent);
+
+        app.options.cursor = CursorStyle::Block;
+        let (cell, ..) = cell_of_b(&app);
+        assert_eq!(cell.bg, theme.accent);
+
+        app.options.cursor = CursorStyle::Bar;
+        let (cell, at, cursor) = cell_of_b(&app);
+        assert_eq!((cursor.x, cursor.y), at, "the terminal cursor sits on it");
+        assert_eq!(cell.fg, theme.pending);
+        assert!(!cell.modifier.contains(Modifier::UNDERLINED));
+        app.rejected_key = true;
+        let (cell, ..) = cell_of_b(&app);
+        assert_eq!(cell.fg, theme.incorrect);
+    }
+
+    /// The pace cursor underlines the character it has reached in the
+    /// secondary color, counting the spaces between words; the real cursor
+    /// wins where they meet.
+    #[test]
+    fn pace_cursor_is_drawn_where_it_has_reached() {
+        let mut app = App::new(None, builtin::MONOKAI, Mode::Time(15));
+        app.start_game(Mode::Words(3)).unwrap();
+        app.words = vec![
+            Word::new("ab".into()),
+            Word::new("cd".into()),
+            Word::new("ef".into()),
+        ];
+        let end = Instant::now();
+        app.ended_at = Some(end);
+        app.started_at = Some(end - Duration::from_secs(6));
+        app.pace_wpm = Some(6.0); // 6 wpm × 6 s = 3 characters: "ab c"
+        let mut terminal = Terminal::new(TestBackend::new(80, 24)).unwrap();
+        terminal.draw(|f| crate::ui::render(f, &app)).unwrap();
+        let buffer = terminal.backend().buffer();
+        let ghosts: Vec<&str> = buffer
+            .content()
+            .iter()
+            .filter(|c| {
+                c.fg == builtin::MONOKAI.secondary && c.modifier.contains(Modifier::UNDERLINED)
+            })
+            .map(|c| c.symbol())
+            .collect();
+        assert_eq!(ghosts, ["c"]);
+
+        app.pace_wpm = Some(0.0); // at the start, under the real cursor
+        terminal.draw(|f| crate::ui::render(f, &app)).unwrap();
+        let ghosts = terminal
+            .backend()
+            .buffer()
+            .content()
+            .iter()
+            .filter(|c| {
+                c.fg == builtin::MONOKAI.secondary && c.modifier.contains(Modifier::UNDERLINED)
+            })
+            .count();
+        assert_eq!(ghosts, 0);
     }
 
     /// An emoji with a skin-tone modifier is two characters drawn two cells

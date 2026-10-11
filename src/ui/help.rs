@@ -11,8 +11,8 @@ use ratatui::crossterm::event::KeyCode;
 
 use crate::{app::App, theme::ThemePalette};
 
-/// Render the keybindings overlay. Sized to its content (23 rows, so it fits
-/// an 80×24 window whole). On a smaller terminal the box shrinks and the
+/// Render the keybindings overlay. Sized to its content and a blank line of
+/// padding above and below (23 rows, so it fits an 80×24 window whole). On a smaller terminal the box shrinks and the
 /// bottom of the list is cut, but the close hint lives in the bottom border
 /// and is always visible.
 /// Returns the footer hints.
@@ -32,33 +32,34 @@ pub fn render(f: &mut Frame, app: &App, screen: Rect) -> &'static [super::Hint] 
         heading("  TypeRush — keybindings"),
         Line::from("  ↑/↓ ←/→  hjkl    move: menu, lists, calendar"),
         Line::from("  Enter  Space     start, choose, change"),
-        Line::from("  Ctrl+R  F5       restart (results: Enter too)"),
+        Line::from("  Tab  F5  Ctrl+R  restart (results: Enter)"),
+        Line::from("  F6               results: the same words again"),
         Line::from("  Ctrl+P  F2       pause / resume a run"),
         Line::from("  Esc              finish a run / back"),
         Line::from("  Ctrl+Bksp Ctrl+W delete word"),
-        Line::from("  p  n  b          menu: punctuation, numbers,"),
-        Line::from("                   10k words (time & words runs)"),
+        Line::from("  p  n  b          menu: punctuation/numbers/10k"),
         Line::from("  Tab  s           stats (only Tab on results)"),
         Line::from("  c  u             menu: settings, profile"),
         Line::from("  Enter  e         stats: replay, export CSV"),
         Line::from("  a d w s r        stats: all/dates/words/sort"),
         Line::from("  ?  F1            help (only F1 on results)"),
         Line::from("  Ctrl+C           quit"),
-        Line::from("  Mouse            click options, rows, hints;"),
-        Line::from("                   the wheel scrolls lists"),
-        Line::raw(""),
+        Line::from("  Mouse            click anything; wheel scrolls"),
         dim("  Stats   ~/.typerush/stats.json (not zen)"),
         dim("  Config  ~/.typerush/config.toml"),
         dim("  Snippets ~/.typerush/snippets/*.txt"),
     ];
 
-    const WIDTH: u16 = 50;
+    // The longest line is 48 cells: two more keep it off the right border,
+    // as the two in front keep it off the left.
+    const WIDTH: u16 = 52;
     // Narrower than the box, lines wrap and need more rows: take the full
     // height instead of guessing how many.
+    // The lines, a blank line of padding above and below, the borders.
     let height = if screen.width < WIDTH {
         screen.height
     } else {
-        lines.len() as u16 + 2
+        lines.len() as u16 + 4
     };
     let area = screen.centered(Constraint::Length(WIDTH), Constraint::Length(height));
     super::clear(f, theme, area);
@@ -74,6 +75,7 @@ pub fn render(f: &mut Frame, app: &App, screen: Rect) -> &'static [super::Hint] 
         .block(
             Block::default()
                 .borders(Borders::ALL)
+                .padding(Padding::vertical(1))
                 .border_style(Style::default().fg(theme.accent))
                 .title(" help ")
                 .title_bottom(Span::styled(

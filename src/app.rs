@@ -21,6 +21,7 @@ use std::time::{Duration, Instant};
 use ratatui::crossterm::event::{KeyCode, KeyModifiers};
 use ratatui::layout::Rect;
 
+use crate::options::{KeySound, StopOnError};
 use crate::state::{self, AppState};
 use crate::storage::{ResultsComparison, SessionRecord, StatsView};
 use crate::theme::ThemePalette;
@@ -69,6 +70,8 @@ pub enum Mode {
     Symbols(usize),
     /// The daily challenge: the same words for everyone on a given day.
     Daily,
+    /// A run built from the words you got wrong lately.
+    Missed,
 }
 
 impl Mode {
@@ -89,6 +92,7 @@ impl Mode {
             Mode::Custom => "custom".to_string(),
             Mode::Symbols(count) => format!("symbols-{}", count),
             Mode::Daily => "daily".to_string(),
+            Mode::Missed => "missed".to_string(),
         }
     }
 
@@ -119,6 +123,7 @@ impl Mode {
             "quote" => Some(Mode::Quote),
             "zen" => Some(Mode::Zen),
             "daily" => Some(Mode::Daily),
+            "missed" => Some(Mode::Missed),
             _ if base == "custom" || base.starts_with("custom-") => Some(Mode::Custom),
             _ => None,
         }
@@ -206,6 +211,9 @@ pub struct Word {
     /// True when a non-space key was typed where the trailing space belongs —
     /// the space is rendered as an error until backspaced.
     pub space_missed: bool,
+    /// A wrong key was pressed somewhere in this word (or on its space),
+    /// even if it was fixed: the word goes to the missed-words practice.
+    pub had_error: bool,
 }
 
 impl Word {
@@ -214,6 +222,7 @@ impl Word {
             text,
             typed: String::new(),
             space_missed: false,
+            had_error: false,
         }
     }
 }
@@ -295,6 +304,15 @@ pub fn best_menu_match(menu: &[MenuItem], default_mode: Mode) -> usize {
         .unwrap_or(0)
 }
 
+/// Most mistyped words saved with one session.
+pub const MAX_MISTYPED: usize = 200;
+/// How many recent sessions the missed-words practice looks through.
+const MISSED_SESSIONS: usize = 100;
+/// Most different words in a missed-words practice run.
+const MISSED_DISTINCT: usize = 50;
+/// Fewest words in a missed-words practice run.
+const MISSED_RUN: usize = 25;
+
 /// The menu with no custom sources — what tests and a fresh `App` start from.
 #[cfg(test)]
 pub fn default_menu() -> Vec<MenuItem> {
@@ -367,6 +385,7 @@ pub fn build_menu(snippets: &[Snippet], last_custom_file: Option<&Path>) -> Vec<
     }
     // The rows with a choice of options come first, then the single runs.
     menu.push(start("daily", "daily", Mode::Daily));
+    menu.push(start("missed", "missed", Mode::Missed));
     menu.push(start("quote", "quote", Mode::Quote));
     menu.push(start("zen", "zen", Mode::Zen));
 
@@ -558,6 +577,8 @@ pub struct App {
     pub notice: Option<String>,
     /// Active color palette — read by every UI module on every frame.
     pub theme: ThemePalette,
+    /// How a run behaves and looks (the `[typing]` settings, v0.7.0).
+    pub options: crate::options::TypingOptions,
 
     // --- per-key accuracy (v0.3.0) ---
     /// Per expected character: how many times it was typed correctly.
@@ -572,6 +593,14 @@ pub struct App {
     pub timeline: Vec<Second>,
     /// The run was ended with Esc, not by its clock or its last character.
     pub ended_early: bool,
+    /// The last key was refused (stop on error): the cursor shows it.
+    pub rejected_key: bool,
+    /// The WPM the pace cursor moves at in this run (worked out when the
+    /// run begins), `None` without one.
+    pub pace_wpm: Option<f64>,
+    /// The key just typed should ring the terminal bell (`typing.sound`);
+    /// the main loop rings it and clears this.
+    pub bell: bool,
     /// Characters of the text left untyped when the run ended
     /// ([`App::missed_chars`]), worked out once then — Results shows it on
     /// every frame, and a big custom file has a lot of text left.
@@ -582,6 +611,10 @@ pub struct App {
     /// Results screen needs it and replaced by the updated list on every
     /// save. `None` until first needed (or after a failed save).
     pub stats_cache: Option<Vec<SessionRecord>>,
+    /// Where the history is read from when something needs it before the
+    /// Stats or Results screen has (`~/.typerush/stats.json`; `None` in
+    /// tests: then only `stats_cache` is used).
+    pub stats_file: Option<PathBuf>,
     /// What the Stats screen shows (category, its summary, every mode's
     /// best), built from `stats_cache` when that screen is entered and when
     /// the category changes. `None` until the first Stats visit.
@@ -686,12 +719,17 @@ impl App {
             error_message: None,
             notice: None,
             theme: palette,
+            options: Default::default(),
             key_hits: HashMap::new(),
             key_misses: HashMap::new(),
             timeline: Vec::new(),
             ended_early: false,
+            rejected_key: false,
+            pace_wpm: None,
+            bell: false,
             missed: 0,
             stats_cache: None,
+            stats_file: None,
             stats_view: None,
             results_comparison: None,
             session_just_saved: false,
@@ -1035,6 +1073,34 @@ impl App {
         Some((100.0 * (1.0 - variance.sqrt() / mean)).clamp(0.0, 100.0))
     }
 
+    /// The longest stretch of whole seconds without a key in this run
+    /// (paused time left out, like everywhere): the idle check.
+    pub fn longest_idle(&self) -> u64 {
+        let seconds = self.elapsed().as_secs() as usize;
+        let (mut longest, mut run) = (0u64, 0u64);
+        for i in 0..seconds {
+            if self.timeline.get(i).is_none_or(|second| second.typed == 0) {
+                run += 1;
+                longest = longest.max(run);
+            } else {
+                run = 0;
+            }
+        }
+        longest
+    }
+
+    /// `Some(idle seconds)` when the run sat idle for at least the limit
+    /// (`typing.idle_limit`): it isn't saved, and Results says why.
+    pub fn too_idle(&self) -> Option<u64> {
+        // Zen is never saved, so being idle can't be why it wasn't.
+        if self.mode == Mode::Zen {
+            return None;
+        }
+        let limit = self.options.idle_limit?;
+        let idle = self.longest_idle();
+        (idle >= limit).then_some(idle)
+    }
+
     /// Characters of the text never typed: what was left of a fixed text
     /// (words, quote, code, symbols, custom, daily) when the run ended
     /// early. Endless runs (time, zen) miss nothing — there is always more.
@@ -1088,7 +1154,9 @@ impl App {
             Mode::Words(target) | Mode::Symbols(target) => {
                 Some((self.current_word.min(target), target))
             }
-            Mode::Daily => Some((self.current_word.min(self.words.len()), self.words.len())),
+            Mode::Daily | Mode::Missed => {
+                Some((self.current_word.min(self.words.len()), self.words.len()))
+            }
             _ => None,
         }
     }
@@ -1112,6 +1180,7 @@ impl App {
             Mode::Code(lang) => words::random_code_snippet(lang),
             Mode::Symbols(count) => words::symbols::random_symbol_tokens(count),
             Mode::Daily => words::daily_words(chrono::Local::now().date_naive()),
+            Mode::Missed => self.missed_words_run()?,
             Mode::Custom => {
                 let Some(path) = &self.custom_file else {
                     return Err(anyhow::anyhow!(
@@ -1147,6 +1216,27 @@ impl App {
         Ok(())
     }
 
+    /// Type the run just finished again, the same words (`F6` on Results):
+    /// a replay of it — saved as `+replay`, since the words are now seen,
+    /// and compared with it on Results. A replay is simply replayed again.
+    pub fn repeat_run(&mut self) {
+        if self.replay.is_none() {
+            // Not a replay yet, so the label has no +replay to take off; the
+            // words straight from the run, however long (the saved text is
+            // empty past 64 KiB).
+            self.replay = Some(Replay {
+                label: self.session_label(),
+                mode: self.mode,
+                words: self.run_words().iter().map(|w| w.text.clone()).collect(),
+                pool: self.word_pool,
+                decor: self.word_decor,
+                wpm: self.wpm(),
+                timestamp: chrono::Local::now(),
+            });
+        }
+        let _ = self.restart();
+    }
+
     /// Reset all session state and start typing `text` in `mode`.
     fn begin(&mut self, mode: Mode, text: Vec<String>) {
         self.mode = mode;
@@ -1162,9 +1252,121 @@ impl App {
         self.key_misses.clear();
         self.timeline.clear();
         self.ended_early = false;
+        self.rejected_key = false;
         self.missed = 0;
         self.top_up_words();
         self.screen = Screen::Typing;
+        self.pace_wpm = self.pace_for_run();
+    }
+
+    /// The words of this run you got wrong (a wrong key in the word or on
+    /// its space, fixed or not), in order, as saved for practice: at most
+    /// [`MAX_MISTYPED`] of them.
+    pub fn mistyped_words(&self) -> Vec<String> {
+        let reached = (self.current_word + 1).min(self.words.len());
+        self.words[..reached]
+            .iter()
+            .filter(|word| word.had_error)
+            .take(MAX_MISTYPED)
+            .map(|word| word.text.clone())
+            .collect()
+    }
+
+    /// A practice run of the words you've got wrong lately: from the last
+    /// [`MISSED_SESSIONS`] sessions, the [`MISSED_DISTINCT`] words missed
+    /// most often (the most recent first on a tie), shuffled, and repeated
+    /// to at least [`MISSED_RUN`] words so a short list is still a run.
+    pub fn missed_words_run(&mut self) -> anyhow::Result<Vec<String>> {
+        use rand::seq::SliceRandom;
+        // (times missed, how recently: lower is newer)
+        let mut seen: HashMap<String, (usize, usize)> = HashMap::new();
+        let history = self.history();
+        for (age, session) in history.iter().rev().take(MISSED_SESSIONS).enumerate() {
+            for word in &session.mistyped {
+                // Held to the custom-file rules: stats.json can be edited.
+                let word: String = word
+                    .chars()
+                    .filter(|&c| !crate::text::is_untypeable(c))
+                    .collect();
+                if word.is_empty() || word.contains(char::is_whitespace) {
+                    continue;
+                }
+                let entry = seen.entry(word).or_insert((0, age));
+                entry.0 += 1;
+            }
+        }
+        if seen.is_empty() {
+            anyhow::bail!(
+                "no missed words yet: sessions keep the words you get wrong from TypeRush 0.7 on"
+            );
+        }
+        let mut words: Vec<(String, (usize, usize))> = seen.into_iter().collect();
+        words.sort_by(|(a, (count_a, age_a)), (b, (count_b, age_b))| {
+            count_b.cmp(count_a).then(age_a.cmp(age_b)).then(a.cmp(b))
+        });
+        let distinct: Vec<String> = words
+            .into_iter()
+            .take(MISSED_DISTINCT)
+            .map(|(word, _)| word)
+            .collect();
+        let mut rng = rand::rng();
+        let mut run = Vec::new();
+        while run.len() < MISSED_RUN.max(distinct.len()) {
+            let mut round = distinct.clone();
+            round.shuffle(&mut rng);
+            run.extend(round);
+        }
+        run.truncate(MISSED_RUN.max(distinct.len()));
+        Ok(run)
+    }
+
+    /// The history: the cache, read from `stats_file` the first time it's
+    /// needed (outside a frame: at a run's start, on entering a screen).
+    pub fn history(&mut self) -> &[SessionRecord] {
+        if self.stats_cache.is_none() {
+            if let Some(file) = &self.stats_file {
+                self.stats_cache =
+                    Some(crate::storage::load_sessions_from_path(file).unwrap_or_default());
+            }
+        }
+        self.stats_cache.as_deref().unwrap_or(&[])
+    }
+
+    /// What the pace cursor moves at in the run just begun: the target
+    /// WPM; or for `best`, the best for this mode — on a replay, the
+    /// original run's speed. Zen keeps no score, so it has none.
+    fn pace_for_run(&mut self) -> Option<f64> {
+        use crate::options::Pace;
+        if self.mode == Mode::Zen {
+            return None;
+        }
+        match self.options.pace {
+            Pace::Off => None,
+            Pace::Wpm(wpm) => Some(f64::from(wpm)),
+            Pace::Best => match &self.replay {
+                Some(replay) => Some(replay.wpm),
+                None => {
+                    let label = self.session_label();
+                    // The daily challenge's best is today's, on today's
+                    // words — as Results counts it.
+                    let same_text = self.best_text();
+                    crate::storage::personal_best(self.history().iter().filter(|s| {
+                        s.mode == label && same_text.as_ref().is_none_or(|text| s.text == *text)
+                    }))
+                }
+            },
+        }
+        .filter(|wpm| *wpm > 0.0)
+    }
+
+    /// Where the pace cursor is: the index of the character it's on, the
+    /// text read as one stream (each space between words counts one).
+    /// `None` without a pace, or before the first key.
+    pub fn pace_position(&self) -> Option<usize> {
+        let wpm = self.pace_wpm?;
+        self.started_at?;
+        let minutes = self.elapsed().as_secs_f64() / 60.0;
+        Some((wpm * 5.0 * minutes) as usize)
     }
 
     /// The text the Results best is limited to: today's words for the daily
@@ -1177,18 +1379,24 @@ impl App {
     /// with a fixed text, only the words reached in an endless (time) run.
     /// Empty when longer than [`crate::storage::MAX_TEXT_BYTES`].
     pub fn session_text(&self) -> String {
-        let words = match self.mode {
-            Mode::Time(_) | Mode::Zen => {
-                &self.words[..(self.current_word + 1).min(self.words.len())]
-            }
-            _ => &self.words[..],
-        };
+        let words = self.run_words();
         let bytes = words.iter().map(|w| w.text.len() + 1).sum::<usize>();
         if bytes.saturating_sub(1) > crate::storage::MAX_TEXT_BYTES {
             return String::new();
         }
         let words: Vec<&str> = words.iter().map(|w| w.text.as_str()).collect();
         words.join(" ")
+    }
+
+    /// The run's text, as words: all of a fixed text; in an endless run
+    /// (time, zen) the words reached — the rest were only ever a buffer.
+    fn run_words(&self) -> &[Word] {
+        match self.mode {
+            Mode::Time(_) | Mode::Zen => {
+                &self.words[..(self.current_word + 1).min(self.words.len())]
+            }
+            _ => &self.words[..],
+        }
     }
 
     /// Time and zen runs end on the clock or on Esc, not on the last word:
@@ -1273,12 +1481,39 @@ impl App {
         let active_word = &mut self.words[self.current_word];
         let cursor_position = active_word.typed.chars().count();
         let word_len = active_word.text.chars().count();
-        self.total_typed_chars += 1;
 
         // Past the end of the word the cursor sits on the space after it.
         let expected_char = active_word.text.chars().nth(cursor_position);
         let target_char = expected_char.unwrap_or(' ');
-        let is_correct = typed_char == target_char;
+        // Stop on error: a key that may not go on is counted as a mistake
+        // and changes nothing else. Letter: any wrong key. Word: anything
+        // at the end of a word that still has a mistake in it (and at the
+        // end of the last word, which has no space to type).
+        let blocked = match self.options.stop_on_error {
+            StopOnError::Off => false,
+            StopOnError::Letter => typed_char != target_char,
+            StopOnError::Word => {
+                expected_char.is_none()
+                    && (is_last_word || active_word.typed != active_word.text || typed_char != ' ')
+            }
+        };
+        self.rejected_key = blocked;
+        // The right space, refused because the word still has a mistake:
+        // the mistake is that earlier letter, already counted — this key
+        // isn't another one (it would mark Space as a weak key). It only
+        // stops, and sounds if mistakes do.
+        if blocked && typed_char == target_char {
+            self.bell = self.options.sound != KeySound::Off;
+            return;
+        }
+        self.total_typed_chars += 1;
+        let is_correct = typed_char == target_char && !blocked;
+        active_word.had_error |= !is_correct;
+        self.bell = match self.options.sound {
+            KeySound::Off => false,
+            KeySound::Errors => !is_correct,
+            KeySound::Keys => true,
+        };
         // Per-key stats are kept for the key that *should* have been pressed.
         let key_counts = if is_correct {
             self.correct_chars += 1;
@@ -1298,6 +1533,9 @@ impl App {
             tally.errors += 1;
         }
 
+        if blocked {
+            return;
+        }
         if expected_char.is_none() {
             // Cursor on the space after the word: that slot is a character too.
             active_word.space_missed = !is_correct;
@@ -1308,7 +1546,10 @@ impl App {
         active_word.typed.push(typed_char);
 
         // Last character of the last word typed: there is no trailing space.
-        if is_last_word && cursor_position + 1 == word_len {
+        // Stopping on word errors, the run only ends once the word is right.
+        let word_done = self.options.stop_on_error != StopOnError::Word
+            || active_word.typed == active_word.text;
+        if is_last_word && cursor_position + 1 == word_len && word_done {
             self.advance_word();
         }
     }
@@ -1323,6 +1564,7 @@ impl App {
         if self.is_paused() || self.current_word >= self.words.len() {
             return;
         }
+        self.rejected_key = false;
         let active_word = &mut self.words[self.current_word];
 
         // Cursor at the very start of the current word → step back to the previous one.
@@ -1523,6 +1765,291 @@ mod tests {
         app.restart().unwrap();
         assert!(!app.is_paused());
         assert_eq!(app.paused_for, Duration::ZERO);
+    }
+
+    // ── practice (v0.7.0) ──────────────────────────────────────────────────
+
+    /// F6 on Results types the same words again as a replay of the run
+    /// just finished; a second F6 replays it again, not a replay of the
+    /// replay. A run too long to keep its text still repeats nothing extra.
+    #[test]
+    fn repeat_types_the_same_words_as_a_replay() {
+        let mut app = custom_app(&["red", "fox"]);
+        app.started_at = Some(Instant::now() - Duration::from_secs(2));
+        for ch in "red fox".chars() {
+            app.handle_char(ch);
+        }
+        assert_eq!(app.screen, Screen::Results);
+        let wpm = app.wpm();
+        app.repeat_run();
+        assert_eq!(app.screen, Screen::Typing);
+        let words: Vec<_> = app.words.iter().map(|w| w.text.as_str()).collect();
+        assert_eq!(words, ["red", "fox"]);
+        assert_eq!(app.session_label(), "custom+replay");
+        assert_eq!(app.replay.as_ref().unwrap().wpm, wpm);
+        app.end_early();
+        app.repeat_run();
+        assert_eq!(app.session_label(), "custom+replay");
+        assert_eq!(app.replay.as_ref().unwrap().wpm, wpm, "still the first run");
+    }
+
+    /// Review fix: stopping on words, the right space refused at the end of
+    /// a wrong word is not another mistake — not on the Space key, not in
+    /// accuracy or the per-second tally; a wrong key there still is.
+    #[test]
+    fn refused_right_space_is_not_a_mistake() {
+        let mut app = custom_app(&["ab", "cd"]);
+        app.options.stop_on_error = StopOnError::Word;
+        app.started_at = Some(Instant::now());
+        app.handle_char('a');
+        app.handle_char('x');
+        let (typed, correct) = (app.total_typed_chars, app.correct_chars);
+        for _ in 0..3 {
+            app.handle_char(' ');
+        }
+        assert!(app.rejected_key);
+        assert_eq!((app.total_typed_chars, app.correct_chars), (typed, correct));
+        assert!(!app.key_misses.contains_key(&' '), "{:?}", app.key_misses);
+        assert_eq!(app.timeline.iter().map(|s| s.errors).sum::<u32>(), 1);
+        app.handle_char('z'); // a letter where the space belongs: a mistake
+        assert_eq!(app.key_misses.get(&' '), Some(&1));
+    }
+
+    /// Stopping on letters, a wrong key is a mistake that doesn't move the
+    /// cursor; stopping on words, a word with a mistake can't be left — nor
+    /// the run finished on one — until it's fixed.
+    #[test]
+    fn stop_on_error_letter_and_word() {
+        let mut app = custom_app(&["ab", "cd"]);
+        app.options.stop_on_error = StopOnError::Letter;
+        app.handle_char('x');
+        assert_eq!((app.words[0].typed.as_str(), app.rejected_key), ("", true));
+        app.handle_char('a');
+        app.handle_char('b');
+        app.handle_char('x'); // where the space belongs
+        assert_eq!(app.current_word, 0);
+        app.handle_char(' ');
+        assert_eq!((app.current_word, app.rejected_key), (1, false));
+        assert_eq!((app.total_typed_chars, app.correct_chars), (5, 3));
+
+        let mut app = custom_app(&["ab", "cd"]);
+        app.options.stop_on_error = StopOnError::Word;
+        app.handle_char('a');
+        app.handle_char('x'); // typed, it's mid-word
+        assert_eq!(app.words[0].typed, "ax");
+        app.handle_char(' ');
+        assert_eq!(app.current_word, 0, "can't leave a wrong word");
+        app.handle_backspace(false);
+        app.handle_char('b');
+        app.handle_char(' ');
+        assert_eq!(app.current_word, 1);
+        app.handle_char('c');
+        app.handle_char('x'); // last character, wrong
+        assert_eq!(app.screen, Screen::Typing, "not finished on a mistake");
+        app.handle_char('d'); // past the end: refused
+        assert_eq!(app.words[1].typed, "cx");
+        app.handle_backspace(false);
+        app.handle_char('d');
+        assert_eq!(app.screen, Screen::Results);
+    }
+
+    /// A word counts as missed when a wrong key was pressed in it or on its
+    /// space — even if it was fixed; the run's missed words are saved in
+    /// order, the word being typed included.
+    #[test]
+    fn missed_words_are_marked_even_when_fixed() {
+        let mut app = custom_app(&["one", "two", "three", "four"]);
+        for ch in "onx".chars() {
+            app.handle_char(ch);
+        }
+        app.handle_backspace(false);
+        for ch in "e two ".chars() {
+            app.handle_char(ch);
+        }
+        app.handle_char('x'); // wrong first letter of "three"
+        assert!(app.words[0].had_error, "fixed, still missed");
+        assert!(!app.words[1].had_error);
+        assert_eq!(app.mistyped_words(), ["one", "three"]);
+        // A wrong key on a word's space counts for that word.
+        let mut app = custom_app(&["ab", "cd"]);
+        for ch in "abx".chars() {
+            app.handle_char(ch);
+        }
+        assert_eq!(app.mistyped_words(), ["ab"]);
+    }
+
+    /// The practice run: the most-missed recent words first in weight
+    /// (ties: the most recent), shuffled and repeated to at least 25 words;
+    /// text from stats.json filtered like a custom file's; none yet is an
+    /// error that explains.
+    #[test]
+    fn missed_words_run_is_built_from_recent_mistakes() {
+        let mut app = menu_app();
+        let session = |words: &[&str]| SessionRecord {
+            mistyped: words.iter().map(|w| w.to_string()).collect(),
+            ..SessionRecord::default()
+        };
+        app.stats_cache = Some(vec![]);
+        let error = app.missed_words_run().unwrap_err().to_string();
+        assert!(error.contains("no missed words yet"), "{error}");
+
+        app.stats_cache = Some(vec![
+            session(&["their", "because"]),
+            session(&["their", "wh\u{1b}ich", "two words"]),
+        ]);
+        let run = app.missed_words_run().unwrap();
+        assert_eq!(run.len(), 25, "repeated to a full run");
+        for word in ["their", "because", "which"] {
+            assert!(run.contains(&word.to_string()), "{word} missing");
+        }
+        assert!(!run.iter().any(|w| w.contains(' ') || w.contains('\u{1b}')));
+
+        app.start_game(Mode::Missed).unwrap();
+        assert_eq!(app.session_label(), "missed");
+        assert_eq!(app.progress(), Some((0, 25)));
+
+        // Many different words: the 50 most missed, each once.
+        let many: Vec<String> = (0..80).map(|i| format!("w{i}")).collect();
+        let mut sessions: Vec<SessionRecord> = vec![SessionRecord {
+            mistyped: many.clone(),
+            ..SessionRecord::default()
+        }];
+        sessions.push(SessionRecord {
+            mistyped: vec!["w79".into()],
+            ..SessionRecord::default()
+        });
+        app.stats_cache = Some(sessions);
+        let run = app.missed_words_run().unwrap();
+        assert_eq!(run.len(), 50);
+        assert!(run.contains(&"w79".to_string()), "missed twice: kept");
+    }
+
+    /// The idle check counts the longest stretch of whole seconds with no
+    /// key — at the end too (walking away from a time run) — against the
+    /// limit; off, nothing is too idle.
+    #[test]
+    fn idle_runs_are_caught() {
+        let mut app = custom_app(&["abc"]);
+        let end = Instant::now();
+        app.ended_at = Some(end);
+        app.started_at = Some(end - Duration::from_secs(20));
+        let typing = Second {
+            typed: 3,
+            correct: 3,
+            errors: 0,
+        };
+        // Keys in seconds 0–3 and 16–19: twelve idle seconds between.
+        app.timeline = (0..20)
+            .map(|i| {
+                if !(4..16).contains(&i) {
+                    typing
+                } else {
+                    Second::default()
+                }
+            })
+            .collect();
+        assert_eq!(app.longest_idle(), 12);
+        app.options.idle_limit = Some(10);
+        assert_eq!(app.too_idle(), Some(12));
+        app.options.idle_limit = Some(15);
+        assert_eq!(app.too_idle(), None);
+        // Walking away at the end counts too: keys only in seconds 0–3.
+        app.timeline = vec![typing; 4];
+        assert_eq!(app.longest_idle(), 16);
+        // Review fix: zen is never saved, so it is never "too idle".
+        app.options.idle_limit = Some(10);
+        app.mode = Mode::Zen;
+        assert_eq!(app.too_idle(), None);
+        app.mode = Mode::Custom;
+        app.options.idle_limit = None;
+        assert_eq!(app.too_idle(), None);
+    }
+
+    /// Review fix: F6 after a run too long to save its text (a big custom
+    /// file) repeated one empty word. It repeats the run's own words.
+    #[test]
+    fn repeat_of_a_huge_run_repeats_its_words() {
+        let word = "x".repeat(1000);
+        let mut app = custom_app(&vec![word.as_str(); 70]);
+        assert_eq!(app.session_text(), "", "too long to save");
+        app.end_early();
+        app.repeat_run();
+        assert_eq!(app.words.len(), 70);
+        assert!(app.words.iter().all(|w| w.text == word));
+    }
+
+    /// The bell is asked for on every key, on mistakes only (refused keys
+    /// too), or never.
+    #[test]
+    fn key_sound_asks_for_the_bell() {
+        for (sound, right, wrong) in [
+            (KeySound::Off, false, false),
+            (KeySound::Errors, false, true),
+            (KeySound::Keys, true, true),
+        ] {
+            let mut app = custom_app(&["ab"]);
+            app.options.sound = sound;
+            app.handle_char('a');
+            assert_eq!(app.bell, right, "{sound:?} right key");
+            app.handle_char('x');
+            assert_eq!(app.bell, wrong, "{sound:?} wrong key");
+        }
+    }
+
+    /// The pace cursor moves at the target WPM, at the mode's best, or on
+    /// a replay at the original's speed; never in zen or without a best.
+    #[test]
+    fn pace_cursor_speed_and_position() {
+        use crate::options::Pace;
+        let mut app = menu_app();
+        app.stats_cache = Some(vec![SessionRecord {
+            wpm: 72.0,
+            mode: "words-10".into(),
+            ..SessionRecord::default()
+        }]);
+        app.options.pace = Pace::Wpm(60);
+        app.start_game(Mode::Words(10)).unwrap();
+        assert_eq!(app.pace_wpm, Some(60.0));
+        assert_eq!(app.pace_position(), None, "not before the first key");
+        let end = Instant::now();
+        app.ended_at = Some(end);
+        app.started_at = Some(end - Duration::from_secs(6));
+        assert_eq!(app.pace_position(), Some(30), "60 wpm = 5 chars a second");
+
+        app.options.pace = Pace::Best;
+        app.start_game(Mode::Words(10)).unwrap();
+        assert_eq!(app.pace_wpm, Some(72.0));
+        app.start_game(Mode::Words(25)).unwrap();
+        assert_eq!(app.pace_wpm, None, "no best yet for words-25");
+        app.start_game(Mode::Zen).unwrap();
+        assert_eq!(app.pace_wpm, None);
+        // Review fix: the daily challenge races today's best on today's
+        // words, not another day's.
+        let today = crate::words::daily_words(chrono::Local::now().date_naive()).join(" ");
+        app.stats_cache = Some(vec![
+            SessionRecord {
+                wpm: 95.0,
+                mode: "daily".into(),
+                text: "yesterday's words".into(),
+                ..SessionRecord::default()
+            },
+            SessionRecord {
+                wpm: 70.0,
+                mode: "daily".into(),
+                text: today,
+                ..SessionRecord::default()
+            },
+        ]);
+        app.start_game(Mode::Daily).unwrap();
+        assert_eq!(app.pace_wpm, Some(70.0));
+        app.start_replay(&SessionRecord {
+            wpm: 55.5,
+            mode: "words-25".into(),
+            text: "a b".into(),
+            ..SessionRecord::default()
+        })
+        .unwrap();
+        assert_eq!(app.pace_wpm, Some(55.5), "a replay races the original");
     }
 
     // ── deeper results (v0.6.0) ────────────────────────────────────────────
@@ -2052,7 +2579,10 @@ mod tests {
         groups.dedup();
         assert_eq!(
             groups,
-            ["time", "words", "code", "symbols", "custom", "daily", "quote", "zen", "app"]
+            [
+                "time", "words", "code", "symbols", "custom", "daily", "missed", "quote", "zen",
+                "app"
+            ]
         );
         assert_eq!(row("daily"), ["daily"]);
         assert_eq!(row("app"), ["stats", "profile", "settings", "quit"]);

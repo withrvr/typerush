@@ -54,27 +54,24 @@ pub fn render(f: &mut Frame, app: &App, area: Rect) -> &'static [super::Hint] {
         },
     );
     let block = block.title_bottom(Span::styled(saved_to, Style::default().fg(theme.pending)));
-    f.render_widget(block, box_area);
 
-    // A blank line, the five settings, a blank line, reset, then any
-    // problem with the file.
+    // A blank line, the settings, a blank line, reset, then any problem
+    // with the file. Clickable parts are kept by line until the scroll is
+    // known.
     let mut lines = vec![Line::raw("")];
-    let mut targets = app.click_targets.borrow_mut();
+    let mut chips_by_line = Vec::new();
+    let mut selected_line = 0;
     for (index, row) in ROWS.iter().enumerate() {
         if *row == Row::Reset {
             lines.push(Line::raw(""));
         }
-        let y = inner.y + lines.len() as u16;
         let (line, chips) = row_line(app, view, index, *row);
-        for (x, width, code) in chips {
-            let cell = Rect::new(inner.x + x, y, width, 1).intersection(inner);
-            if !cell.is_empty() {
-                targets.push((cell, ClickAction::Setting(index, code)));
-            }
+        if index == view.selected {
+            selected_line = lines.len();
         }
+        chips_by_line.push((lines.len(), index, chips));
         lines.push(line);
     }
-    drop(targets);
     if let Some(problem) = &view.problem {
         // The first line of the loader's warning: the file is still used
         // where it can be, and the problem stays until it is fixed.
@@ -86,7 +83,36 @@ pub fn render(f: &mut Frame, app: &App, area: Rect) -> &'static [super::Hint] {
             Style::default().fg(theme.error),
         ));
     }
-    f.render_widget(Paragraph::new(lines), inner);
+
+    // Too short for every row: scroll so the selected one is in view, with
+    // a sign on the border for what's above or below.
+    let visible = inner.height as usize;
+    let scroll = (selected_line + 1).saturating_sub(visible);
+    let hint = Style::default().fg(theme.pending);
+    let mut block = block;
+    if scroll > 0 {
+        block = block.title(Line::styled(" ▲ more ", hint).right_aligned());
+    }
+    if scroll + visible < lines.len() {
+        block = block.title_bottom(Line::styled(" ▼ more ", hint).right_aligned());
+    }
+    f.render_widget(block, box_area);
+
+    let mut targets = app.click_targets.borrow_mut();
+    for (line, index, chips) in chips_by_line {
+        if line < scroll || line - scroll >= visible {
+            continue;
+        }
+        let y = inner.y + (line - scroll) as u16;
+        for (x, width, code) in chips {
+            let cell = Rect::new(inner.x + x, y, width, 1).intersection(inner);
+            if !cell.is_empty() {
+                targets.push((cell, ClickAction::Setting(index, code)));
+            }
+        }
+    }
+    drop(targets);
+    f.render_widget(Paragraph::new(lines).scroll((scroll as u16, 0)), inner);
 
     const HINTS: &[super::Hint] = &[
         ("↑/↓ setting", None),
@@ -98,7 +124,9 @@ pub fn render(f: &mut Frame, app: &App, area: Rect) -> &'static [super::Hint] {
     HINTS
 }
 
-/// One row: the ➤ marker in the two-cell gutter, its label, its value. The
+/// One row: its label two cells in, then its value. The selected row
+/// shows by its label (bold, in the secondary color) and its value in the
+/// highlight — nothing is drawn against the border. The
 /// clickable parts come back as (x offset in the box, width, key): ‹ and ›
 /// act like ← and →, the value like Enter.
 fn row_line(
@@ -109,12 +137,8 @@ fn row_line(
 ) -> (Line<'static>, Vec<(u16, u16, KeyCode)>) {
     let theme = &app.theme;
     let selected = view.selected == index;
-    // Text starts two cells in from the border, as in every box; the ➤
-    // marker sits in that gutter.
-    let marker = |cells: usize| {
-        let text = if selected { "➤" } else { " " };
-        Span::styled(format!("{text:<cells$}"), Style::default().fg(theme.accent))
-    };
+    // Text starts two cells in from the border, as in every box.
+    let gutter = || Span::raw("  ");
     let chip_style = |style: Style| {
         if selected {
             selected_style(theme)
@@ -129,23 +153,19 @@ fn row_line(
 
     if row == Row::Reset {
         let (text, hint) = if view.confirm_reset {
-            (
-                " Enter again to reset every setting ",
-                "  ·  Esc keeps them",
-            )
+            ("Enter again to reset every setting", "  ·  Esc keeps them")
         } else {
-            (" reset to defaults ", "")
+            ("reset to defaults", "")
         };
+        // In the label column, highlighted when selected.
         let chip = Span::styled(text, chip_style(Style::default().fg(theme.neutral)));
         let width = chip.width() as u16;
-        // A one-cell marker: the chip's own leading space puts its text in
-        // the label column.
         let line = Line::from(vec![
-            marker(1),
+            gutter(),
             chip,
             Span::styled(hint, Style::default().fg(theme.pending)),
         ]);
-        return (line, vec![(1, width, KeyCode::Enter)]);
+        return (line, vec![(2, width, KeyCode::Enter)]);
     }
 
     let (name, value) = match row {
@@ -154,6 +174,16 @@ fn row_line(
         Row::Punctuation => ("punctuation", on_off(view.decor.punctuation)),
         Row::Numbers => ("numbers", on_off(view.decor.numbers)),
         Row::Pool => ("10k words", on_off(view.pool == WordPool::Extended)),
+        Row::LiveWpm => ("live wpm", on_off(app.options.live_wpm)),
+        Row::Blind => ("blind", on_off(app.options.blind)),
+        Row::StopOnError => ("stop on", app.options.stop_on_error.name().to_string()),
+        Row::Pace => ("pace", app.options.pace.name()),
+        Row::Cursor => ("cursor", app.options.cursor.name().to_string()),
+        Row::Sound => ("key sound", app.options.sound.name().to_string()),
+        Row::IdleLimit => (
+            "idle limit",
+            crate::options::idle_name(app.options.idle_limit),
+        ),
         Row::Reset => unreachable!("drawn above"),
     };
     let label = Span::styled(
@@ -183,7 +213,7 @@ fn row_line(
         (value_x + 1 + width, 1, KeyCode::Right),
     ];
     let line = Line::from(vec![
-        marker(2),
+        gutter(),
         label,
         Span::styled("‹", arrow),
         chip,

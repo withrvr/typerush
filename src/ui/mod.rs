@@ -415,6 +415,7 @@ mod tests {
                     consistency: (i % 3 != 0).then_some(70.0 + i as f64),
                     missed: i % 2,
                     ended_early: i % 7 == 0,
+                    mistyped: vec!["fox".into()],
                 }
             })
             .collect();
@@ -433,6 +434,27 @@ mod tests {
             ("typing time", |app| {
                 app.start_game(Mode::Time(30)).unwrap();
                 app.started_at = Some(Instant::now() - Duration::from_secs(12));
+            }),
+            ("typing block cursor, pace, refused key", |app| {
+                app.options.cursor = crate::options::CursorStyle::Block;
+                app.options.stop_on_error = crate::options::StopOnError::Letter;
+                app.start_game(Mode::Words(25)).unwrap();
+                app.started_at = Some(Instant::now() - Duration::from_secs(4));
+                app.pace_wpm = Some(60.0);
+                app.handle_char('#');
+            }),
+            ("typing bar cursor, blind", |app| {
+                app.options.cursor = crate::options::CursorStyle::Bar;
+                app.options.blind = true;
+                app.start_game(Mode::Words(25)).unwrap();
+                app.handle_char('#');
+            }),
+            ("results not saved (idle)", |app| {
+                app.start_game(Mode::Words(10)).unwrap();
+                let end = Instant::now();
+                app.ended_at = Some(end);
+                app.started_at = Some(end - Duration::from_secs(30));
+                app.screen = Screen::Results;
             }),
             ("paused", |app| {
                 app.start_game(Mode::Words(25)).unwrap();
@@ -536,6 +558,177 @@ mod tests {
         }
     }
 
+    /// No screen panics at any size: every screen (with a charted run, a
+    /// pace and a pending reset among them) at every width from 1 to 30 and
+    /// heights from 1 to 24 — the review found the chart panicking at 8
+    /// columns.
+    #[test]
+    fn no_screen_panics_at_any_size() {
+        use crate::app::{Screen, Second};
+        use std::time::{Duration, Instant};
+        let history: Vec<_> = (0..20)
+            .map(|i| record(40.0 + i as f64, "time-30s"))
+            .collect();
+        type Setup = fn(&mut App);
+        let cases: Vec<Setup> = vec![
+            |app| app.screen = Screen::Menu,
+            |app| {
+                app.start_game(Mode::Words(25)).unwrap();
+                app.started_at = Some(Instant::now() - Duration::from_secs(5));
+                app.pace_wpm = Some(60.0);
+                app.options.cursor = crate::options::CursorStyle::Bar;
+                app.handle_char('x');
+            },
+            |app| {
+                app.start_game(Mode::Words(25)).unwrap();
+                app.toggle_pause();
+            },
+            |app| {
+                app.start_game(Mode::Words(10)).unwrap();
+                let end = Instant::now();
+                app.ended_at = Some(end);
+                app.started_at = Some(end - Duration::from_secs(30));
+                app.timeline = vec![
+                    Second {
+                        typed: 5,
+                        correct: 4,
+                        errors: 1
+                    };
+                    30
+                ];
+                app.screen = Screen::Results;
+            },
+            |app| app.screen = Screen::Stats,
+            |app| {
+                let history = app.stats_cache.clone().unwrap();
+                app.stats_view = Some(crate::storage::StatsView::new(
+                    &history,
+                    Some("bests"),
+                    Default::default(),
+                ));
+                app.screen = Screen::Stats;
+            },
+            |app| {
+                let mut view =
+                    crate::settings::SettingsView::load(None, crate::settings::ROWS.len() - 1);
+                view.confirm_reset = true;
+                app.settings = Some(view);
+                app.screen = Screen::Settings;
+            },
+            |app| {
+                let history = app.stats_cache.clone().unwrap();
+                app.profile = Some(crate::progress::Profile::new(&history, 30));
+                app.screen = Screen::Profile;
+            },
+            |app| app.screen = Screen::Help,
+            |app| app.error_message = Some("a long error message ".repeat(8)),
+        ];
+        for setup in &cases {
+            let mut app = App::new(None, builtin::MONOKAI, Mode::Time(15));
+            app.stats_cache = Some(history.clone());
+            setup(&mut app);
+            for width in 1..=30 {
+                for height in [1, 2, 3, 4, 6, 9, 13, 18, 24] {
+                    let mut terminal = Terminal::new(TestBackend::new(width, height)).unwrap();
+                    terminal.draw(|f| render(f, &app)).unwrap();
+                }
+            }
+        }
+    }
+
+    /// Issue #20: nothing is drawn against a box's side. On every screen,
+    /// each cell beside a vertical border — a `│` with a border character
+    /// above or below it, so overlays count too — is blank or another
+    /// border. (The Results chart is drawn short here: its own axis line is
+    /// a `│` too; its padding is checked in `ui::results`.)
+    #[test]
+    fn nothing_touches_a_box_border() {
+        use crate::app::Screen;
+        let border = |c: &str| {
+            c.chars()
+                .next()
+                .is_some_and(|c| ('\u{2500}'..='\u{257F}').contains(&c))
+        };
+        let mut history: Vec<_> = (0..12)
+            .map(|i| record(40.0 + i as f64, "time-30s"))
+            .collect();
+        history.push(record(99.0, "words-25")); // newest and a best: ★ on the top row
+        type Setup = fn(&mut App);
+        let cases: Vec<(&str, Setup)> = vec![
+            ("menu", |app| app.screen = Screen::Menu),
+            ("typing", |app| {
+                app.start_game(Mode::Words(25)).unwrap();
+                app.handle_char('x');
+            }),
+            ("paused", |app| {
+                app.start_game(Mode::Words(25)).unwrap();
+                app.toggle_pause();
+            }),
+            ("results", |app| {
+                app.start_game(Mode::Words(5)).unwrap();
+                app.finish_game();
+            }),
+            ("stats", |app| app.screen = Screen::Stats),
+            ("stats bests", |app| {
+                let history = app.stats_cache.clone().unwrap();
+                app.stats_view = Some(crate::storage::StatsView::new(
+                    &history,
+                    Some("bests"),
+                    Default::default(),
+                ));
+                app.screen = Screen::Stats;
+            }),
+            ("settings", |app| app.screen = Screen::Settings),
+            ("settings reset", |app| {
+                let mut view =
+                    crate::settings::SettingsView::load(None, crate::settings::ROWS.len() - 1);
+                view.confirm_reset = true;
+                app.settings = Some(view);
+                app.screen = Screen::Settings;
+            }),
+            ("profile", |app| {
+                let history = app.stats_cache.clone().unwrap();
+                app.profile = Some(crate::progress::Profile::new(&history, 20));
+                app.screen = Screen::Profile;
+            }),
+            ("help", |app| app.screen = Screen::Help),
+            ("error", |app| app.error_message = Some("x".repeat(120))),
+        ];
+        for (case, setup) in &cases {
+            for (width, height) in [(80, 24), (130, 45)] {
+                let mut app = App::new(None, builtin::DARK, Mode::Time(15));
+                app.stats_cache = Some(history.clone());
+                setup(&mut app);
+                let mut terminal = Terminal::new(TestBackend::new(width, height)).unwrap();
+                terminal.draw(|f| render(f, &app)).unwrap();
+                let buffer = terminal.backend().buffer();
+                let at = |x: u16, y: u16| buffer[(x, y)].symbol();
+                for y in 0..height {
+                    for x in 0..width {
+                        if at(x, y) != "│" {
+                            continue;
+                        }
+                        let vertical = (y > 0 && border(at(x, y - 1)))
+                            || (y + 1 < height && border(at(x, y + 1)));
+                        if !vertical {
+                            continue;
+                        }
+                        for nx in [x.checked_sub(1), (x + 1 < width).then_some(x + 1)]
+                            .into_iter()
+                            .flatten()
+                        {
+                            let next = at(nx, y);
+                            assert!(
+                                next.trim().is_empty() || border(next),
+                                "{case} {width}x{height}: {next:?} at ({nx}, {y}) touches a border"
+                            );
+                        }
+                    }
+                }
+            }
+        }
+    }
+
     /// The help overlay fits a standard 80×24 terminal whole: every line,
     /// none wrapped, and the close hint on its bottom border.
     #[test]
@@ -556,8 +749,20 @@ mod tests {
             .iter()
             .position(|r| r.contains("TypeRush — keybindings"));
         let last = rows.iter().position(|r| r.contains("Snippets ~/.typerush"));
-        assert_eq!(last.zip(title).map(|(l, t)| l - t), Some(20), "{dump}");
-        assert!(rows[last.unwrap() + 1].contains("click to close"), "{dump}");
+        assert_eq!(last.zip(title).map(|(l, t)| l - t), Some(18), "{dump}");
+        // A blank line of padding inside the box above the first line and
+        // below the last.
+        let (title, last) = (title.unwrap(), last.unwrap());
+        let blank_inside = |row: &str| {
+            let cells: Vec<char> = row.chars().collect();
+            let left = cells.iter().position(|c| *c == '│').unwrap();
+            let right = cells.iter().rposition(|c| *c == '│').unwrap();
+            cells[left + 1..right].iter().all(|c| *c == ' ')
+        };
+        assert!(rows[title - 2].contains("┌ help"), "{dump}");
+        assert!(blank_inside(&rows[title - 1]), "no padding above: {dump}");
+        assert!(blank_inside(&rows[last + 1]), "no padding below: {dump}");
+        assert!(rows[last + 2].contains("click to close"), "{dump}");
         for text in ["Ctrl+P  F2", "menu: settings", "replay, export CSV"] {
             assert!(dump.contains(text), "{text:?} missing:\n{dump}");
         }
@@ -609,7 +814,7 @@ mod tests {
             .map(|c| c.symbol())
             .collect();
         assert!(!text.contains('\x1b'));
-        assert!(text.contains("custom-?…nal-draft "), "{text}");
+        assert!(text.contains("custom-?…al-draft "), "{text}");
     }
 
     /// Draw the Stats screen for `sessions` at 80×24 and return its rows.
@@ -679,12 +884,14 @@ mod tests {
         assert!(dump.contains("40.0"), "{dump}");
         let first = app.stats_view.as_ref().unwrap().scroll.get();
         assert!(first > 0 && first < 12, "clamped scroll {first}");
-        // The selected (oldest) row is drawn as one highlighted bar.
+        // The selected (oldest) row is drawn as one highlighted bar, kept
+        // off the borders by the table's padding.
         let mut terminal = Terminal::new(TestBackend::new(80, 24)).unwrap();
         terminal.draw(|f| render(f, &app)).unwrap();
         let buffer = terminal.backend().buffer();
         let highlighted: Vec<String> = (0..24)
-            .filter(|&y| (1..79).all(|x| buffer[(x, y)].bg == builtin::DARK.accent))
+            // Inside the table's padding: two cells from each border.
+            .filter(|&y| (3..77).all(|x| buffer[(x, y)].bg == builtin::DARK.accent))
             .map(|y| (0..80).map(|x| buffer[(x, y)].symbol()).collect())
             .collect();
         assert_eq!(highlighted.len(), 1, "{highlighted:?}");
@@ -696,6 +903,78 @@ mod tests {
         assert!(dump.contains("bests per mode"), "{dump}");
         assert!(dump.contains("★ 51.0"), "{dump}");
         assert!(dump.contains("★ 55.0"), "{dump}");
+    }
+
+    /// The WPM trend shows as many sessions as its box is wide, one bar a
+    /// cell inside its padding, and says how many: all of them when they
+    /// fit.
+    #[test]
+    fn wpm_trend_shows_as_many_sessions_as_fit() {
+        let mut app = App::new(None, builtin::DARK, Mode::Time(15));
+        app.screen = crate::app::Screen::Stats;
+        app.stats_cache = Some(
+            (0..13)
+                .map(|i| record(40.0 + i as f64, "time-30s"))
+                .collect(),
+        );
+        assert!(stats_rows(&app).join("\n").contains("wpm trend (all 13)"));
+        app.stats_cache = Some(
+            (0..300)
+                .map(|i| record(20.0 + (i % 50) as f64, "time-30s"))
+                .collect(),
+        );
+        let rows = stats_rows(&app);
+        // 80 wide: 78 inside the borders, 74 inside the padding.
+        assert!(rows.join("\n").contains("wpm trend (last 74)"), "{rows:?}");
+        let bars = |row: &String| {
+            row.chars()
+                .skip(3)
+                .take(74)
+                .filter(|c| ('▁'..='█').contains(c))
+                .count()
+        };
+        let lowest = rows
+            .iter()
+            .filter(|r| r.starts_with("│  "))
+            .map(bars)
+            .max()
+            .unwrap();
+        assert_eq!(lowest, 74, "a bar in every cell of the bottom row");
+    }
+
+    /// The trend has a row under its bars with a ★ under each session that
+    /// holds its mode's best — only those, each under its own bar.
+    #[test]
+    fn wpm_trend_stars_the_bests() {
+        let mut app = App::new(None, builtin::DARK, Mode::Time(15));
+        app.screen = crate::app::Screen::Stats;
+        // time-30s: best is the 3rd session (index 2); words-25: the 5th.
+        app.stats_cache = Some(vec![
+            record(40.0, "time-30s"),
+            record(45.0, "time-30s"),
+            record(70.0, "time-30s"),
+            record(30.0, "words-25"),
+            record(60.0, "words-25"),
+            record(50.0, "time-30s"),
+        ]);
+        let rows = stats_rows(&app);
+        let title = rows.iter().position(|r| r.contains("wpm trend")).unwrap();
+        // Three rows of bars, then the stars, then the bottom border.
+        let stars = &rows[title + 4];
+        assert!(rows[title + 5].starts_with('└'), "{rows:#?}");
+        let marks: Vec<usize> = stars
+            .chars()
+            .enumerate()
+            .filter(|(_, c)| *c == '★')
+            .map(|(x, _)| x)
+            .collect();
+        // Bars start three cells in (border, two of padding): sessions 2, 4.
+        assert_eq!(marks, [3 + 2, 3 + 4], "{stars}");
+        let bars_row = &rows[title + 3];
+        assert!(
+            bars_row.chars().nth(3 + 2).is_some_and(|c| c != ' '),
+            "{bars_row}"
+        );
     }
 
     /// A window too short for any table row (three rows tall: the table's
@@ -733,7 +1012,7 @@ mod tests {
         use crate::app::Screen;
         for (height, screen, first_hint) in [
             (24, Screen::Menu, "↑/↓ category"),
-            (24, Screen::Typing, "Ctrl+R / F5 restart"),
+            (24, Screen::Typing, "Tab / F5 restart"),
             (24, Screen::Results, "Enter / F5 restart"),
             (24, Screen::Stats, "←/→ category"),
             (24, Screen::Help, "Esc / F1 close"),
@@ -830,9 +1109,8 @@ mod tests {
                     "30-day avg",
                     "time typed",
                 ],
-                // Not "theme": the selected row has the ➤ in its gutter; not
-                // "punctuation": it fills the label column but one cell.
-                Screen::Settings => &["start mode", "numbers", "10k words"],
+                // Not "punctuation": it fills the label column but one cell.
+                Screen::Settings => &["theme", "start mode", "numbers", "10k words"],
                 Screen::Profile => &["level", "xp", "since", "days typed", "streak", "started"],
                 _ => &[],
             };

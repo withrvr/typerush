@@ -9,6 +9,7 @@ use std::path::{Path, PathBuf};
 
 use super::{Colors, Config};
 use crate::app::Mode;
+use crate::options::{CursorStyle, KeySound, Pace, StopOnError, TypingOptions};
 use crate::storage;
 use crate::theme::{self, builtin, ThemePalette};
 use crate::words::{CodeLang, WordDecor, WordPool};
@@ -29,6 +30,8 @@ pub struct ResolvedConfig {
     pub word_pool: WordPool,
     /// Punctuation / numbers decoration toggles (v0.4.0).
     pub word_decor: WordDecor,
+    /// The `[typing]` settings (v0.7.0).
+    pub typing: TypingOptions,
 }
 
 impl Default for ResolvedConfig {
@@ -39,6 +42,7 @@ impl Default for ResolvedConfig {
             default_mode: Mode::Time(DEFAULT_SECONDS),
             word_pool: WordPool::Common,
             word_decor: WordDecor::default(),
+            typing: TypingOptions::default(),
         }
     }
 }
@@ -61,6 +65,12 @@ pub struct CliOverrides<'a> {
     pub punctuation: Option<bool>,
     /// `--numbers` → `Some(true)`, `--no-numbers` → `Some(false)`.
     pub numbers: Option<bool>,
+    /// `--blind` → `Some(true)`.
+    pub blind: Option<bool>,
+    /// `--stop-on-error <off|letter|word>`.
+    pub stop_on_error: Option<StopOnError>,
+    /// `--pace <best|WPM>`.
+    pub pace: Option<Pace>,
 }
 
 /// Read and resolve `~/.typerush/config.toml`, then apply CLI overrides on
@@ -175,6 +185,16 @@ fn resolve_with(raw: Config, cli: CliOverrides<'_>) -> (ResolvedConfig, Vec<Stri
     if let Some(n) = cli.numbers {
         word_decor.numbers = n;
     }
+    let mut typing = resolve_typing(raw.typing.as_ref(), &mut warnings);
+    if let Some(blind) = cli.blind {
+        typing.blind = blind;
+    }
+    if let Some(stop) = cli.stop_on_error {
+        typing.stop_on_error = stop;
+    }
+    if let Some(pace) = cli.pace {
+        typing.pace = pace;
+    }
 
     (
         ResolvedConfig {
@@ -182,9 +202,100 @@ fn resolve_with(raw: Config, cli: CliOverrides<'_>) -> (ResolvedConfig, Vec<Stri
             default_mode,
             word_pool,
             word_decor,
+            typing,
         },
         warnings,
     )
+}
+
+/// The `[typing]` section, each unset value its default; an unknown name
+/// is a warning and the default.
+fn resolve_typing(typing: Option<&super::Typing>, warnings: &mut Vec<String>) -> TypingOptions {
+    let defaults = TypingOptions::default();
+    let Some(typing) = typing else {
+        return defaults;
+    };
+    let stop_on_error = named(
+        "stop_on_error",
+        typing.stop_on_error.as_deref(),
+        &StopOnError::NAMES,
+        StopOnError::from_name,
+        defaults.stop_on_error,
+        warnings,
+    );
+    let cursor = named(
+        "cursor",
+        typing.cursor.as_deref(),
+        &CursorStyle::NAMES,
+        CursorStyle::from_name,
+        defaults.cursor,
+        warnings,
+    );
+    let sound = named(
+        "sound",
+        typing.sound.as_deref(),
+        &KeySound::NAMES,
+        KeySound::from_name,
+        defaults.sound,
+        warnings,
+    );
+    let pace = match &typing.pace {
+        None => defaults.pace,
+        Some(value) => Pace::from_name(&value.text()).unwrap_or_else(|| {
+            warnings.push(format!(
+                "pace '{}' isn't off, best or a WPM from 1 to {}, using 'off'",
+                crate::text::printable(&value.text()),
+                Pace::MAX_WPM
+            ));
+            defaults.pace
+        }),
+    };
+    let idle_limit = match typing.idle_limit {
+        None => defaults.idle_limit,
+        Some(0) => None,
+        Some(seconds) if seconds <= crate::options::MAX_IDLE_SECONDS => Some(seconds),
+        Some(seconds) => {
+            warnings.push(format!(
+                "idle_limit {seconds} is over {}, using {}",
+                crate::options::MAX_IDLE_SECONDS,
+                crate::options::idle_name(defaults.idle_limit)
+            ));
+            defaults.idle_limit
+        }
+    };
+    TypingOptions {
+        idle_limit,
+        pace,
+        live_wpm: typing.live_wpm.unwrap_or(defaults.live_wpm),
+        blind: typing.blind.unwrap_or(defaults.blind),
+        stop_on_error,
+        cursor,
+        sound,
+    }
+}
+
+/// A setting that takes one of `names`: the default when unset, a warning
+/// and the default when it isn't one of them.
+fn named<T: Copy>(
+    setting: &str,
+    value: Option<&str>,
+    names: &[&str],
+    from_name: fn(&str) -> Option<T>,
+    default: T,
+    warnings: &mut Vec<String>,
+) -> T {
+    let Some(value) = value else {
+        return default;
+    };
+    from_name(value).unwrap_or_else(|| {
+        warnings.push(format!(
+            "unknown {setting} '{}', using '{}' (try {})",
+            crate::text::printable(value),
+            names[0],
+            names.join(", ")
+        ));
+        default
+    })
 }
 
 /// Translate the optional `[words]` section into a (pool, decor) pair.
@@ -212,7 +323,10 @@ fn resolve_words_section(
     (pool, decor)
 }
 
-fn apply_color_overrides(
+/// `overrides` applied on top of `palette`; a color that doesn't parse
+/// keeps the palette's slot and adds a warning. Custom theme files use it
+/// too (`theme::custom`).
+pub(crate) fn apply_color_overrides(
     mut palette: ThemePalette,
     overrides: &Colors,
     warnings: &mut Vec<String>,
@@ -253,7 +367,9 @@ pub fn word_pool(name: &str) -> Option<WordPool> {
 }
 
 /// The `[defaults] mode` names, in menu order.
-pub const MODE_NAMES: [&str; 7] = ["time", "words", "quote", "code", "zen", "symbols", "daily"];
+pub const MODE_NAMES: [&str; 8] = [
+    "time", "words", "quote", "code", "zen", "symbols", "daily", "missed",
+];
 
 /// Built-in defaults for the `[defaults]` counts: what a time, words or
 /// symbols run starts with when the config doesn't say.
@@ -330,6 +446,7 @@ fn resolve_default_mode(defaults: Option<&super::Defaults>, warnings: &mut Vec<S
         }
         "zen" => Mode::Zen,
         "daily" => Mode::Daily,
+        "missed" => Mode::Missed,
         "symbols" => Mode::Symbols(config_count(
             "symbol_count",
             defaults.symbol_count,
@@ -430,6 +547,61 @@ mod tests {
             let (_, warnings) = resolve(raw, None);
             assert!(warnings.is_empty(), "{name}: {warnings:?}");
         }
+    }
+
+    /// `stop_on_error` takes off / letter / word; anything else warns and
+    /// is off.
+    #[test]
+    fn stop_on_error_from_the_config() {
+        let typing = |name: &str| Config {
+            typing: Some(crate::config::Typing {
+                stop_on_error: Some(name.into()),
+                ..Default::default()
+            }),
+            ..Default::default()
+        };
+        let (resolved, warnings) = resolve(typing("Letter"), None);
+        assert!(warnings.is_empty());
+        assert_eq!(resolved.typing.stop_on_error, StopOnError::Letter);
+        let (resolved, warnings) = resolve(typing("strict"), None);
+        assert_eq!(resolved.typing.stop_on_error, StopOnError::Off);
+        assert!(
+            warnings[0].contains("unknown stop_on_error 'strict'"),
+            "{warnings:?}"
+        );
+    }
+
+    /// `pace` is written as a number or as text; out of range warns.
+    #[test]
+    fn pace_from_the_config() {
+        for (text, pace) in [
+            ("pace = 60", Pace::Wpm(60)),
+            ("pace = \"best\"", Pace::Best),
+        ] {
+            let raw: Config = toml::from_str(&format!("[typing]\n{text}")).unwrap();
+            let (resolved, warnings) = resolve(raw, None);
+            assert!(warnings.is_empty(), "{warnings:?}");
+            assert_eq!(resolved.typing.pace, pace);
+        }
+        let raw: Config = toml::from_str("[typing]\npace = 9000").unwrap();
+        let (resolved, warnings) = resolve(raw, None);
+        assert_eq!(resolved.typing.pace, Pace::Off);
+        assert!(warnings[0].contains("pace '9000'"), "{warnings:?}");
+    }
+
+    /// `idle_limit`: 0 turns it off, up to 600 s, more warns.
+    #[test]
+    fn idle_limit_from_the_config() {
+        for (seconds, limit) in [(0, None), (30, Some(30)), (600, Some(600))] {
+            let raw: Config = toml::from_str(&format!("[typing]\nidle_limit = {seconds}")).unwrap();
+            let (resolved, warnings) = resolve(raw, None);
+            assert!(warnings.is_empty(), "{warnings:?}");
+            assert_eq!(resolved.typing.idle_limit, limit);
+        }
+        let raw: Config = toml::from_str("[typing]\nidle_limit = 601").unwrap();
+        let (resolved, warnings) = resolve(raw, None);
+        assert_eq!(resolved.typing.idle_limit, Some(10));
+        assert!(warnings[0].contains("idle_limit 601"), "{warnings:?}");
     }
 
     #[test]
@@ -854,8 +1026,17 @@ mod tests {
                 word_pool: Some(WordPool::Extended),
                 punctuation: Some(true),
                 numbers: Some(true),
+                blind: Some(true),
+                stop_on_error: Some(StopOnError::Word),
+                pace: Some(Pace::Best),
             },
         );
+        assert!(
+            resolved.typing.blind,
+            "--blind applies on a broken file too"
+        );
+        assert_eq!(resolved.typing.stop_on_error, StopOnError::Word);
+        assert_eq!(resolved.typing.pace, Pace::Best);
         assert_eq!(warnings.len(), 1, "{warnings:?}");
         assert!(warnings[0].starts_with("could not parse"), "{warnings:?}");
         assert_eq!(resolved.palette, builtin::MONOKAI);

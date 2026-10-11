@@ -80,17 +80,33 @@ pub const ALL: &[(&str, ThemePalette)] = &[
     ("dracula", DRACULA),
 ];
 
-/// Look up a theme by name (case-insensitive). Returns `None` for unknown names.
+/// Look up a theme by name (case-insensitive): a built-in one, or a custom
+/// one from `~/.typerush/themes/` (see `theme::custom`). `None` for unknown
+/// names.
 pub fn by_name(name: &str) -> Option<ThemePalette> {
     let lower = name.to_lowercase();
     ALL.iter()
         .find(|(theme_name, _)| *theme_name == lower)
         .map(|(_, palette)| *palette)
+        .or_else(|| {
+            super::custom::installed()
+                .iter()
+                .find(|theme| theme.name == lower)
+                .map(|theme| theme.palette)
+        })
 }
 
-/// All built-in theme names, in registration order.
+/// Every theme name: the built-in ones in registration order, then the
+/// custom ones in name order.
 pub fn names() -> Vec<&'static str> {
-    ALL.iter().map(|(name, _)| *name).collect()
+    ALL.iter()
+        .map(|(name, _)| *name)
+        .chain(
+            super::custom::installed()
+                .iter()
+                .map(|theme| theme.name.as_str()),
+        )
+        .collect()
 }
 
 #[cfg(test)]
@@ -142,25 +158,8 @@ mod tests {
         assert_eq!(DRACULA.background, Color::Rgb(0x28, 0x2A, 0x36));
     }
 
-    /// WCAG relative luminance of an RGB color.
-    fn luminance(color: Color) -> f64 {
-        let Color::Rgb(r, g, b) = color else {
-            panic!("{color:?} is not an RGB color");
-        };
-        let channel = |c: u8| {
-            let c = f64::from(c) / 255.0;
-            if c <= 0.04045 {
-                c / 12.92
-            } else {
-                ((c + 0.055) / 1.055).powf(2.4)
-            }
-        };
-        0.2126 * channel(r) + 0.7152 * channel(g) + 0.0722 * channel(b)
-    }
-
     fn contrast(a: Color, b: Color) -> f64 {
-        let (a, b) = (luminance(a), luminance(b));
-        (a.max(b) + 0.05) / (a.min(b) + 0.05)
+        crate::theme::color::contrast(a, b).expect("RGB colors")
     }
 
     /// Every text color of a theme that paints its own background is easy

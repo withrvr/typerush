@@ -56,6 +56,109 @@ rule that keeps it fixed).
 
 ---
 
+## v0.7.0 — practice modes
+
+### Bugs (caught before they shipped)
+
+- **Settings outgrew short terminals.** Seven typing rows took Settings
+  from six rows to thirteen; at 80×24 they fit, but on a shorter window the
+  last rows — reset to defaults among them — were cut off with no way to
+  reach them. Fix: the list scrolls with the selection, with `▲ / ▼ more`
+  on the border, like the menu. Guard:
+  `settings_scroll_on_a_short_terminal`. Lesson: every list that grows
+  needs a plan for the screen it no longer fits.
+- **The menu at 80×24 again.** The `missed` row pushed the menu with a
+  snippet library past a standard terminal (the compact banner would have
+  gone). Fix: the blank line under the last option now gives way first —
+  after the gaps between categories, before the banner.
+  `whole_menu_fits_80x24_at_launch` caught it.
+- **Custom themes listed in byte order** (`Ocean` before `forest_2`).
+  Fix: sorted ignoring case, like snippets. Found by the discovery test.
+- **Chart labels off their values.** Asked for more axis labels, the
+  first version handed ratatui five or more x labels — and they drifted:
+  ratatui spreads the middle x labels over equal slots (label *i* centered
+  at (i + ½)·width/count), not at their values; its y labels are placed
+  proportionally and were fine. Found driving the release binary
+  (`0s … 1s 2s 3s … 4s`). Fix: two blank x labels keep the row, and
+  `draw_x_labels` writes each label centered on its own column, found from
+  the axis corner ratatui drew. Guard: `chart_is_drawn_under_the_results`
+  checks the labels are evenly spaced. Ticks are round (1, 2, 2.5, 5 ×
+  10ⁿ), at least four, as many as fit, and each axis ends on its last
+  label so labels sit on values.
+- **Content against box borders** ([#20]). The chart's y labels, the WPM
+  trend's bars and the Stats tables' ★ column started in a box's first
+  cell; two help lines filled their box; Settings put its ➤ in the first
+  cell. Fix: two cells of padding on those boxes (the tables' Mode column
+  one cell narrower so the sessions table still fits 80 columns), a wider
+  help box, no marker on Settings (the selected row shows by its bold label
+  and highlighted value). Guard: `nothing_touches_a_box_border` finds every
+  vertical border (a `│` run, overlays included) on every screen and fails
+  on anything drawn beside it — checked to fail with the old padding and
+  help width.
+- **Found by the last review of the branch** (fixed with a test each):
+  the chart's x labels panicked on a terminal 8–9 columns wide (`clamp`
+  with min > max) — `no_screen_panics_at_any_size` now draws every screen
+  at every width from 1 to 30; `F6` after a run over 64 KiB repeated one
+  empty word (it took the saved text, which is empty past the limit — it
+  now takes the run's words); stopping on words, the right space refused at
+  the end of a wrong word counted as a Space-key mistake; zen runs showed
+  "not saved: idle" though zen is never saved; `pace = best` on the daily
+  challenge raced any day's best while Results meant today's; the Settings
+  typing rows showed the file's values, not `--blind` / `--pace` in use. And
+  three tidy-ups: one source for the stats path (`App::stats_file`, read
+  through `App::history`), one helper for the typing rows, and word offsets
+  for the pace cursor counted only when there is one. Lesson: a value
+  shown on screen and a value used must come from the same place.
+- **The help box had no room to breathe.** Padding above and below meant
+  two more rows in a box that already used all 23 at 80×24; two entries
+  that wrapped onto a second line (`p n b`, `Mouse`) were reworded to one
+  line each — and the first rewording ran into the right border, which
+  `nothing_touches_a_box_border` caught. Guard: `help_fits_80x24` checks
+  the blank rows above and below.
+- **`--list-themes` flattened a TOML error** into one line of `?`s
+  (`printable` replaces the newlines). Fix: printed line by line, as the
+  error modal does. Found driving the release binary.
+
+### Features and changes
+
+- **One shape for every choice setting.** `stop_on_error`, `cursor` and
+  `sound` are enums with `NAMES` / `name` / `from_name`; the loader
+  resolves them through one `named` helper and `typerush config` checks
+  them with `Kind::Choice(&NAMES)`, so Settings, the CLI, the config and
+  `config set` can't disagree about the names. `pace` (a word or a number)
+  and `idle_limit` (seconds, 0 = off) have their own kinds; `pace = 60` and
+  `pace = "60"` both parse through an untagged `TextOrNumber`, because a
+  type error in TOML makes the loader drop the whole file.
+- **Stop on error is decided before anything moves.** A blocked key is
+  tallied (it counts against accuracy) and returns early; the last word of
+  a text has no space, so in `word` mode the run's end waits on it too.
+- **The bar cursor is the terminal's own.** A drawn bar would take a cell
+  and shift the line — the jitter the steady cursor was built to avoid. The
+  real cursor costs no room; its shape is set when the option changes and
+  reset on exit and in the panic hook.
+- **The key sound is a BEL byte.** An audio library would need system
+  audio headers on Linux to even build; the bell is one byte, and
+  terminals already let people choose how it sounds (or flashes).
+- **Pace counts in one stream** — word characters plus one per space —
+  the same way the cursor advances, so the ghost never drifts from the
+  text. `best` is looked up when the run begins; `App::history` loads
+  stats.json then if no screen has, never per frame.
+- **Missed words are marked as they happen** (`Word::had_error`), not
+  derived from the final text: a mistake you fixed is still a word worth
+  practising. Words from stats.json are filtered like a custom file's.
+- **Custom themes are installed once, globally.** Passing a theme list to
+  every lookup (config, CLI, `config set`, Settings, `--list-themes`)
+  would touch every caller; a `OnceLock` read by `builtin::by_name` and
+  `names` needs none. Tests never install, so they only see built-ins.
+- **F6 repeat is a replay.** The run's words are now seen, so it's saved
+  as `+replay` and compared with the run — the same rule as any replay.
+- **The trend's stars use the list's ★ rule** (`StatsView::best_indices`:
+  the session holding each mode's best), on a row of their own under the
+  bars, so a best is never hidden behind a tall bar. The trend box grew one
+  row; the sessions list shows one fewer at 80×24.
+
+---
+
 ## v0.6.0 — profile and deeper results
 
 ### Bugs (caught before they shipped)
@@ -362,3 +465,4 @@ rule that keeps it fixed).
   nothing is left to type.
 
 [#8]: https://github.com/withrvr/typerush/issues/8
+[#20]: https://github.com/withrvr/typerush/issues/20

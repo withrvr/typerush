@@ -14,7 +14,9 @@
 
 # -----------------------------------------------------------------------------
 # Theme — pick one of the built-in palettes by name.
-# Available names: dark, light, monokai, dracula
+# Available names: dark, light, monokai, dracula — and your own: a TOML file
+# in ~/.typerush/themes/ (ocean.toml is "ocean") with `base = "dark"` (or
+# another built-in) and any of the color slots listed under [colors] below.
 # Run `typerush --list-themes` to see what's currently shipped.
 # -----------------------------------------------------------------------------
 theme = "dark"
@@ -26,7 +28,7 @@ theme = "dark"
 # -----------------------------------------------------------------------------
 [defaults]
 # Which menu row to pre-select:
-#   "time" | "words" | "quote" | "code" | "zen" | "symbols" | "daily"
+#   "time" | "words" | "quote" | "code" | "zen" | "symbols" | "daily" | "missed"
 mode = "time"
 # Used when mode = "time". Standard menu rows: 15 / 30 / 60 / 120.
 time_seconds = 15
@@ -49,6 +51,22 @@ symbol_count = 25
 # pool = "common"        # "common" (default, ~430 frequent words) | "extended" (10,000 words)
 # punctuation = false    # attach commas, periods, quotes, etc. to ~25% of words
 # numbers = false        # mix in random 1–4 digit number tokens (~12% of slots)
+
+# -----------------------------------------------------------------------------
+# Typing — how a run behaves and looks while you type. The Settings screen
+# changes these too; `--blind`, `--stop-on-error` and `--pace` set them for
+# one launch.
+# -----------------------------------------------------------------------------
+# [typing]
+# live_wpm = true        # show WPM and accuracy while typing
+# blind = false          # no right/wrong colors while typing; numbers at the end
+# stop_on_error = "off"  # "off" | "letter" (a wrong key doesn't move the cursor)
+#                        #  | "word" (a word with a mistake can't be left)
+# cursor = "underline"   # "underline" | "block" | "bar"
+# sound = "off"          # "off" | "errors" | "keys" — the terminal's bell
+# pace = "off"           # "off" | "best" (your best for the mode) | a WPM, e.g. 60
+# idle_limit = 10        # a run with this many seconds without a key isn't saved;
+#                        # 0 = never
 
 # -----------------------------------------------------------------------------
 # Color overrides — applied ON TOP of the chosen theme.

@@ -110,7 +110,7 @@ in v0.3, as the category-grouped menu.)
 
 ## 🚧 In progress
 
-- 🚧 Release v0.2.1, v0.3.0, v0.4.0, v0.4.1, v0.5.0 and v0.6.0: git tags, GitHub release binaries,
+- 🚧 Release v0.2.1, v0.3.0, v0.4.0, v0.4.1, v0.5.0, v0.6.0 and v0.7.0: git tags, GitHub release binaries,
   crates.io. The latest published release is v0.2.0 — pre-built binaries on
   the [Releases page](https://github.com/withrvr/typerush/releases) and
   `cargo install typerush` both started with v0.1.1 / v0.2.0.
@@ -214,21 +214,65 @@ one pull request:
 - ✅ The CSV export gains raw WPM, consistency, missed and completed
 - ✅ `profile` joins `stats`, `settings` and `quit` on the menu's last row
 
+## ✅ v0.7 — Practice modes
+
+Worked in this order, one commit (or a few) per step, on one branch and
+one pull request:
+
+1. ✅ Plan (this section)
+2. ✅ Quick restart on `Tab` while typing, and repeat the run you just
+   finished (the same words) from Results with `F6`
+3. ✅ A `[typing]` section in the config and on the Settings screen:
+   hide the live WPM, and blind mode (no red/green while typing, the
+   numbers only at the end)
+4. ✅ Stop on error: `letter` (a wrong key doesn't move the cursor) or
+   `word` (a word with a mistake can't be left until it's fixed)
+5. ✅ Cursor styles — underline, block, bar — and an optional key sound
+   (the terminal's bell, on every key or only on mistakes)
+6. ✅ Pace cursor: a second, dimmer cursor moving at your best for the
+   mode, or at a target WPM
+7. ✅ Practise missed words: every session keeps the words you got wrong;
+   a `missed` run is built from your most-missed recent words
+8. ✅ Idle detection: a run with a long stretch without a key (10 s by
+   default) is not saved, and Results says why
+9. ✅ Custom themes from files in `~/.typerush/themes/`, on top of a
+   built-in or from scratch, listed and picked like the built-in ones
+10. ✅ Review, end-to-end test, docs, version 0.7.0
+
+**Added to v0.7 beyond the plan:**
+
+Found while building it:
+
+- ✅ `missed` can be the start mode (`mode = "missed"`), and `--missed`
+  starts it from the shell
+- ✅ The Settings list scrolls on a short terminal (it has thirteen rows
+  now), with `▲ / ▼ more` on the border
+- ✅ The menu's trailing blank line gives way before the banner, so the
+  whole menu still fits 80×24 with the new row
+
+Asked for after using it:
+
+- ✅ Results chart labelled on round numbers: at least four labels per
+  axis, as many as fit, each on its value (the x labels are drawn by hand —
+  ratatui's own sit in equal slots, off their ticks)
+- ✅ Stats WPM trend shows as many sessions as the box is wide (it was the
+  last 20), titled with how many
+- ✅ A ★ under each bar of the trend that holds its mode's best, on a row
+  of its own
+- ✅ Nothing drawn against a box's side
+  ([#20](https://github.com/withrvr/typerush/issues/20)): two cells of
+  padding on the chart, the trend and the Stats tables; a help box wide
+  enough for its longest line; no marker in Settings' first cell (the
+  selected row shows by its bold label and highlighted value)
+- ✅ A blank line of padding above and below the help text
+
 ---
 
 ## 🔲 Planned
 
-### v0.7 — Practice modes
-- 🔲 Practise missed words: a run built from the words you got wrong
-- 🔲 Repeat the run you just finished (same words) straight from Results —
-  v0.5's replay already does it from the Stats screen and `--replay`
-- 🔲 Stop-on-error and strict modes (must fix a mistake before moving on)
-- 🔲 Blind mode (no red/green while typing; results only at the end)
-- 🔲 Pace cursor: a ghost cursor at your PB or a target WPM
-- 🔲 Quick restart on `Tab`, and hide-live-WPM option
-- 🔲 Cursor styles (underline, block, bar) and an optional key-click sound
-- 🔲 Custom themes from a file in `~/.typerush/themes/`
-- 🔲 AFK detection: a run idle for too long is not saved
+Nothing is planned past v0.7 yet — the ideas below are candidates.
+[Open an issue](https://github.com/withrvr/typerush/issues/new/choose) to
+suggest one.
 
 ---
 

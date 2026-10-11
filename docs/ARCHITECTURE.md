@@ -36,11 +36,11 @@ The `Screen` enum in `src/app.rs` is the application's high-level state:
 ```mermaid
 stateDiagram-v2
     [*] --> Menu
-    [*] --> Typing: mode flag (--time, --words, --quote, --code, --zen, --symbols, --daily, --replay, --file)
+    [*] --> Typing: mode flag (--time, --words, --quote, --code, --zen, --symbols, --daily, --missed, --replay, --file)
     Menu --> Typing: Enter / Space / click an option
-    Typing --> Typing: Ctrl+R / F5 restart, Ctrl+P / F2 pause and resume
+    Typing --> Typing: Tab / F5 / Ctrl+R restart, Ctrl+P / F2 pause and resume
     Typing --> Results: mode finishes / Esc
-    Results --> Typing: Enter / F5 / Ctrl+R restart
+    Results --> Typing: Enter / F5 / Ctrl+R restart, F6 the same words
     Results --> Menu: Esc
     Results --> Stats: Tab
     Menu --> Stats: Tab / s
@@ -115,6 +115,9 @@ flowchart LR
     src --> settings["settings.rs
     Settings screen state (SettingsView) and actions:
     change, save through config::edit, apply at once"]
+    src --> options["options.rs
+    TypingOptions: live WPM, blind, stop on error,
+    cursor style, key sound, pace, idle limit"]
     src --> progress["progress.rs
     XP and levels (Level::of), Profile: totals,
     days typed, streaks, standard bests, calendar day"]
@@ -151,7 +154,10 @@ flowchart LR
     (new theme = one row in ALL)"]
     theme --> color["color.rs
     #RRGGBB and 16 ANSI color names: parse_color,
-    color_name (the other way)"]
+    color_name (the other way), contrast (WCAG)"]
+    theme --> custom["custom.rs
+    ~/.typerush/themes/*.toml: discover_in, parse,
+    install (by_name / names see them)"]
     src --> config["config/"]
     config --> config_mod["mod.rs
     Config / Defaults / Colors / Words from config.toml (serde)"]
@@ -417,6 +423,51 @@ The calendar (`ui::profile::render_calendar`) draws as many weeks as fit
 share of the busiest day shown in quarters, as glyphs that get denser; each
 day cell is a `ClickAction::Select(days_back)` target.
 
+### Practice options (v0.7.0)
+
+`options::TypingOptions` is the resolved `[typing]` section (and the
+`--blind`, `--stop-on-error`, `--pace` overrides), kept in `App::options`
+and changed live by Settings. Each named setting has `NAMES` / `name` /
+`from_name`; the loader resolves them through one `named` helper (unknown
+name: a warning and the default), and `config::edit` checks them with
+`Kind::Choice(&NAMES)` — so a new choice is one enum and one key.
+
+- **Stop on error** is decided in `handle_char` before anything moves: a
+  *blocked* key is tallied as a mistake, sets `App::rejected_key` (the
+  cursor turns the mistake color) and returns. `word` also holds the end of
+  the last word until it's right.
+- **Blind** is a parameter of `style_for_char` (typed text neutral) and of
+  the header (`show_live_numbers`).
+- **Cursor**: underline and block are styles on the character; the bar is
+  the terminal's cursor (`Frame::set_cursor_position` on the character, its
+  shape set by the main loop when the option changes and reset on exit and
+  in the panic hook).
+- **Sound** sets `App::bell` in `handle_char`; the main loop writes BEL to
+  the terminal and clears it — no audio library.
+- **Pace**: `App::pace_wpm` is worked out when a run begins (`best` reads
+  the history through `App::history`, which loads `stats_file` once if no
+  screen has), and `pace_position` turns elapsed time into a character
+  index in the text read as one stream; the typing renderer keeps each
+  word's offset in that stream while laying out.
+- **Idle**: `longest_idle` walks the per-second timeline; `too_idle` stops
+  the save and gives Results its reason.
+- **Missed words**: `Word::had_error` is set by any wrong key in the word
+  or on its space; records keep `mistyped` (≤ 200). `missed_words_run`
+  counts them over the last 100 sessions and builds the `Mode::Missed` run.
+- **Repeat** (`F6`) builds a `Replay` from the current run
+  (`App::repeat_run`) and restarts it.
+
+### Custom themes (v0.7.0)
+
+`theme::custom::discover_in` reads `~/.typerush/themes/*.toml` at start
+(through `config::load::read_config`, the same limits), parses each with
+`parse` — a `base` built-in plus a `Colors` table applied with the config's
+own `apply_color_overrides` — and `install` puts them in a process-wide
+`OnceLock`. `builtin::by_name` and `names` look there after the built-ins,
+so the config, `--theme`, `typerush config`, Settings and `--list-themes`
+all see them without being passed anything. Tests never install, so they
+only see the built-ins; the parsing and discovery are tested directly.
+
 ### Config loading
 
 `config::load::load_from(path, cli)` never fails: a missing file means
@@ -476,6 +527,20 @@ For v0.5 and later also: give it a name in `Mode::label` that
 round-trips every menu mode), and if it can be a start mode, a name in
 `config::load::MODE_NAMES`, `resolve_default_mode` and
 `settings::start_settings`.
+
+## When you add a typing option
+
+1. A field (and, for a choice, an enum with `NAMES` / `name` /
+   `from_name`) in `options::TypingOptions`, its default in `Default`.
+2. The `Typing` field in `config/mod.rs`, resolved in
+   `load::resolve_typing` (a choice through `named`), and a CLI override in
+   `CliOverrides` if it gets a flag.
+3. A `Key` in `config::edit::KEYS` (`Kind::Choice(&NAMES)` for a choice)
+   with its `file_value` / `default_value` arms.
+4. A `settings::Row`, its arm in `settings_change` and its label and value
+   in `ui::settings::row_line`.
+5. The commented default in `config.example.toml`, and USAGE's typing
+   options.
 
 ## When you add a setting
 

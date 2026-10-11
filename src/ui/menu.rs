@@ -75,6 +75,8 @@ struct MenuLines {
     selected_line: usize,
     /// Blank lines between categories in `lines`.
     gaps: usize,
+    /// `lines` ends with the blank line under the last option.
+    trailing_blank: bool,
 }
 
 /// Render the menu screen. `app.menu_index` highlights the active option.
@@ -119,12 +121,16 @@ pub fn render(f: &mut Frame, app: &App, area: Rect) -> &'static [super::Hint] {
     {
         (Banner::Full, spaced)
     } else {
-        let banner =
-            if text_width >= COMPACT_WIDTH as usize && gaps_that_fit(Banner::Compact).is_some() {
-                Banner::Compact
-            } else {
-                Banner::Hidden
-            };
+        // The blank line under the last option is the last thing to go
+        // before the banner: the compact banner stays if the list fits
+        // without it.
+        let fits_tight =
+            (box_area.height as usize) >= Banner::Compact.rows() as usize + CHROME + dense_rows - 1;
+        let banner = if text_width >= COMPACT_WIDTH as usize && fits_tight {
+            Banner::Compact
+        } else {
+            Banner::Hidden
+        };
         let fit = gaps_that_fit(banner).unwrap_or(0);
         // All the gaps between categories, or none: a mix (dense at the
         // top, spaced below) reads as misaligned.
@@ -171,14 +177,22 @@ pub fn render(f: &mut Frame, app: &App, area: Rect) -> &'static [super::Hint] {
         banner_area,
     );
 
+    // The blank line under the last option goes when it's all that doesn't
+    // fit (see above).
+    let mut menu = menu;
+    let visible = menu_area.height as usize;
+    if menu.lines.len() > visible && menu.lines.last().is_some_and(|l| l.width() == 0) {
+        menu.lines.pop();
+        menu.trailing_blank = false;
+    }
     // Too short even so: scroll so the selected row (and its heading, just
     // above it) stays visible.
-    let visible = menu_area.height as usize;
     let scroll = (menu.selected_line + 1).saturating_sub(visible);
     let more_above = scroll > 0;
     // The trailing blank line is padding, not an option: it never counts
     // as "more".
-    let more_below = scroll + visible < menu.lines.len() - 1;
+    let options_end = menu.lines.len() - usize::from(menu.trailing_blank);
+    let more_below = scroll + visible < options_end;
     let mut targets = app.click_targets.borrow_mut();
     for (line, x, width, index) in menu.chips {
         if line < scroll || line - scroll >= visible {
@@ -399,5 +413,6 @@ fn menu_lines(app: &App, width: usize, gaps_wanted: bool) -> MenuLines {
         chips,
         selected_line,
         gaps,
+        trailing_blank: true,
     }
 }

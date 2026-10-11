@@ -10,10 +10,10 @@
 use ratatui::{
     prelude::*,
     symbols::Marker,
-    widgets::{Axis, Block, Borders, Chart, Dataset, GraphType, Paragraph},
+    widgets::{Axis, Block, Borders, Chart, Dataset, GraphType, Padding, Paragraph},
 };
 
-use ratatui::crossterm::event::{KeyCode, KeyModifiers};
+use ratatui::crossterm::event::KeyCode;
 
 use super::{key, label};
 use crate::{app::App, storage};
@@ -52,6 +52,16 @@ pub fn render(f: &mut Frame, app: &App, area: Rect) -> &'static [super::Hint] {
             .fg(theme.correct)
             .add_modifier(Modifier::BOLD),
     )];
+    if let (false, Some(idle), Some(limit)) = (
+        app.session_just_saved,
+        app.too_idle(),
+        app.options.idle_limit,
+    ) {
+        title.push(Span::styled(
+            format!("   not saved: {idle} s without a key (the limit is {limit} s)"),
+            Style::default().fg(theme.incorrect),
+        ));
+    }
     if app.session_just_saved {
         let (before, after) = (
             crate::progress::Level::of(comparison.xp_before),
@@ -240,15 +250,13 @@ pub fn render(f: &mut Frame, app: &App, area: Rect) -> &'static [super::Hint] {
 
     render_chart(f, app, layout[2]);
 
+    // What fits in 80 columns; Ctrl+C quits here as everywhere.
     const HINTS: &[super::Hint] = &[
         ("Enter / F5 restart", key(KeyCode::Enter)),
+        ("F6 repeat", key(KeyCode::F(6))),
         ("Esc menu", key(KeyCode::Esc)),
         ("Tab stats", key(KeyCode::Tab)),
         ("F1 help", key(KeyCode::F(1))),
-        (
-            "Ctrl+C quit",
-            Some((KeyCode::Char('c'), KeyModifiers::CONTROL)),
-        ),
     ];
     HINTS
 }
@@ -262,8 +270,11 @@ fn render_chart(f: &mut Frame, app: &App, area: Rect) {
     // The legend lives in the title: the chart's own hides itself on a
     // chart this short, and here it never covers a line. Names, not only
     // colors, tell the lines apart.
+    // Two cells of padding, as text has in every box: the axis labels and
+    // the lines keep off the border.
     let block = Block::default()
         .borders(Borders::ALL)
+        .padding(Padding::horizontal(2))
         .border_style(Style::default().fg(theme.pending))
         .title(Line::from(vec![
             Span::raw(" this run, second by second   "),
@@ -290,9 +301,20 @@ fn render_chart(f: &mut Frame, app: &App, area: Rect) {
 
     let [wpm, raw, errors] = chart_points(&app.timeline, seconds);
     let top = wpm.iter().chain(&raw).map(|&(_, y)| y).fold(0.0, f64::max);
-    // Room above the highest point, on a round number.
-    let top = ((top * 1.1 / 10.0).ceil() * 10.0).max(10.0);
+    // Axis labels on round numbers, at least four on each axis and as many
+    // as fit: one per two rows up the side, one per seven cells along the
+    // bottom (room for "120s" and a gap). The plot is the box less its
+    // borders and padding, the y labels and axis line, the x labels.
+    let inner = block.inner(area);
+    let plot_rows = inner.height.saturating_sub(2) as usize;
+    let plot_cells = inner.width.saturating_sub(5) as usize;
+    let (y_step, y_count) = ticks(top, plot_rows.div_ceil(2));
+    let (x_step, x_count) = ticks(seconds as f64, plot_cells / 7);
     let label = |text: String| Span::styled(text, Style::default().fg(theme.pending));
+    let y_labels: Vec<Span> = (0..y_count)
+        .map(|i| label(format!("{:.0}", i as f64 * y_step)))
+        .collect();
+    let x_top = x_step * (x_count - 1) as f64;
     let datasets = vec![
         Dataset::default()
             .name("raw")
@@ -319,27 +341,96 @@ fn render_chart(f: &mut Frame, app: &App, area: Rect) {
         .style(super::base_style(theme))
         .block(block)
         .legend_position(None)
+        // Each axis runs from 0 to its last round label. The y labels are
+        // spread evenly, so each sits on its value. The x labels ratatui
+        // would put in equal slots, off their ticks: two blank ones keep
+        // their row, and they are drawn below, each on its own second.
         .x_axis(
             Axis::default()
                 .style(Style::default().fg(theme.pending))
-                .bounds([1.0, seconds as f64])
-                .labels([
-                    label("1s".into()),
-                    label(format!("{}s", seconds.div_ceil(2))),
-                    label(format!("{seconds}s")),
-                ]),
+                .bounds([0.0, x_top])
+                .labels([Span::raw(""), Span::raw("")]),
         )
         .y_axis(
             Axis::default()
                 .style(Style::default().fg(theme.pending))
-                .bounds([0.0, top])
-                .labels([
-                    label("0".into()),
-                    label(format!("{:.0}", top / 2.0)),
-                    label(format!("{top:.0}")),
-                ]),
+                .bounds([0.0, y_step * (y_count - 1) as f64])
+                .labels(y_labels),
         );
     f.render_widget(chart, area);
+    let labels: Vec<(f64, String)> = (0..x_count)
+        .map(|i| (i as f64 * x_step, format!("{:.0}s", i as f64 * x_step)))
+        .collect();
+    draw_x_labels(
+        f.buffer_mut(),
+        inner,
+        &labels,
+        x_top,
+        Style::default().fg(theme.pending),
+    );
+}
+
+/// Draw `labels` — (value, text) — under the chart's x axis in `inner`, each
+/// centered on its value's column (kept inside `inner`). The axis is found
+/// by its corner, `└`, where ratatui drew it; the plot runs from just right
+/// of the corner to the right edge, 0 to `top`.
+fn draw_x_labels(
+    buf: &mut ratatui::buffer::Buffer,
+    inner: Rect,
+    labels: &[(f64, String)],
+    top: f64,
+    style: Style,
+) {
+    let corner = (inner.top()..inner.bottom())
+        .flat_map(|y| (inner.left()..inner.right()).map(move |x| (x, y)))
+        .find(|&(x, y)| buf[(x, y)].symbol() == "└");
+    let Some((corner_x, corner_y)) = corner else {
+        return;
+    };
+    let row = corner_y + 1;
+    if row >= inner.bottom() || top <= 0.0 {
+        return;
+    }
+    let left = corner_x + 1;
+    let width = inner.right().saturating_sub(left).max(1);
+    for (value, text) in labels {
+        let column = left + ((value / top) * f64::from(width - 1)).round() as u16;
+        let text_width = text.chars().count() as u16;
+        // Wider than the chart (a tiny terminal): no room for it at all.
+        if text_width > inner.width {
+            continue;
+        }
+        let start = column
+            .saturating_sub(text_width / 2)
+            .max(inner.left())
+            .min(inner.right() - text_width);
+        buf.set_string(start, row, text, style);
+    }
+}
+
+/// Round axis labels for values from 0 to `max`: the step (1, 2, 2.5 or 5
+/// times a power of ten, whole numbers only) and how many labels, 0 included — the most that
+/// stay within `room`, never fewer than four (an axis may then reach a
+/// little past `max`).
+fn ticks(max: f64, room: usize) -> (f64, usize) {
+    // 1, 2, 5, 10, 20, 25, 50, 100, 200, 250, … — round every way.
+    let steps = (0..9).flat_map(|power| {
+        let scale = 10f64.powi(power);
+        let quarter = (power > 0).then_some(2.5 * scale);
+        [Some(scale), Some(2.0 * scale), quarter, Some(5.0 * scale)]
+            .into_iter()
+            .flatten()
+    });
+    let room = room.max(4);
+    let mut chosen = (1.0, 4);
+    for step in steps {
+        let count = ((max / step).ceil() as usize + 1).max(4);
+        chosen = (step, count);
+        if count <= room {
+            break;
+        }
+    }
+    chosen
 }
 
 /// (WPM so far, raw speed, mistakes) as chart points for the first
@@ -399,6 +490,56 @@ mod tests {
         assert_eq!(wpm[4], (5.0, 33.6)); // 14 correct in 5 s
     }
 
+    /// Labels land on round numbers, at least four, as many as the room
+    /// allows; the axis reaches the first label at or past the highest value.
+    #[test]
+    fn ticks_are_round_and_at_least_four() {
+        assert_eq!(ticks(87.0, 5), (25.0, 5), "0 25 50 75 100");
+        assert_eq!(ticks(87.0, 10), (10.0, 10));
+        assert_eq!(ticks(87.0, 2), (50.0, 4), "never fewer than four");
+        assert_eq!(ticks(2.0, 10), (1.0, 4));
+        assert_eq!(ticks(30.0, 7), (5.0, 7));
+        assert_eq!(ticks(120.0, 9), (20.0, 7));
+        assert_eq!(ticks(0.0, 6), (1.0, 4));
+        for (max, room) in [(3600.0, 10), (999.0, 4), (61.0, 30)] {
+            let (step, count) = ticks(max, room);
+            assert!(
+                count >= 4 && (count <= room.max(4)),
+                "{max} {room}: {count}"
+            );
+            assert!(step * (count - 1) as f64 >= max, "{max}: reaches the top");
+        }
+    }
+
+    /// Review fix: on a terminal narrower than an x label (8–9 columns),
+    /// placing the label panicked (`clamp` with min > max). Every width
+    /// from 1 to 30 draws a charted run without panicking.
+    #[test]
+    fn chart_survives_any_width() {
+        use crate::app::{Mode, Screen};
+        use std::time::{Duration, Instant};
+        let mut app = App::new(None, crate::theme::builtin::DARK, Mode::Time(15));
+        app.start_game(Mode::Words(10)).unwrap();
+        app.screen = Screen::Results;
+        app.stats_cache = Some(Vec::new());
+        let end = Instant::now();
+        app.ended_at = Some(end);
+        app.started_at = Some(end - Duration::from_secs(12));
+        app.timeline = vec![
+            Second {
+                typed: 5,
+                correct: 5,
+                errors: 0
+            };
+            12
+        ];
+        for width in 1..=30 {
+            let mut terminal =
+                ratatui::Terminal::new(ratatui::backend::TestBackend::new(width, 24)).unwrap();
+            terminal.draw(|f| crate::ui::render(f, &app)).unwrap();
+        }
+    }
+
     fn screen(app: &App) -> String {
         let mut terminal =
             ratatui::Terminal::new(ratatui::backend::TestBackend::new(80, 24)).unwrap();
@@ -433,7 +574,7 @@ mod tests {
             .collect();
         let shown = screen(&app);
         assert!(shown.contains(" this run, second by second "), "{shown}");
-        for text in ["━ wpm   ━ raw   • errors", "1s", "10s"] {
+        for text in ["━ wpm   ━ raw   • errors", "0s", "10s"] {
             assert!(shown.contains(text), "{text:?} missing:\n{shown}");
         }
         assert!(
@@ -447,6 +588,55 @@ mod tests {
             .last()
             .unwrap()
             .starts_with("  Enter / F5 restart"));
+
+        // Round labels, at least four per axis; along the bottom of a ten-
+        // second run at 80 columns, every two seconds. Nothing touches the
+        // box's left border: the y labels start two cells in.
+        let rows: Vec<&str> = shown.lines().collect();
+        let x_row = rows.iter().find(|r| r.contains("10s")).unwrap();
+        // Each label centered on its own second: evenly spaced (ratatui's
+        // own x labels sit in equal slots, off their values).
+        let centers: Vec<usize> = ["0s", "2s", "4s", "6s", "8s", "10s"]
+            .iter()
+            .map(|label| {
+                let start = x_row
+                    .char_indices()
+                    .find(|(i, _)| {
+                        x_row[*i..].starts_with(label)
+                            && !x_row[..*i].ends_with(|c: char| c.is_ascii_digit())
+                    })
+                    .map(|(i, _)| x_row[..i].chars().count())
+                    .unwrap_or_else(|| panic!("{label}: {x_row}"));
+                start + label.len() / 2
+            })
+            .collect();
+        let gaps: Vec<usize> = centers.windows(2).map(|w| w[1] - w[0]).collect();
+        let (low, high) = (gaps.iter().min().unwrap(), gaps.iter().max().unwrap());
+        assert!(high - low <= 1, "uneven labels {gaps:?}: {x_row}");
+        let y_labels = rows
+            .iter()
+            .filter(|r| r.starts_with("│  ") && r[5..].trim_start().starts_with(char::is_numeric))
+            .count();
+        assert!(y_labels >= 4, "{y_labels} y labels:\n{shown}");
+        assert!(rows
+            .iter()
+            .all(|r| !r.starts_with("│0") && !r.starts_with("│ 0")));
+
+        // A taller, wider window fits more labels.
+        let mut terminal =
+            ratatui::Terminal::new(ratatui::backend::TestBackend::new(130, 45)).unwrap();
+        terminal.draw(|f| crate::ui::render(f, &app)).unwrap();
+        let big: String = terminal
+            .backend()
+            .buffer()
+            .content()
+            .iter()
+            .map(|c| c.symbol())
+            .collect();
+        assert!(
+            big.contains("1s") && big.contains("9s"),
+            "every second at 130 wide"
+        );
 
         app.started_at = Some(end - Duration::from_millis(1500));
         assert!(screen(&app).contains("too short to chart"));

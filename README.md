@@ -46,6 +46,8 @@ with a quote — TypeRush meets you where you already work: the command line.
 - ⏸ **Pause** — `Ctrl+P` / `F2` stops the clock and hides the text
 - 📊 **A chart of every run** — WPM, raw speed and mistakes second by second, plus raw WPM, consistency and a correct / incorrect / missed breakdown
 - 🏅 **Levels, XP and a profile** — earn XP for time typed, see your bests side by side and a year of practice on an activity calendar
+- 🎯 **Practice your way** — practise the words you got wrong, stop on errors, blind mode, a pace cursor racing your best, cursor styles
+- 🖌 **Your own themes** — drop a small TOML file in `~/.typerush/themes/`
 - 🔤 **Seven code languages** — Rust, Python, JavaScript, Go, Java, SQL, Shell
 - 📚 **10k-word pool & punctuation/number drills** — toggle them with `b` / `p` / `n` in the menu when you want a tougher session
 - 🗂  **Personal snippet library** — drop `.txt` files in `~/.typerush/snippets/`, each with its own personal best
@@ -88,6 +90,7 @@ typerush --quote              # one programming quote
 typerush --code rust          # rust | python | js | go | java | sql | shell
 typerush --symbols 25         # programming-punctuation drill
 typerush --daily              # today's daily challenge
+typerush --missed             # practise the words you've got wrong lately
 typerush --replay             # type your last session again, word for word
 typerush --zen                # zen mode — no timer, no pressure
 typerush --file my_text.txt   # type anything you want
@@ -132,7 +135,8 @@ typerush --init-config                # write a starter ~/.typerush/config.toml
 | --------------- | ------------------------------- |
 | `Enter`         | start / restart a session       |
 | `Esc`           | back to menu / end session      |
-| `Ctrl+R` / `F5` | restart the current mode        |
+| `Tab` / `F5`    | restart the current mode        |
+| `F6`            | the same words again (Results)  |
 | `Ctrl+P` / `F2` | pause / resume while typing     |
 | `Tab`           | jump to your stats history      |
 | `c`             | settings (from the menu)        |
