@@ -149,20 +149,31 @@ one pull request:
 - ✅ Stats opens on the run you just finished; `[all]` button; a title row
   whose buttons and counter never move
 
+## 🚧 v0.5 — Quality of life
+
+Worked in this order, one commit (or a few) per step, on one branch and
+one pull request:
+
+1. 🚧 Plan (this section)
+2. 🔲 Pause / resume mid-session: `Ctrl+P` / `F2` stops the clock and hides
+   the text; paused time never counts
+3. 🔲 Replay a recent session word-for-word: every session keeps the text
+   it typed; pick one on the Stats screen (or `--replay N`) and type the
+   same words again, compared with the original run
+4. 🔲 Daily challenge: the same words for everyone on a given day, from a
+   seed of the date (`daily` menu row, `--daily`), with today's best
+5. 🔲 Export stats as CSV: `typerush export [FILE]`, and `e` on the Stats
+   screen
+6. 🔲 `typerush config path / show / get / set / reset` and
+   `typerush --init-config` (also `config init`): edit
+   `~/.typerush/config.toml` from the shell, comments and layout kept
+7. 🔲 In-app Settings screen: theme (previewed as you pick), start mode,
+   word settings, reset to defaults — saved to `config.toml` at once
+8. 🔲 Review, end-to-end test, docs, version 0.5.0
+
 ---
 
 ## 🔲 Planned
-
-### v0.5 — Quality of life
-- 🔲 Pause / resume mid-session
-- 🔲 Replay a recent session word-for-word
-- 🔲 Export stats as CSV
-- 🔲 Daily challenge (deterministic seed-of-the-day)
-- 🔲 `typerush config get/set/show/reset/path` CLI subcommands (edit `~/.typerush/config.toml` without opening it)
-- 🔲 In-app Settings screen — theme picker, default mode picker, reset-to-defaults
-- 🔲 `typerush --init-config` writes a starter `config.toml` to `~/.typerush/`
-
----
 
 ### v0.6 — Profile and deeper results
 - 🔲 Profile screen: best per time and per word count side by side,
