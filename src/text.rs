@@ -86,6 +86,19 @@ pub fn path_text(text: &str) -> Cow<'_, str> {
     replace_matching(text, is_unsafe)
 }
 
+/// `path` as shown on screen: made [`printable`], with the home folder
+/// written `~` (`~/.typerush/stats.csv`) — shorter, so it fits a box, and
+/// a path under it reads the same on every machine.
+pub fn screen_path(path: &std::path::Path) -> String {
+    let home = std::env::home_dir().filter(|home| home.is_absolute());
+    let text =
+        match home.and_then(|home| path.strip_prefix(home).ok().map(|rest| rest.to_path_buf())) {
+            Some(rest) => std::path::Path::new("~").join(rest).display().to_string(),
+            None => path.display().to_string(),
+        };
+    printable(&text).into_owned()
+}
+
 /// `text` cut to at most `max_width` terminal cells by replacing its middle
 /// with `…` (`quarterly-r…nal-draft-q1`). The end usually tells similar names
 /// apart, so it stays visible. Width is measured in cells (a CJK character
@@ -130,6 +143,22 @@ pub fn shorten(text: &str, max_width: usize) -> Cow<'_, str> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Under the home folder a path is shown from `~`; anywhere else as it
+    /// is; either way made printable.
+    #[test]
+    fn screen_paths_start_from_home() {
+        let Some(home) = std::env::home_dir().filter(|home| home.is_absolute()) else {
+            return;
+        };
+        let inside = home.join(".typerush").join("stats.csv");
+        let expected = std::path::Path::new("~")
+            .join(".typerush")
+            .join("stats.csv");
+        assert_eq!(screen_path(&inside), expected.display().to_string());
+        let elsewhere = std::path::Path::new("/elsewhere/a\u{1b}b.csv");
+        assert_eq!(screen_path(elsewhere), "/elsewhere/a?b.csv");
+    }
 
     #[test]
     fn printable_replaces_control_and_bidi_characters() {

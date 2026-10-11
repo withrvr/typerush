@@ -22,7 +22,7 @@ use std::{
 /// Field names are part of the on-disk format — don't rename them without a
 /// migration story. New optional fields use `#[serde(default)]` so old records
 /// without them deserialize cleanly.
-#[derive(Clone, Debug, Serialize, Deserialize)]
+#[derive(Clone, Debug, Default, Serialize, Deserialize)]
 pub struct SessionRecord {
     /// Final words-per-minute.
     pub wpm: f64,
@@ -50,7 +50,19 @@ pub struct SessionRecord {
     /// Added in v0.3.0; old records without this field deserialise to an empty map.
     #[serde(default)]
     pub key_misses: HashMap<String, u64>,
+    /// The words of the session, separated by single spaces, so it can be
+    /// replayed word for word: every word of a words, quote, code, symbols,
+    /// custom or daily run; the words reached in a time run. Empty when the
+    /// text was longer than [`MAX_TEXT_BYTES`]. Added in v0.5.0; older
+    /// records have none and aren't written with an empty one.
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub text: String,
 }
+
+/// Longest session text kept for replaying, in bytes: a little over an
+/// hour's typing at 150 WPM. Longer runs (a big custom file) are saved
+/// without their text, so stats.json stays small.
+pub const MAX_TEXT_BYTES: usize = 64 * 1024;
 
 /// Directory we write to: `$HOME/.typerush`. Falls back to the current
 /// directory if no home directory can be found. An empty or relative
@@ -140,6 +152,61 @@ pub fn save_session_to_path(path: &Path, record: &SessionRecord) -> Result<Vec<S
     history.push(record.clone());
     write_atomic(path, &serde_json::to_string_pretty(&history)?)?;
     Ok(history)
+}
+
+/// Columns of the CSV export, in order.
+pub const CSV_HEADER: &str =
+    "timestamp,mode,wpm,accuracy,duration_secs,words,correct_chars,total_chars";
+
+/// `sessions` as CSV (RFC 4180, one row per session, oldest first) for a
+/// spreadsheet. Timestamps are RFC 3339 with the UTC offset; numbers have
+/// two decimals. Key counts and session text are left out.
+pub fn to_csv(sessions: &[SessionRecord]) -> String {
+    use std::fmt::Write as _;
+    let mut csv = format!("{CSV_HEADER}\n");
+    for s in sessions {
+        let _ = writeln!(
+            csv,
+            "{},{},{:.2},{:.2},{:.2},{},{},{}",
+            s.timestamp
+                .to_rfc3339_opts(chrono::SecondsFormat::Secs, false),
+            csv_field(&crate::text::printable(&s.mode)),
+            s.wpm,
+            s.accuracy,
+            s.duration_secs,
+            s.word_count,
+            s.correct_chars,
+            s.total_chars,
+        );
+    }
+    csv
+}
+
+/// One CSV text field. A spreadsheet runs a cell that starts with `=`, `+`,
+/// `-` or `@` as a formula, and a mode label carries a file name (or
+/// anything, in a hand-edited stats.json): such a field gets a leading `'`.
+/// Fields with a comma or quote are quoted. (Control characters are already
+/// gone: the label went through `text::printable`.)
+fn csv_field(text: &str) -> String {
+    let text = if text.starts_with(['=', '+', '-', '@']) {
+        format!("'{text}")
+    } else {
+        text.to_string()
+    };
+    if text.contains([',', '"']) {
+        format!("\"{}\"", text.replace('"', "\"\""))
+    } else {
+        text
+    }
+}
+
+/// Write [`to_csv`] of `sessions` to `path`, creating its folder if needed;
+/// atomic like every file TypeRush writes.
+pub fn export_csv(path: &Path, sessions: &[SessionRecord]) -> std::io::Result<()> {
+    if let Some(dir) = path.parent().filter(|dir| !dir.as_os_str().is_empty()) {
+        fs::create_dir_all(dir)?;
+    }
+    write_atomic(path, &to_csv(sessions))
 }
 
 /// Load every saved session at `path` (normally [`stats_path`]) in the order
@@ -336,7 +403,8 @@ pub struct KeyAccuracyStat {
 pub struct ResultsComparison {
     /// WPM of the session before this one (any mode).
     pub last_wpm: Option<f64>,
-    /// Best WPM in this mode *before* this session.
+    /// Best WPM in this mode *before* this session — on the same text only,
+    /// when one was given (the daily challenge: today's best).
     pub previous_mode_best: Option<f64>,
 }
 
@@ -344,12 +412,26 @@ impl ResultsComparison {
     /// `sessions` is the full history; `includes_current` says whether the
     /// last entry is the session being shown (it was saved) and must be left
     /// out. Unsaved sessions (Zen, < 1 s, zero keystrokes) aren't in history.
-    pub fn new(sessions: &[SessionRecord], includes_current: bool, mode_label: &str) -> Self {
+    /// With `same_text`, only earlier runs of exactly that text count
+    /// towards the best.
+    pub fn new(
+        sessions: &[SessionRecord],
+        includes_current: bool,
+        mode_label: &str,
+        same_text: Option<&str>,
+    ) -> Self {
         let previous =
             &sessions[..sessions.len() - usize::from(includes_current).min(sessions.len())];
         Self {
             last_wpm: previous.last().map(|s| s.wpm),
-            previous_mode_best: personal_best_for_mode(previous, mode_label),
+            previous_mode_best: match same_text {
+                None => personal_best_for_mode(previous, mode_label),
+                Some(text) => personal_best(
+                    previous
+                        .iter()
+                        .filter(|s| s.mode == mode_label && s.text == text),
+                ),
+            },
         }
     }
 }
@@ -404,7 +486,7 @@ pub struct ModeBest {
 }
 
 /// Every mode in `sessions` with its best, in menu order: time, words,
-/// code, quote, symbols, custom, then anything else; numbers in numeric
+/// code, symbols, custom, daily, quote, then anything else; numbers in numeric
 /// order within a family (`time-15s` before `time-120s`).
 pub fn bests_by_mode(sessions: &[SessionRecord]) -> Vec<ModeBest> {
     let mut by_mode: HashMap<&str, ModeBest> = HashMap::new();
@@ -435,7 +517,9 @@ pub fn bests_by_mode(sessions: &[SessionRecord]) -> Vec<ModeBest> {
 /// Sort key for a mode label: menu family first, then the label's first
 /// number as a number, then the text around it.
 fn mode_sort_key(mode: &str) -> (usize, String, u64, String) {
-    const FAMILIES: [&str; 6] = ["time-", "words-", "code-", "quote", "symbols-", "custom"];
+    const FAMILIES: [&str; 7] = [
+        "time-", "words-", "code-", "symbols-", "custom", "daily", "quote",
+    ];
     let family = FAMILIES
         .iter()
         .position(|family| mode.starts_with(family))
@@ -468,8 +552,11 @@ pub struct StatsView {
     pub summary: StatsSummary,
     /// History indices of the sessions holding a mode's best (marked ★).
     pub best_indices: std::collections::HashSet<usize>,
-    /// Sessions table: rows scrolled past, newest first. A `Cell` so drawing
-    /// can clamp it to the rows that fit.
+    /// The highlighted row of the list showing (sessions newest first, or
+    /// the bests table): the one Enter replays.
+    pub selected: usize,
+    /// First row drawn. A `Cell` so drawing can scroll it to keep the
+    /// selected row in view within the rows that fit.
     pub scroll: std::cell::Cell<usize>,
 }
 
@@ -522,7 +609,27 @@ impl StatsView {
             .filter(|&i| mode.is_none_or(|mode| history[i].mode == mode))
             .collect();
         self.summary = StatsSummary::new(self.indices.iter().map(|&i| &history[i]));
+        self.selected = 0;
         self.scroll.set(0);
+    }
+
+    /// Rows in the list showing: the category's sessions, or one per mode.
+    pub fn row_count(&self) -> usize {
+        if self.showing_bests() {
+            self.bests.len()
+        } else {
+            self.indices.len()
+        }
+    }
+
+    /// History index of the session on the selected row: that session, or
+    /// on the bests table the run holding that mode's best.
+    pub fn selected_session(&self) -> Option<usize> {
+        if self.showing_bests() {
+            return self.bests.get(self.selected).map(|best| best.best_index);
+        }
+        let newest_first = self.indices.len().checked_sub(self.selected + 1)?;
+        self.indices.get(newest_first).copied()
     }
 
     /// Next (or previous) category, wrapping around.
@@ -536,11 +643,18 @@ impl StatsView {
         self.select(history, index);
     }
 
-    /// Scroll the sessions table by `rows` (negative: towards the newest).
-    pub fn scroll_by(&self, rows: isize) {
-        let last = self.indices.len().saturating_sub(1);
-        self.scroll
-            .set(self.scroll.get().saturating_add_signed(rows).min(last));
+    /// Move the selection by `rows` (negative: up, towards the newest),
+    /// stopping at either end; the list scrolls with it when drawn.
+    pub fn move_selection(&mut self, rows: isize) {
+        let last = self.row_count().saturating_sub(1);
+        self.selected = self.selected.saturating_add_signed(rows).min(last);
+    }
+
+    /// Select row `row` (clicked), if there is one.
+    pub fn select_row(&mut self, row: usize) {
+        if row < self.row_count() {
+            self.selected = row;
+        }
     }
 }
 
@@ -576,8 +690,7 @@ mod tests {
             total_chars: 105,
             duration_secs: 30.0,
             timestamp,
-            key_hits: HashMap::new(),
-            key_misses: HashMap::new(),
+            ..SessionRecord::default()
         }
     }
 
@@ -1052,6 +1165,7 @@ mod tests {
             timestamp: Local::now(),
             key_hits: hits.clone(),
             key_misses: misses.clone(),
+            text: "def f(): pass".into(),
         };
         let json = serde_json::to_string(&original).unwrap();
         let restored: SessionRecord = serde_json::from_str(&json).unwrap();
@@ -1065,6 +1179,77 @@ mod tests {
         assert!((restored.duration_secs - 45.5).abs() < 1e-9);
         assert_eq!(restored.key_hits, hits);
         assert_eq!(restored.key_misses, misses);
+        assert_eq!(restored.text, "def f(): pass");
+    }
+
+    /// With a text to match (the daily challenge), the best counts only
+    /// earlier runs of that same text: today's best, not every day's.
+    #[test]
+    fn results_comparison_on_the_same_text() {
+        let mut yesterday = make_record(90.0, "daily", 1);
+        yesterday.text = "old words".into();
+        let mut today = make_record(60.0, "daily", 0);
+        today.text = "new words".into();
+        let sessions = vec![yesterday, today];
+        let same = ResultsComparison::new(&sessions, false, "daily", Some("new words"));
+        assert_eq!(same.previous_mode_best, Some(60.0));
+        let any = ResultsComparison::new(&sessions, false, "daily", None);
+        assert_eq!(any.previous_mode_best, Some(90.0));
+        let fresh = ResultsComparison::new(&sessions, false, "daily", Some("other"));
+        assert_eq!(fresh.previous_mode_best, None);
+    }
+
+    /// The CSV export: a header, one row per session in order, fields that
+    /// need it quoted, formula-like labels defused and control characters
+    /// gone.
+    #[test]
+    fn csv_export_rows_and_escaping() {
+        use chrono::TimeZone;
+        let mut first = make_record(61.234, "time-30s+p", 0);
+        first.timestamp = Local.with_ymd_and_hms(2026, 10, 11, 9, 5, 7).unwrap();
+        let csv = to_csv(&[
+            first,
+            make_record(70.0, "custom-a,\"b\"", 0),
+            make_record(80.0, "=HYPERLINK(1)", 0),
+            make_record(90.0, "custom-\u{1b}[2J", 0),
+        ]);
+        let lines: Vec<&str> = csv.lines().collect();
+        assert_eq!(lines[0], CSV_HEADER);
+        let offset = first_offset(&csv);
+        assert!(
+            offset.len() == 6 && offset.starts_with(['+', '-']),
+            "{offset}"
+        );
+        assert_eq!(
+            lines[1],
+            format!("2026-10-11T09:05:07{offset},time-30s+p,61.23,95.00,30.00,30,100,105")
+        );
+        assert!(
+            lines[2].contains(",\"custom-a,\"\"b\"\"\",70.00,"),
+            "{}",
+            lines[2]
+        );
+        assert!(lines[3].contains(",'=HYPERLINK(1),"), "{}", lines[3]);
+        assert!(lines[4].contains(",custom-?[2J,"), "{}", lines[4]);
+        assert_eq!(lines.len(), 5);
+        assert_eq!(to_csv(&[]), format!("{CSV_HEADER}\n"));
+    }
+
+    /// The UTC offset written on the first row (it depends on the machine's
+    /// time zone): the text after the seconds of its timestamp.
+    fn first_offset(csv: &str) -> String {
+        let timestamp = csv.lines().nth(1).unwrap().split(',').next().unwrap();
+        timestamp["2026-10-11T09:05:07".len()..].to_string()
+    }
+
+    /// A record without text (every record before v0.5) loads with none, and
+    /// an empty text isn't written out at all.
+    #[test]
+    fn text_is_optional_on_disk() {
+        let json = serde_json::to_string(&make_record(50.0, "time-30s", 0)).unwrap();
+        assert!(!json.contains("\"text\""), "{json}");
+        let restored: SessionRecord = serde_json::from_str(&json).unwrap();
+        assert!(restored.text.is_empty());
     }
 
     // ── Scenario 9: corrupt JSON file → empty vec (no panic) ────────────────
@@ -1379,15 +1564,15 @@ mod tests {
             make_record(40.0, "time-30s", 0),
             make_record(90.0, "words-10", 0), // the session just saved
         ];
-        let saved = ResultsComparison::new(&sessions, true, "words-10");
+        let saved = ResultsComparison::new(&sessions, true, "words-10", None);
         assert_eq!(saved.last_wpm, Some(40.0));
         assert_eq!(saved.previous_mode_best, Some(70.0));
         // Not saved: the last entry is a previous session.
-        let unsaved = ResultsComparison::new(&sessions, false, "words-10");
+        let unsaved = ResultsComparison::new(&sessions, false, "words-10", None);
         assert_eq!(unsaved.last_wpm, Some(90.0));
         assert_eq!(unsaved.previous_mode_best, Some(90.0));
         assert_eq!(
-            ResultsComparison::new(&[], true, "zen"),
+            ResultsComparison::new(&[], true, "zen", None),
             ResultsComparison::default()
         );
     }
@@ -1528,7 +1713,39 @@ mod tests {
         assert!(view.showing_bests());
         view.cycle(&[], true);
         assert_eq!(view.category_name(), "all");
-        view.scroll_by(5);
-        assert_eq!(view.scroll.get(), 0);
+        view.move_selection(5);
+        assert_eq!(view.selected, 0);
+        assert_eq!(view.selected_session(), None);
+    }
+
+    /// The selection walks the list showing, stops at its ends, and names
+    /// the session to replay: newest first in a sessions list, the best run
+    /// on the bests table. Changing category puts it back on the first row.
+    #[test]
+    fn stats_view_selection_names_the_session() {
+        let sessions = vec![
+            make_record(40.0, "time-30s", 2),
+            make_record(70.0, "words-25", 1),
+            make_record(50.0, "time-30s", 0),
+        ];
+        let mut view = StatsView::new(&sessions, None);
+        assert_eq!(view.selected_session(), Some(2), "newest first");
+        view.move_selection(1);
+        assert_eq!(view.selected_session(), Some(1));
+        view.move_selection(100);
+        assert_eq!((view.selected, view.selected_session()), (2, Some(0)));
+        view.move_selection(-100);
+        assert_eq!(view.selected, 0);
+        view.select_row(9); // no such row: ignored
+        assert_eq!(view.selected, 0);
+
+        view.cycle(&sessions, true); // bests: time-30s, then words-25
+        assert_eq!(view.row_count(), 2);
+        assert_eq!(view.selected_session(), Some(2), "time-30s best is 50");
+        view.select_row(1);
+        assert_eq!(view.selected_session(), Some(1));
+        view.cycle(&sessions, true);
+        assert_eq!((view.category_name(), view.selected), ("time-30s", 0));
+        assert_eq!(view.selected_session(), Some(2));
     }
 }

@@ -1,15 +1,15 @@
 //! Two floating overlays drawn on top of any screen:
 //!  - the keybindings help (toggled with `?` / F1, closed by a click too)
-//!  - a transient error modal (dismissed by any keypress or click)
+//!  - a transient error or notice modal (dismissed by any keypress or click)
 
 use ratatui::{
     prelude::*,
-    widgets::{Block, Borders, Clear, Paragraph, Wrap},
+    widgets::{Block, Borders, Clear, Padding, Paragraph, Wrap},
 };
 
 use ratatui::crossterm::event::KeyCode;
 
-use crate::{app::App, theme::ThemePalette};
+use crate::app::App;
 
 /// Render the keybindings overlay. Sized to its content (23 rows, so it fits
 /// an 80×24 window whole). On a smaller terminal the box shrinks and the
@@ -30,24 +30,24 @@ pub fn render(f: &mut Frame, app: &App, screen: Rect) -> &'static [super::Hint] 
 
     let lines = vec![
         heading("  TypeRush — keybindings"),
-        Line::from("  ↑/↓  j/k         menu: pick a category"),
-        Line::from("  ←/→  h/l         menu: pick an option"),
-        Line::from("  Enter  Space     start the selected mode"),
-        Line::from("  Enter  F5        restart (results; Ctrl+R too)"),
-        Line::from("  Ctrl+R  F5       restart while typing"),
-        Line::from("  Esc              finish session / back"),
+        Line::from("  ↑/↓ ←/→  hjkl    move: menu, stats, settings"),
+        Line::from("  Enter  Space     start, choose, change"),
+        Line::from("  Ctrl+R  F5       restart (results: Enter too)"),
+        Line::from("  Ctrl+P  F2       pause / resume a run"),
+        Line::from("  Esc              finish a run / back"),
         Line::from("  Ctrl+Bksp Ctrl+W delete word"),
         Line::from("  p  n  b          menu: punctuation, numbers,"),
         Line::from("                   10k words (time & words runs)"),
         Line::from("  Tab  s           stats (only Tab on results)"),
-        Line::from("  ←/→ ↑/↓ PgUp/Dn  stats: category, scroll"),
+        Line::from("  c                menu: settings"),
+        Line::from("  Enter  e         stats: replay, export CSV"),
+        Line::from("  a  PgUp/Dn       stats: all sessions, scroll"),
         Line::from("  ?  F1            help (only F1 on results)"),
         Line::from("  Ctrl+C           quit"),
-        Line::from("  Mouse            click options and footer"),
-        Line::from("                   hints; wheel scrolls lists"),
+        Line::from("  Mouse            click options, rows, hints;"),
+        Line::from("                   the wheel scrolls lists"),
         Line::raw(""),
-        dim("  Zen sessions are not saved"),
-        dim("  Stats   ~/.typerush/stats.json"),
+        dim("  Stats   ~/.typerush/stats.json (not zen)"),
         dim("  Config  ~/.typerush/config.toml"),
         dim("  Snippets ~/.typerush/snippets/*.txt"),
     ];
@@ -86,19 +86,22 @@ pub fn render(f: &mut Frame, app: &App, screen: Rect) -> &'static [super::Hint] 
     HINTS
 }
 
-/// Render the transient error modal. Dismissed by any keypress or click from
-/// the main loop. Tall enough for the wrapped message plus the hint line.
-pub fn render_error(f: &mut Frame, theme: &ThemePalette, message: &str) {
+/// Render a transient modal — an error, or a notice — titled `title` with a
+/// `border` color. Dismissed by any keypress or click from the main loop.
+/// Tall enough for the wrapped message plus the hint line.
+pub fn render_message(f: &mut Frame, title: &'static str, border: Color, message: &str) {
     use unicode_width::UnicodeWidthStr;
-    // Messages can carry file paths, which may contain control characters.
-    // Made safe and indented line by line, so a multi-line message (a TOML
-    // parse error points at the bad line with a caret) keeps its layout.
+    // Messages can carry file paths, which may contain control characters:
+    // made safe line by line, so a multi-line message (a TOML parse error
+    // points at the bad line with a caret) keeps its layout. The text is
+    // inset by the box's padding, so a wrapped line keeps the inset too.
     let lines: Vec<String> = message
         .lines()
-        .map(|line| format!("  {}", crate::text::printable(line)))
+        .map(|line| crate::text::printable(line).into_owned())
         .collect();
     const WIDTH: u16 = 60;
-    let text_width = WIDTH.min(f.area().width).saturating_sub(2).max(1) as usize;
+    // Inside the borders and two cells of padding each side.
+    let text_width = WIDTH.min(f.area().width).saturating_sub(6).max(1) as usize;
     // Rows the message takes once each line wraps; slightly over is fine,
     // the box just has a gap.
     let message_rows: usize = lines
@@ -111,13 +114,14 @@ pub fn render_error(f: &mut Frame, theme: &ThemePalette, message: &str) {
         .area()
         .centered(Constraint::Length(WIDTH), Constraint::Length(height));
     f.render_widget(Clear, area);
-    let p = Paragraph::new(format!("{}\n\n  press any key or click", lines.join("\n")))
+    let p = Paragraph::new(format!("{}\n\npress any key or click", lines.join("\n")))
         .wrap(Wrap { trim: false })
         .block(
             Block::default()
                 .borders(Borders::ALL)
-                .border_style(Style::default().fg(theme.error))
-                .title(" error "),
+                .padding(Padding::horizontal(2))
+                .border_style(Style::default().fg(border))
+                .title(title),
         );
     f.render_widget(p, area);
 }

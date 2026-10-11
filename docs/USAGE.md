@@ -21,13 +21,17 @@ typerush --quote              # one programming quote
 typerush --code rust          # code: rust | python | js | go | java | sql | shell
 typerush --zen                # zen mode (no timer, no stats)
 typerush --symbols 25         # programming-symbols drill of N tokens
+typerush --daily              # today's daily challenge
+typerush --replay             # type the last saved session again, word for word
+typerush --replay 3           # …or the third most recent one
 typerush --file <path>        # type any text file you have
 typerush --theme monokai      # one-shot theme override
 typerush --list-themes        # print available theme names and exit
 typerush --list-snippets      # print your snippets (name<TAB>path) and exit
 ```
 
-Counts must be at least 1: `--time` goes up to 3600 seconds, `--words` and
+Counts must be at least 1 (`--replay N` too, and at most the number of
+sessions you have saved): `--time` goes up to 3600 seconds, `--words` and
 `--symbols` up to 10,000 (the same limits apply to `time_seconds`,
 `word_count` and `symbol_count` in the config). A custom file (`--file` or a snippet) must be a
 regular UTF-8 text file of at most 1 MiB.
@@ -70,6 +74,24 @@ In the menu, `p`, `n` and `b` toggle the same three settings (see
 
 Text is split on whitespace, so a file's line breaks become plain spaces.
 
+### Things that don't open the app
+
+```bash
+typerush export               # print your session history as CSV
+typerush export stats.csv     # …or write it to a file (replaced if it exists)
+typerush config path          # where config.toml is
+typerush config show          # every setting with the value TypeRush uses
+typerush config get theme     # one setting's value
+typerush config set theme dracula
+typerush config reset theme   # one setting back to its default
+typerush config reset         # every setting back to its default
+typerush --init-config        # write a starter config.toml (same as `config init`)
+```
+
+See [Exporting your history](#exporting-your-history) and
+[Changing settings](#changing-settings) for the details. These can't be
+combined with the run flags above (`typerush --time 30 export` is refused).
+
 ---
 
 ## Modes in detail
@@ -83,6 +105,44 @@ Text is split on whitespace, so a file's line breaks become plain spaces.
 | Zen     | Soft, monochrome UI. No timer, no WPM, no score saved.                | you press `Esc`                  |
 | Symbols | Programming punctuation: `=>`, `(){};`, `&&`, `?.`, `<T>` … (25 / 50 tokens) | you complete the last token |
 | Custom  | A text file: `--file`, a snippet, or the file you typed last          | you complete the last word       |
+| Daily   | Today's challenge: 40 words, the same for everyone on a given day      | you complete the last word       |
+
+### The daily challenge
+
+The `daily` menu row (or `--daily`) gives 40 words from the 10,000-word
+pool, about one in five ending in a comma or a period. The words come from
+the date alone: everyone gets the same text on the same calendar day (their
+own, local day), and it changes at midnight. The `p` / `n` / `b` settings
+don't apply — that would change the text.
+
+You can play it as often as you like. On Results its best is **today
+best**: only earlier runs of today's words count, so a hard day isn't
+measured against an easy one. In Stats every daily run is in the `daily`
+category.
+
+(The words depend on the date and on TypeRush's word list, so two
+different versions of TypeRush could give different words on the same day.)
+
+### Replaying a session
+
+Every session is saved with the words it typed (every word of a words,
+quote, code, symbols, custom or daily run; the words you reached in a time
+run). Pick one on the Stats screen and press `Enter` — or run `typerush
+--replay N` — to type exactly those words again:
+
+- It ends the way the original did: a time run when the clock runs out
+  (with fresh words, played the same way, if you get past where the
+  original stopped), anything else on its last word.
+- It is saved as the original's mode plus `+replay` (`time-30s+replay`),
+  so typing words you have seen before never sets your real best.
+- Results shows your WPM against the original run's (`+12 vs original`)
+  and when the original was played.
+- `Enter` / `F5` / `Ctrl+R` replays it again; anything picked in the menu
+  is a normal run.
+
+Sessions saved before TypeRush 0.5 have no words kept, so they can't be
+replayed. Neither can a run whose text was longer than 64 KiB (a big custom
+file), so `stats.json` stays small.
 
 ---
 
@@ -100,10 +160,14 @@ Text is split on whitespace, so a file's line breaks become plain spaces.
 Everything the mouse can do, the keyboard can do too (WCAG 2.1.1), and vice
 versa where it makes sense:
 
-- **Click a menu option** to start it (or open stats / quit).
+- **Click a menu option** to start it (or open stats, settings / quit).
 - **Click a footer hint** (`Enter start`, `s stats`, `esc finish`, …) to do
   what its key does. Navigation hints like `↑/↓ category` are not clickable.
-- **Scroll wheel** on the menu moves between categories.
+- **Click a row** of the Stats lists to select it (`Enter replay` then
+  replays it), and in Settings **click `‹` / `›`** to change a value or the
+  value itself for the next one.
+- **Scroll wheel** on the menu moves between categories; on Stats and
+  Settings it moves the selection.
 - **Click anywhere** to close the help overlay or an error message.
 
 A click acts when the button is pressed *and* released on the same target:
@@ -115,10 +179,11 @@ needs `Shift` held while dragging.
 
 ### Main menu
 
-Modes are grouped by category. `time`, `words`, `code`, `symbols` and
-`custom` show a heading with their options on the line below (a row too wide
-for the menu continues on the next line); `quote`, `zen`, `stats` and `quit`
-are single options:
+Modes are grouped by category, the ones with a choice of options first:
+`time`, `words`, `code`, `symbols` and `custom` show a heading with their
+options on the line below (a row too wide for the menu continues on the next
+line). Then come the single runs `daily`, `quote` and `zen`, and `stats`,
+`settings` and `quit` share the last row:
 
 ```mermaid
 flowchart TD
@@ -132,7 +197,7 @@ flowchart TD
     end
     subgraph code
         direction LR
-        rust ~~~ python ~~~ javascript ~~~ go ~~~ java ~~~ sql ~~~ shell
+        rust ~~~ python ~~~ js ~~~ go ~~~ java ~~~ sql ~~~ shell
     end
     subgraph symbols
         direction LR
@@ -142,7 +207,11 @@ flowchart TD
         direction LR
         last["last file"] ~~~ snip["each snippet"]
     end
-    time ~~~ words ~~~ code ~~~ quote ~~~ zen ~~~ symbols ~~~ custom ~~~ stats ~~~ quit
+    subgraph app[" "]
+        direction LR
+        stats ~~~ settings ~~~ quit
+    end
+    time ~~~ words ~~~ code ~~~ symbols ~~~ custom ~~~ daily ~~~ quote ~~~ zen ~~~ app
 ```
 
 The bottom border of the list shows the three word settings — `p
@@ -171,6 +240,7 @@ for the whole list does it scroll, and then the border shows `▲ more` /
 | `n`                | Numbers on / off (time and words runs)         |
 | `b`                | 10k-word pool on / off (time and words runs)   |
 | `Tab` / `s`        | Jump to the historical stats view              |
+| `c`                | Settings                                       |
 | `q`                | Quit                                           |
 
 ### While typing
@@ -183,8 +253,15 @@ for the whole list does it scroll, and then the border shows `▲ more` /
 | `Ctrl+Backspace` | Delete the entire current word (`Alt+Backspace` too) |
 | `Ctrl+W`         | Same — delete the entire current word            |
 | `Ctrl+H`         | Same — most terminals send this when you press `Ctrl+Backspace` |
-| `Ctrl+R` / `F5`  | Restart the same mode with a new word list      |
+| `Ctrl+R` / `F5`  | Restart the same mode with a new word list (a replay: the same words) |
+| `Ctrl+P` / `F2`  | Pause / resume                                  |
 | `Esc`            | End the session and go to the results screen    |
+
+**Paused**, the clock stands still and the words are hidden (no reading
+ahead on a stopped clock). Keys you type are ignored until you resume with
+`Ctrl+P` / `F2`; `Esc` still finishes the run and `Ctrl+R` / `F5` still
+restart it. Paused time never counts: not towards WPM, a time run's clock,
+or the time saved in your stats.
 
 ### Results screen
 
@@ -206,13 +283,29 @@ skipping past your results.
 | --------------------------- | -------------------------------------------- |
 | `←` / `→` (`h` / `l`)       | Previous / next category                     |
 | `a`                         | All sessions                                 |
-| `↑` / `↓` (`k` / `j`)       | Scroll the sessions (or bests) list          |
-| `PgUp` / `PgDn`, `Home` / `End` | Scroll by ten / to the newest or oldest  |
+| `↑` / `↓` (`k` / `j`)       | Select a session (or a mode on the bests table); the list scrolls with it |
+| `PgUp` / `PgDn`, `Home` / `End` | Move by ten / to the newest or oldest    |
+| `Enter`                     | Replay the selected session (on bests: that mode's best run) |
+| `e`                         | Export your history to `~/.typerush/stats.csv` |
 | `m` / `Esc` / `Tab`         | Back to the menu                             |
 | `q`                         | Quit                                         |
 
-The mouse wheel scrolls the list too; in the title, click `[all]` for all
-sessions or `‹` / `›` to change category.
+The mouse wheel moves the selection too, and a click selects a row; in the
+title, click `[all]` for all sessions or `‹` / `›` to change category.
+
+### Settings
+
+Open it from the menu (`c`, or the `settings` option on the last row).
+
+| Key                   | Action                                              |
+| --------------------- | --------------------------------------------------- |
+| `↑` / `↓` (`k` / `j`) | Pick a setting                                      |
+| `←` / `→` (`h` / `l`) | Previous / next value (a switch: on ↔ off)          |
+| `Enter` / `Space`     | Next value; on **reset to defaults**, ask, then reset |
+| `Esc`                 | Cancel a pending reset, else back to the menu (`m` / `Tab` too) |
+| `q`                   | Quit                                                |
+
+See [Changing settings](#changing-settings) for what each one does.
 
 ---
 
@@ -249,6 +342,8 @@ Everything TypeRush keeps lives in `~/.typerush/`:
 | ----------------- | ----------------------------------------------------------- |
 | `stats.json`      | Your session history                                        |
 | `config.toml`     | Optional settings (see below)                               |
+| `config.toml.bak-…` | A config put aside by a reset — nothing is deleted        |
+| `stats.csv`       | Your history as CSV, written by `e` on the Stats screen     |
 | `state.json`      | The custom file you typed last, so the menu can offer it again |
 | `snippets/*.txt`  | Your snippet library — one menu option per file             |
 
@@ -275,7 +370,7 @@ Opened from the menu, it stays on the category you were looking at last.
 | **Summary (left)** | Best WPM · Average accuracy · Session count · Last WPM · **Daily streak** · **7-day avg WPM** · **30-day avg WPM** · **Time typed** |
 | **Key accuracy (right)** | Up to 5 of your worst keys (≥ 3 presses). Colour-coded: red < 80%, amber < 93%, green otherwise. Shows `no key data yet` until enough data is collected. |
 | **WPM trend** | Sparkline of the category's last 20 sessions |
-| **Sessions** | Every session in the category, newest first, with date, mode, WPM, accuracy and time; scroll with `↑` / `↓`. A `★` marks the session holding its mode's best. The title says which rows are showing (`1–5 of 42`). |
+| **Sessions** | Every session in the category, newest first, with date, mode, WPM, accuracy and time; `↑` / `↓` move the highlighted row and `Enter` replays it. A `★` marks the session holding its mode's best. The title says which rows are showing (`1–5 of 42`). |
 
 ### Per-mode personal bests
 
@@ -283,7 +378,25 @@ On the **Results screen**, the "best" line now shows your personal best
 specifically for the mode you just finished (a `mode best` row under the `mode` row).
 A `★ new best!` badge appears when you beat your previous record for that mode.
 Time and words runs with `--big`, `--punctuation` or `--numbers` count as
-their own modes (`time-30s+p`, …) — see [Words](#words).
+their own modes (`time-30s+p`, …) — see [Words](#words). A replay counts as
+its own mode too (`time-30s+replay`), and the daily challenge's row reads
+`today best` (see [The daily challenge](#the-daily-challenge)).
+
+### Exporting your history
+
+`typerush export` prints every session as CSV, oldest first;
+`typerush export FILE` writes it to `FILE` instead, and `e` on the Stats
+screen writes `~/.typerush/stats.csv`. The columns:
+
+```
+timestamp,mode,wpm,accuracy,duration_secs,words,correct_chars,total_chars
+2026-10-11T09:05:07+02:00,time-30s+p,61.23,95.00,30.00,30,100,105
+```
+
+Timestamps are RFC 3339 with your UTC offset; numbers have two decimals.
+A mode label with a comma or quote is quoted, and one starting with `=`,
+`+`, `-` or `@` gets a leading `'` so a spreadsheet never runs it as a
+formula.
 
 ---
 
@@ -292,8 +405,50 @@ their own modes (`time-30s+p`, …) — see [Words](#words).
 The config file is **entirely optional**. Without it, TypeRush boots with the
 `dark` theme and a 15-second time-mode pre-selected.
 
-A complete example lives at [`config.example.toml`](../config.example.toml) at
-the project root — copy it to `~/.typerush/config.toml` and edit.
+`typerush --init-config` writes a starter file to `~/.typerush/config.toml`:
+every setting at its built-in default (so it changes nothing until you edit
+it), each one explained. It's the same as
+[`config.example.toml`](../config.example.toml) at the project root, and it
+won't replace a config you already have.
+
+### Changing settings
+
+Three ways, all writing the same file:
+
+- **The Settings screen** (`c` in the menu): theme, start mode (the menu row
+  highlighted at launch), punctuation, numbers, 10k words, and reset to
+  defaults. A change is saved straight away and used straight away — a
+  theme shows as you pick it.
+- **`typerush config set NAME VALUE`** from the shell. `typerush config
+  show` lists every setting with the value in use (`# default` where the
+  file doesn't set it, and why when the file's value isn't used);
+  `config get NAME` prints one.
+- **By hand**, in any text editor.
+
+`config set` and the Settings screen check a value with the same rules
+TypeRush uses when it starts, so anything they accept loads without a
+warning. They write it the standard way (`js` becomes `"javascript"`,
+`#a6e22e` becomes `"#A6E22E"`) and change only that value: your comments,
+the order of your settings and blank lines are kept. A file that isn't
+valid TOML is never overwritten — fix it, or reset.
+
+`typerush config reset NAME` removes one setting, so its default applies.
+`typerush config reset` (or **reset to defaults** in Settings, which asks
+first) puts every setting back by moving the file aside as
+`config.toml.bak-<date>-<time>` — nothing is deleted.
+
+Setting names, as `config show` lists them:
+
+| Name | Values |
+| ---- | ------ |
+| `theme` | `dark`, `light`, `monokai`, `dracula` |
+| `defaults.mode` | `time`, `words`, `quote`, `code`, `zen`, `symbols`, `daily` |
+| `defaults.time_seconds` | 1 – 3600 |
+| `defaults.word_count`, `defaults.symbol_count` | 1 – 10,000 |
+| `defaults.code_lang` | `rust`, `python`, `js`, `go`, `java`, `sql`, `shell` |
+| `words.pool` | `common`, `extended` |
+| `words.punctuation`, `words.numbers` | `true` / `false` (`on` / `off` too) |
+| `colors.accent`, `colors.secondary`, `colors.correct`, `colors.incorrect`, `colors.pending`, `colors.mode_tag`, `colors.error`, `colors.neutral`, `colors.background` | `#RRGGBB`, an ANSI name, or `reset` |
 
 ### Themes
 
@@ -349,7 +504,7 @@ Pre-select a menu row and starting mode:
 
 ```toml
 [defaults]
-mode = "time"            # time | words | quote | code | zen | symbols
+mode = "time"            # time | words | quote | code | zen | symbols | daily
 time_seconds = 15        # 15 / 30 / 60 / 120 (matches menu rows)
 word_count = 25          # 10 / 25 / 50 / 100
 code_lang = "rust"       # rust | python | js | go | java | sql | shell
@@ -370,8 +525,8 @@ numbers = true           # 1–4 digit numbers mixed in (~1 word in 8)
 `--big`, `--punctuation` and `--numbers` turn these on for one run, and
 `--no-big`, `--no-punctuation` and `--no-numbers` turn them off. In the menu,
 `p`, `n` and `b` toggle them for as long as TypeRush stays open; the config
-and the command line only set where they start. Your config file is never
-rewritten.
+and the command line only set where they start. Those keys never change your
+config file — the Settings screen does, if you want the change to stay.
 
 Runs with any of these settings keep their own personal bests: the mode label
 gets `+10k`, `+p` and/or `+n` (`time-30s+p`, `words-50+10k+p+n`), so a
@@ -381,7 +536,7 @@ harder run is only ever compared with runs played the same way.
 
 ```mermaid
 flowchart LR
-    menu["menu keys p / n / b (while open)"] -- "wins over" --> cli["CLI flag (--theme, --time, --big, --no-big, …)"] -- "wins over" --> file["config.toml"] -- "wins over" --> default["built-in default"]
+    menu["menu keys p / n / b, the Settings screen (while open)"] -- "wins over" --> cli["CLI flag (--theme, --time, --big, --no-big, …)"] -- "wins over" --> file["config.toml"] -- "wins over" --> default["built-in default"]
 ```
 
 A malformed config file does not crash TypeRush — it falls back to defaults

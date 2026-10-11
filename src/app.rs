@@ -39,6 +39,8 @@ pub enum Screen {
     Results,
     /// Browse historical sessions (`~/.typerush/stats.json`).
     Stats,
+    /// Change the saved settings (`~/.typerush/config.toml`).
+    Settings,
     /// Floating keybindings overlay (any screen can toggle it on).
     Help,
 }
@@ -63,6 +65,8 @@ pub enum Mode {
     Custom,
     /// Programming-symbols drill: type N short tokens like `=>` or `(){};`.
     Symbols(usize),
+    /// The daily challenge: the same words for everyone on a given day.
+    Daily,
 }
 
 impl Mode {
@@ -82,7 +86,110 @@ impl Mode {
             Mode::Zen => "zen".to_string(),
             Mode::Custom => "custom".to_string(),
             Mode::Symbols(count) => format!("symbols-{}", count),
+            Mode::Daily => "daily".to_string(),
         }
+    }
+
+    /// The mode a saved label was played in — the reverse of [`Mode::label`]
+    /// (and of [`App::session_label`]: word-setting and replay suffixes such
+    /// as `+p` are ignored, `custom-notes` is `Custom`). `None` for a label
+    /// TypeRush never writes, or a count out of range (stats.json can be
+    /// edited by hand).
+    pub fn from_label(label: &str) -> Option<Mode> {
+        use crate::config::load::{check_count, code_lang, MAX_COUNT, MAX_SECONDS};
+        let base = label.split('+').next().unwrap_or(label);
+        fn count<T: std::str::FromStr + PartialOrd + From<u16>>(text: &str, max: u16) -> Option<T> {
+            check_count(text.parse().ok()?, max).ok()
+        }
+        if let Some(seconds) = base.strip_prefix("time-").and_then(|t| t.strip_suffix('s')) {
+            return Some(Mode::Time(count(seconds, MAX_SECONDS)?));
+        }
+        if let Some(n) = base.strip_prefix("words-") {
+            return Some(Mode::Words(count(n, MAX_COUNT)?));
+        }
+        if let Some(n) = base.strip_prefix("symbols-") {
+            return Some(Mode::Symbols(count(n, MAX_COUNT)?));
+        }
+        if let Some(lang) = base.strip_prefix("code-") {
+            return code_lang(lang).map(Mode::Code);
+        }
+        match base {
+            "quote" => Some(Mode::Quote),
+            "zen" => Some(Mode::Zen),
+            "daily" => Some(Mode::Daily),
+            _ if base == "custom" || base.starts_with("custom-") => Some(Mode::Custom),
+            _ => None,
+        }
+    }
+}
+
+/// A session being typed again word for word (see [`App::start_replay`]).
+#[derive(Clone, Debug, PartialEq)]
+pub struct Replay {
+    /// The original session's label, without any `+replay`; the replay is
+    /// saved as this plus `+replay`, so typing words you have already seen
+    /// never sets the mode's real best.
+    pub label: String,
+    /// The mode the original was played in: how the replay ends.
+    pub mode: Mode,
+    /// The original's words, in order.
+    pub words: Vec<String>,
+    /// Word settings of the original (from its label), for the fresh words
+    /// a time replay adds once you get past where the original stopped.
+    pub pool: WordPool,
+    pub decor: WordDecor,
+    /// The original's WPM, which Results compares the replay with.
+    pub wpm: f64,
+    /// When the original was played.
+    pub timestamp: chrono::DateTime<chrono::Local>,
+}
+
+impl Replay {
+    /// A replay of `record`, or why it can't be replayed. The text comes
+    /// from stats.json, so it is held to the same rules as a custom file:
+    /// characters that can't be typed are dropped, and its size is bounded.
+    pub fn of(record: &SessionRecord) -> anyhow::Result<Self> {
+        use crate::storage::MAX_TEXT_BYTES;
+        if record.text.len() > MAX_TEXT_BYTES {
+            anyhow::bail!("this session's text is too long to replay");
+        }
+        let words: Vec<String> = record
+            .text
+            .split_whitespace()
+            .map(|word| {
+                word.chars()
+                    .filter(|&c| !crate::text::is_untypeable(c))
+                    .collect::<String>()
+            })
+            .filter(|word| !word.is_empty())
+            .collect();
+        if words.is_empty() {
+            anyhow::bail!(
+                "this session has no words saved to replay: sessions keep their text from TypeRush 0.5 on"
+            );
+        }
+        let mut label = record.mode.as_str();
+        while let Some(original) = label.strip_suffix("+replay") {
+            label = original;
+        }
+        let suffixes: Vec<&str> = label.split('+').skip(1).collect();
+        Ok(Self {
+            label: label.to_string(),
+            // A label TypeRush never writes is replayed to its last word.
+            mode: Mode::from_label(label).unwrap_or(Mode::Custom),
+            words,
+            pool: if suffixes.contains(&"10k") {
+                WordPool::Extended
+            } else {
+                WordPool::Common
+            },
+            decor: WordDecor {
+                punctuation: suffixes.contains(&"p"),
+                numbers: suffixes.contains(&"n"),
+            },
+            wpm: record.wpm,
+            timestamp: record.timestamp,
+        })
     }
 }
 
@@ -118,6 +225,12 @@ pub enum ClickAction {
     Key(KeyCode, KeyModifiers),
     /// Select this menu option and activate it, like ←/→ then Enter.
     Menu(usize),
+    /// Select this row of the list on screen (a Stats table row), like
+    /// moving there with ↑/↓.
+    Select(usize),
+    /// Select this Settings row, then act like this key on it (‹ is ←,
+    /// › is →, the value itself is Enter).
+    Setting(usize, KeyCode),
 }
 
 /// One selectable option in the main menu. Consecutive items that share a
@@ -145,6 +258,8 @@ pub enum MenuAction {
     StartCustom,
     /// Jump to the historical stats screen.
     ShowStats,
+    /// Open the Settings screen.
+    ShowSettings,
     /// Quit the application.
     Quit,
 }
@@ -154,7 +269,7 @@ pub enum MenuAction {
 /// Exact match wins (e.g. `time_seconds = 30` → "Time · 30s"). Otherwise we
 /// fall back to the first row of the same mode family (so `time_seconds = 45`
 /// still pre-selects a time row rather than landing on something unrelated).
-fn best_menu_match(menu: &[MenuItem], default_mode: Mode) -> usize {
+pub fn best_menu_match(menu: &[MenuItem], default_mode: Mode) -> usize {
     let same_family =
         |mode: &Mode| std::mem::discriminant(mode) == std::mem::discriminant(&default_mode);
     menu.iter()
@@ -176,8 +291,10 @@ pub fn default_menu() -> Vec<MenuItem> {
 /// is one of the snippets) followed by every snippet; with neither, it shows
 /// a single placeholder option that explains how to add one.
 ///
-/// The v0.3 rows keep their order; the v0.4 `symbols` and `custom` rows sit
-/// between `zen` and `stats`, so ↑/↓ through the original rows is unchanged.
+/// Categories with several options come first (time, words, code, symbols,
+/// custom), then the single runs (daily, quote, zen), then one row with
+/// the actions that don't start a game (`stats`, `settings`, `quit`) side
+/// by side.
 pub fn build_menu(snippets: &[Snippet], last_custom_file: Option<&Path>) -> Vec<MenuItem> {
     use crate::words::CodeLang;
     let start = |group, label: &str, mode| MenuItem {
@@ -187,9 +304,11 @@ pub fn build_menu(snippets: &[Snippet], last_custom_file: Option<&Path>) -> Vec<
         action: MenuAction::Start,
         custom_path: None,
     };
-    let other = |group: &'static str, action| MenuItem {
-        group,
-        label: group.to_string(),
+    // The actions that don't start a game share the last row, with no
+    // heading: "stats  settings  quit".
+    let other = |label: &str, action| MenuItem {
+        group: "app",
+        label: label.to_string(),
         mode: None,
         action,
         custom_path: None,
@@ -213,13 +332,11 @@ pub fn build_menu(snippets: &[Snippet], last_custom_file: Option<&Path>) -> Vec<
         start("words", "100", Mode::Words(100)),
         start("code", "rust", Mode::Code(CodeLang::Rust)),
         start("code", "python", Mode::Code(CodeLang::Python)),
-        start("code", "javascript", Mode::Code(CodeLang::JavaScript)),
+        start("code", "js", Mode::Code(CodeLang::JavaScript)),
         start("code", "go", Mode::Code(CodeLang::Go)),
         start("code", "java", Mode::Code(CodeLang::Java)),
         start("code", "sql", Mode::Code(CodeLang::Sql)),
         start("code", "shell", Mode::Code(CodeLang::Shell)),
-        start("quote", "quote", Mode::Quote),
-        start("zen", "zen", Mode::Zen),
         start("symbols", "25", Mode::Symbols(25)),
         start("symbols", "50", Mode::Symbols(50)),
     ];
@@ -234,8 +351,13 @@ pub fn build_menu(snippets: &[Snippet], last_custom_file: Option<&Path>) -> Vec<
     if menu.last().is_some_and(|item| item.group != "custom") {
         menu.push(custom("custom".to_string(), None));
     }
+    // The rows with a choice of options come first, then the single runs.
+    menu.push(start("daily", "daily", Mode::Daily));
+    menu.push(start("quote", "quote", Mode::Quote));
+    menu.push(start("zen", "zen", Mode::Zen));
 
     menu.push(other("stats", MenuAction::ShowStats));
+    menu.push(other("settings", MenuAction::ShowSettings));
     menu.push(other("quit", MenuAction::Quit));
     menu
 }
@@ -396,6 +518,10 @@ pub struct App {
     pub started_at: Option<Instant>,
     /// When the session finished (timer up, all words done, or Esc pressed).
     pub ended_at: Option<Instant>,
+    /// When the current pause began (`Ctrl+P` / `F2`); `None` while running.
+    pub paused_at: Option<Instant>,
+    /// Time spent paused in earlier pauses of this session; never counted.
+    pub paused_for: Duration,
 
     // --- counters used for WPM / accuracy ---
     /// Characters typed that matched the target. Drives both WPM and accuracy.
@@ -412,6 +538,9 @@ pub struct App {
     pub should_quit: bool,
     /// Transient error message rendered as a modal overlay.
     pub error_message: Option<String>,
+    /// Transient message that isn't an error ("exported 42 sessions to …"),
+    /// shown and dismissed like `error_message`.
+    pub notice: Option<String>,
     /// Active color palette — read by every UI module on every frame.
     pub theme: ThemePalette,
 
@@ -454,6 +583,24 @@ pub struct App {
     /// Where `app_state` is saved. `None` means "don't persist" — the
     /// default, so tests never write to the real home directory.
     pub state_file: Option<PathBuf>,
+    /// Where `e` on the Stats screen writes the CSV export
+    /// (`~/.typerush/stats.csv`). `None` — the default, and in tests unless
+    /// they set one — means exporting is off.
+    pub export_file: Option<PathBuf>,
+
+    // --- settings (v0.5.0) ---
+    /// The config file the Settings screen saves to
+    /// (`~/.typerush/config.toml`). `None` — the default, so tests never
+    /// write to the real home directory — means nothing is saved.
+    pub config_file: Option<PathBuf>,
+    /// What the Settings screen shows, read from `config_file` when the
+    /// screen is entered and after each change.
+    pub settings: Option<crate::settings::SettingsView>,
+
+    // --- replay (v0.5.0) ---
+    /// The session being typed again, while replaying one. Restarting
+    /// replays it again; starting any other game clears it.
+    pub replay: Option<Replay>,
 
     // --- mouse ---
     /// Clickable regions drawn in the last frame. Rebuilt by `ui::render` on
@@ -492,11 +639,14 @@ impl App {
             current_word: 0,
             started_at: None,
             ended_at: None,
+            paused_at: None,
+            paused_for: Duration::ZERO,
             correct_chars: 0,
             total_typed_chars: 0,
             custom_file,
             should_quit: false,
             error_message: None,
+            notice: None,
             theme: palette,
             key_hits: HashMap::new(),
             key_misses: HashMap::new(),
@@ -509,6 +659,10 @@ impl App {
             snippets: Vec::new(),
             app_state: AppState::default(),
             state_file: None,
+            export_file: None,
+            config_file: None,
+            settings: None,
+            replay: None,
             click_targets: RefCell::new(Vec::new()),
             pressed_target: None,
         }
@@ -523,8 +677,12 @@ impl App {
     /// for `notes.txt`), so every snippet or file has its own personal best
     /// rather than a 5-word drill and a long essay sharing one.
     ///
-    /// Plain runs, and every other mode, keep exactly their v0.3 labels.
+    /// Plain runs, and every other mode, keep exactly their v0.3 labels. A
+    /// replay is its original's label plus `+replay`.
     pub fn session_label(&self) -> String {
+        if let Some(replay) = &self.replay {
+            return format!("{}+replay", replay.label);
+        }
         let mut label = self.mode.label();
         if self.mode == Mode::Custom {
             // Lossy and made safe: the label is drawn on screen and stored
@@ -549,6 +707,15 @@ impl App {
             }
         }
         label
+    }
+
+    /// Close the error or notice modal if one is open; whether one was.
+    /// Any key or click does this before acting on anything else.
+    pub fn dismiss_modal(&mut self) -> bool {
+        let open = self.error_message.is_some() || self.notice.is_some();
+        self.error_message = None;
+        self.notice = None;
+        open
     }
 
     /// Show `error` in the error modal, with its cause chain ("can't read
@@ -704,13 +871,35 @@ impl App {
         self.menu_index = row.start + column;
     }
 
-    /// How long the user has been (or was) typing during the current session.
-    /// Returns `Duration::ZERO` until the first keypress.
+    /// How long the user has been (or was) typing during the current session,
+    /// paused time left out. Returns `Duration::ZERO` until the first keypress.
     pub fn elapsed(&self) -> Duration {
-        match (self.started_at, self.ended_at) {
-            (Some(start), Some(end)) => end.duration_since(start),
-            (Some(start), None) => start.elapsed(),
-            _ => Duration::ZERO,
+        let Some(start) = self.started_at else {
+            return Duration::ZERO;
+        };
+        // While paused the clock stands still at the moment the pause began.
+        let end = self
+            .ended_at
+            .or(self.paused_at)
+            .unwrap_or_else(Instant::now);
+        end.saturating_duration_since(start)
+            .saturating_sub(self.paused_for)
+    }
+
+    /// Whether the session is paused: the clock is stopped and typing keys
+    /// are ignored until it resumes.
+    pub fn is_paused(&self) -> bool {
+        self.paused_at.is_some()
+    }
+
+    /// Pause the session, or resume it. Paused time never counts towards
+    /// WPM or a time run's clock.
+    pub fn toggle_pause(&mut self) {
+        match self.paused_at.take() {
+            // Before the first key the clock isn't running: nothing to subtract.
+            Some(at) if self.started_at.is_some() => self.paused_for += at.elapsed(),
+            Some(_) => {}
+            None => self.paused_at = Some(Instant::now()),
         }
     }
 
@@ -750,13 +939,14 @@ impl App {
         }
     }
 
-    /// In `Mode::Words` / `Mode::Symbols`, `(completed, total)`. `None` for
-    /// all other modes.
+    /// In `Mode::Words` / `Mode::Symbols` / `Mode::Daily`, `(completed,
+    /// total)`. `None` for all other modes.
     pub fn progress(&self) -> Option<(usize, usize)> {
         match self.mode {
             Mode::Words(target) | Mode::Symbols(target) => {
                 Some((self.current_word.min(target), target))
             }
+            Mode::Daily => Some((self.current_word.min(self.words.len()), self.words.len())),
             _ => None,
         }
     }
@@ -779,6 +969,7 @@ impl App {
             Mode::Quote => words::random_quote(),
             Mode::Code(lang) => words::random_code_snippet(lang),
             Mode::Symbols(count) => words::symbols::random_symbol_tokens(count),
+            Mode::Daily => words::daily_words(chrono::Local::now().date_naive()),
             Mode::Custom => {
                 let Some(path) = &self.custom_file else {
                     return Err(anyhow::anyhow!(
@@ -796,29 +987,77 @@ impl App {
                 loaded
             }
         };
+        self.replay = None;
+        self.begin(mode, text);
+        Ok(())
+    }
+
+    /// Type `record`'s words again, word for word. It ends the way the
+    /// original did (a time run on the clock, anything else on its last
+    /// word) and is saved under the original's label plus `+replay`.
+    ///
+    /// If the session can't be replayed (no saved text) nothing changes.
+    pub fn start_replay(&mut self, record: &SessionRecord) -> anyhow::Result<()> {
+        let replay = Replay::of(record)?;
+        let (mode, words) = (replay.mode, replay.words.clone());
+        self.replay = Some(replay);
+        self.begin(mode, words);
+        Ok(())
+    }
+
+    /// Reset all session state and start typing `text` in `mode`.
+    fn begin(&mut self, mode: Mode, text: Vec<String>) {
         self.mode = mode;
         self.words = text.into_iter().map(Word::new).collect();
         self.current_word = 0;
         self.started_at = None;
         self.ended_at = None;
+        self.paused_at = None;
+        self.paused_for = Duration::ZERO;
         self.correct_chars = 0;
         self.total_typed_chars = 0;
         self.key_hits.clear();
         self.key_misses.clear();
         self.top_up_words();
         self.screen = Screen::Typing;
-        Ok(())
+    }
+
+    /// The text the Results best is limited to: today's words for the daily
+    /// challenge (its best is today's best), `None` for everything else.
+    pub fn best_text(&self) -> Option<String> {
+        (self.mode == Mode::Daily && self.replay.is_none()).then(|| self.session_text())
+    }
+
+    /// The session's words as saved for replaying: every word of a run
+    /// with a fixed text, only the words reached in an endless (time) run.
+    /// Empty when longer than [`crate::storage::MAX_TEXT_BYTES`].
+    pub fn session_text(&self) -> String {
+        let words = match self.mode {
+            Mode::Time(_) | Mode::Zen => {
+                &self.words[..(self.current_word + 1).min(self.words.len())]
+            }
+            _ => &self.words[..],
+        };
+        let bytes = words.iter().map(|w| w.text.len() + 1).sum::<usize>();
+        if bytes.saturating_sub(1) > crate::storage::MAX_TEXT_BYTES {
+            return String::new();
+        }
+        let words: Vec<&str> = words.iter().map(|w| w.text.as_str()).collect();
+        words.join(" ")
     }
 
     /// Time and zen runs end on the clock or on Esc, not on the last word:
     /// keep at least a batch of words ahead of the cursor.
     fn top_up_words(&mut self) {
         const BATCH: usize = 100;
-        let (pool, decor) = match self.mode {
-            Mode::Time(_) => (self.word_pool, self.word_decor),
+        let (pool, decor) = match (self.mode, &self.replay) {
+            // Past the end of a replayed time run: fresh words played the
+            // way the original was.
+            (Mode::Time(_), Some(replay)) => (replay.pool, replay.decor),
+            (Mode::Time(_), None) => (self.word_pool, self.word_decor),
             // Zen stays calm and plain: the word settings are for time and
             // words runs, which are scored; zen never is.
-            Mode::Zen => (WordPool::Common, WordDecor::default()),
+            (Mode::Zen, _) => (WordPool::Common, WordDecor::default()),
             _ => return,
         };
         if self.words.len().saturating_sub(self.current_word) < BATCH {
@@ -827,8 +1066,14 @@ impl App {
         }
     }
 
-    /// Restart the most recent mode with a fresh word list.
+    /// Restart the most recent mode with a fresh word list — or, while
+    /// replaying, the same replay again.
     pub fn restart(&mut self) -> anyhow::Result<()> {
+        if let Some(replay) = &self.replay {
+            let (mode, words) = (replay.mode, replay.words.clone());
+            self.begin(mode, words);
+            return Ok(());
+        }
         let mode = self.mode;
         self.start_game(mode)
     }
@@ -841,7 +1086,11 @@ impl App {
     }
 
     /// Stop the timer and move to the results screen. Safe to call twice.
+    /// Finishing while paused ends the run at the moment it was paused.
     pub fn finish_game(&mut self) {
+        if self.is_paused() {
+            self.toggle_pause();
+        }
         if self.ended_at.is_none() {
             self.ended_at = Some(Instant::now());
         }
@@ -857,6 +1106,10 @@ impl App {
     /// moves on one slot either way. Space is not special: mid-word it is just
     /// a wrong character.
     pub fn handle_char(&mut self, typed_char: char) {
+        // Paused: the text is hidden and the clock stopped, so nothing types.
+        if self.is_paused() {
+            return;
+        }
         self.ensure_timer_started();
         if self.current_word >= self.words.len() {
             return;
@@ -903,7 +1156,7 @@ impl App {
     /// word, erases the space before it — the cursor walks back to the previous
     /// word so they can fix a typo in a word they've already typed.
     pub fn handle_backspace(&mut self, delete_whole_word: bool) {
-        if self.current_word >= self.words.len() {
+        if self.is_paused() || self.current_word >= self.words.len() {
             return;
         }
         let active_word = &mut self.words[self.current_word];
@@ -937,9 +1190,10 @@ impl App {
                 return;
             }
         }
-        // Quote / code / custom-file modes: stop when there's nothing left to type.
-        if matches!(self.mode, Mode::Quote | Mode::Code(_) | Mode::Custom)
-            && self.current_word >= self.words.len()
+        // Every mode with a fixed text stops when there's nothing left to
+        // type — a count mode too, if its text is shorter than its count
+        // (a replay of a hand-edited record), or no key would ever act.
+        if !matches!(self.mode, Mode::Time(_) | Mode::Zen) && self.current_word >= self.words.len()
         {
             self.finish_game();
         }
@@ -1024,16 +1278,19 @@ mod tests {
         app.menu_move_row(true);
         assert_eq!(app.menu[app.menu_index].label, "python");
         app.menu_move_row(true);
-        assert_eq!(app.menu[app.menu_index].label, "quote"); // clamped
+        assert_eq!(app.menu[app.menu_index].label, "50"); // symbols
+        app.menu_move_row(true);
+        assert_eq!(app.menu[app.menu_index].label, "custom"); // clamped
         app.menu_move_row(false);
-        assert_eq!(app.menu[app.menu_index].label, "rust");
+        assert_eq!(app.menu[app.menu_index].label, "25");
     }
 
     #[test]
     fn menu_up_down_wraps_between_first_and_last_row() {
-        let mut app = menu_app();
+        let mut app = menu_app(); // time · 30s (column 1)
         app.menu_move_row(false);
-        assert_eq!(app.menu[app.menu_index].label, "quit");
+        assert_eq!(app.menu[app.menu_index].group, "app");
+        assert_eq!(app.menu[app.menu_index].label, "settings");
         app.menu_move_row(true);
         assert_eq!(app.menu[app.menu_index].group, "time");
     }
@@ -1054,6 +1311,233 @@ mod tests {
             assert!(app.words.len() >= 1100, "{mode:?}");
             assert_eq!(app.screen, Screen::Typing, "{mode:?}");
         }
+    }
+
+    // ── pause (v0.5.0) ─────────────────────────────────────────────────────
+
+    /// Paused time is left out of the clock: while paused it stands still,
+    /// and after resuming (or finishing while paused) it never counts.
+    #[test]
+    fn paused_time_never_counts() {
+        let mut app = make_app_with_word("hello");
+        let now = Instant::now();
+        app.started_at = Some(now - Duration::from_secs(10));
+        app.paused_at = Some(now - Duration::from_secs(6));
+        let frozen = app.elapsed();
+        assert!((frozen.as_secs_f64() - 4.0).abs() < 0.1, "{frozen:?}");
+        app.toggle_pause(); // resume
+        assert!(!app.is_paused());
+        assert!((app.elapsed().as_secs_f64() - 4.0).abs() < 0.1);
+
+        // Pause again for 3 s, then finish while paused: still 4 s.
+        app.paused_at = Some(Instant::now() - Duration::from_secs(3));
+        app.paused_for = Duration::from_secs(6);
+        app.started_at = Some(Instant::now() - Duration::from_secs(13));
+        app.finish_game();
+        assert!(!app.is_paused());
+        assert!((app.elapsed().as_secs_f64() - 4.0).abs() < 0.1);
+    }
+
+    /// While paused, keys type nothing, the clock doesn't start, and a time
+    /// run doesn't run out; a new game is never paused.
+    #[test]
+    fn paused_session_ignores_typing_and_clock() {
+        let mut app = menu_app();
+        app.start_game(Mode::Time(15)).unwrap();
+        app.toggle_pause();
+        app.handle_char('x');
+        app.handle_backspace(true);
+        assert_eq!(app.total_typed_chars, 0);
+        assert!(app.started_at.is_none(), "clock started while paused");
+        app.toggle_pause();
+        assert_eq!(app.elapsed(), Duration::ZERO);
+
+        app.started_at = Some(Instant::now() - Duration::from_secs(20));
+        app.paused_at = Some(Instant::now() - Duration::from_secs(10));
+        app.tick();
+        assert_eq!(app.screen, Screen::Typing, "time ran out while paused");
+        app.restart().unwrap();
+        assert!(!app.is_paused());
+        assert_eq!(app.paused_for, Duration::ZERO);
+    }
+
+    // ── daily challenge (v0.5.0) ───────────────────────────────────────────
+
+    /// The daily challenge types today's words, shows its progress, ends on
+    /// the last word, is saved as "daily", and its best is limited to
+    /// today's text. A replay of it is an ordinary replay.
+    #[test]
+    fn daily_challenge_types_todays_words() {
+        let mut app = menu_app();
+        app.start_game(Mode::Daily).unwrap();
+        let today = crate::words::daily_words(chrono::Local::now().date_naive());
+        let words: Vec<String> = app.words.iter().map(|w| w.text.clone()).collect();
+        assert_eq!(words, today);
+        assert_eq!(app.session_label(), "daily");
+        assert_eq!(app.progress(), Some((0, crate::words::DAILY_WORDS)));
+        assert_eq!(app.best_text(), Some(today.join(" ")));
+        for ch in today.join(" ").chars() {
+            app.handle_char(ch);
+        }
+        assert_eq!(app.screen, Screen::Results);
+
+        let record = SessionRecord {
+            mode: "daily".into(),
+            text: today.join(" "),
+            ..SessionRecord::default()
+        };
+        app.start_replay(&record).unwrap();
+        assert_eq!(app.mode, Mode::Daily);
+        assert_eq!(app.session_label(), "daily+replay");
+        assert_eq!(app.best_text(), None);
+    }
+
+    #[test]
+    fn menu_offers_the_daily_challenge() {
+        let menu = default_menu();
+        let daily = best_menu_match(&menu, Mode::Daily);
+        assert_eq!(menu[daily].label, "daily");
+        assert_eq!(menu[daily].mode, Some(Mode::Daily));
+    }
+
+    // ── replay (v0.5.0) ────────────────────────────────────────────────────
+
+    /// Every label TypeRush writes reads back as the mode it came from;
+    /// word-setting and replay suffixes don't change the mode, and labels
+    /// it never writes (or out-of-range counts) are `None`.
+    #[test]
+    fn mode_labels_read_back() {
+        let menu = default_menu();
+        for mode in menu.iter().filter_map(|item| item.mode) {
+            assert_eq!(Mode::from_label(&mode.label()), Some(mode), "{mode:?}");
+        }
+        for mode in [Mode::Time(45), Mode::Words(7), Mode::Symbols(3)] {
+            assert_eq!(Mode::from_label(&mode.label()), Some(mode));
+        }
+        assert_eq!(Mode::from_label("time-30s+10k+p+n"), Some(Mode::Time(30)));
+        assert_eq!(Mode::from_label("words-50+p+replay"), Some(Mode::Words(50)));
+        assert_eq!(Mode::from_label("custom-notes"), Some(Mode::Custom));
+        for bad in [
+            "",
+            "time-0s",
+            "time-99999s",
+            "words-x",
+            "code-cobol",
+            "customs",
+            "zenith",
+        ] {
+            assert_eq!(Mode::from_label(bad), None, "{bad:?}");
+        }
+    }
+
+    fn record_with_text(mode: &str, text: &str) -> SessionRecord {
+        SessionRecord {
+            wpm: 62.5,
+            mode: mode.into(),
+            text: text.into(),
+            ..SessionRecord::default()
+        }
+    }
+
+    /// A replay types the original's words, is saved as `+replay`, ends on
+    /// its last word, and restarting replays it again; any other game
+    /// clears it.
+    #[test]
+    fn replay_types_the_same_words_again() {
+        let mut app = menu_app();
+        let record = record_with_text("words-3+p", "one, two three.");
+        app.start_replay(&record).unwrap();
+        let words = |app: &App| app.words.iter().map(|w| w.text.clone()).collect::<Vec<_>>();
+        assert_eq!(words(&app), ["one,", "two", "three."]);
+        assert_eq!(app.mode, Mode::Words(3));
+        assert_eq!(app.session_label(), "words-3+p+replay");
+        for ch in "one, two three.".chars() {
+            app.handle_char(ch);
+        }
+        assert_eq!(app.screen, Screen::Results);
+        assert_eq!(app.session_text(), "one, two three.");
+
+        app.restart().unwrap();
+        assert_eq!(words(&app), ["one,", "two", "three."]);
+        assert_eq!(app.screen, Screen::Typing);
+
+        // A replay of a replay is still just "+replay".
+        app.start_replay(&record_with_text("words-3+p+replay", "a b c"))
+            .unwrap();
+        assert_eq!(app.session_label(), "words-3+p+replay");
+
+        app.start_game(Mode::Words(3)).unwrap();
+        assert!(app.replay.is_none());
+        assert_eq!(app.session_label(), "words-3");
+    }
+
+    /// A time replay runs on the clock: the original's words first, then
+    /// fresh ones played the way the original was (its `+10k`/`+p`/`+n`),
+    /// whatever the menu's settings are now.
+    #[test]
+    fn time_replay_continues_with_the_originals_settings() {
+        let mut app = menu_app();
+        app.start_replay(&record_with_text("time-15s+n", "alpha beta"))
+            .unwrap();
+        assert_eq!(app.mode, Mode::Time(15));
+        assert_eq!(app.words[0].text, "alpha");
+        assert_eq!(app.words[1].text, "beta");
+        assert!(app.words.len() >= 100, "topped up");
+        let replay = app.replay.as_ref().unwrap();
+        assert_eq!(replay.pool, WordPool::Common);
+        assert!(replay.decor.numbers && !replay.decor.punctuation);
+        // Only the words reached are kept when a time run is saved.
+        for ch in "alpha be".chars() {
+            app.handle_char(ch);
+        }
+        assert_eq!(app.session_text(), "alpha beta");
+    }
+
+    /// Replay text comes from stats.json: untypeable characters are dropped
+    /// like a custom file's, a record without text explains itself, an
+    /// oversized one is refused, and a failed replay changes nothing.
+    #[test]
+    fn replay_text_is_checked() {
+        let mut app = menu_app();
+        app.start_replay(&record_with_text("quote", "go\u{1b}[2J \u{feff} fast"))
+            .unwrap();
+        let words: Vec<_> = app.words.iter().map(|w| w.text.as_str()).collect();
+        assert_eq!(words, ["go[2J", "fast"]);
+
+        app.start_game(Mode::Words(5)).unwrap();
+        let error = app
+            .start_replay(&record_with_text("time-30s", ""))
+            .unwrap_err();
+        assert!(error.to_string().contains("no words saved"), "{error}");
+        let huge = "word ".repeat(crate::storage::MAX_TEXT_BYTES / 4);
+        assert!(app
+            .start_replay(&record_with_text("words-10", &huge))
+            .is_err());
+        assert_eq!(app.mode, Mode::Words(5));
+        assert!(app.replay.is_none());
+    }
+
+    /// A count mode whose text is shorter than its count (a hand-edited
+    /// record) still ends on the last word instead of ignoring every key.
+    #[test]
+    fn short_replay_still_finishes() {
+        let mut app = menu_app();
+        app.start_replay(&record_with_text("words-50", "hi"))
+            .unwrap();
+        app.handle_char('h');
+        app.handle_char('i');
+        assert_eq!(app.screen, Screen::Results);
+    }
+
+    /// The saved text of a run too long to keep is empty, not cut short.
+    #[test]
+    fn oversized_session_text_is_not_kept() {
+        let mut app = menu_app();
+        app.start_game(Mode::Words(1)).unwrap();
+        app.words = vec![Word::new("x".repeat(crate::storage::MAX_TEXT_BYTES + 1))];
+        assert_eq!(app.session_text(), "");
+        app.words = vec![Word::new("x".repeat(crate::storage::MAX_TEXT_BYTES))];
+        assert_eq!(app.session_text().len(), crate::storage::MAX_TEXT_BYTES);
     }
 
     // ── per-key accuracy tracking (v0.3.0) ──────────────────────────────────
@@ -1261,14 +1745,19 @@ mod tests {
         };
         assert_eq!(
             row("code"),
-            ["rust", "python", "javascript", "go", "java", "sql", "shell"]
+            ["rust", "python", "js", "go", "java", "sql", "shell"]
         );
         assert_eq!(row("symbols"), ["25", "50"]);
-        // The new rows sit after zen, so the v0.3 rows keep their order.
-        let groups: Vec<&str> = menu.iter().map(|m| m.group).collect();
-        let zen = groups.iter().position(|g| *g == "zen").unwrap();
-        assert_eq!(groups[zen + 1], "symbols");
-        assert_eq!(&groups[groups.len() - 2..], ["stats", "quit"]);
+        // Rows with a choice of options first, then the single runs, then
+        // the actions.
+        let mut groups: Vec<&str> = menu.iter().map(|m| m.group).collect();
+        groups.dedup();
+        assert_eq!(
+            groups,
+            ["time", "words", "code", "symbols", "custom", "daily", "quote", "zen", "app"]
+        );
+        assert_eq!(row("daily"), ["daily"]);
+        assert_eq!(row("app"), ["stats", "settings", "quit"]);
     }
 
     #[test]

@@ -40,11 +40,15 @@ with a quote — TypeRush meets you where you already work: the command line.
 - 🎯 **Honest scoring** — every character counts, the space between words included
 - 🖱 **Keyboard or mouse** — arrow-key menu, or click any option and footer hint
 - 🎨 **Themes built-in** — `dark`, `light`, `monokai`, `dracula`, or roll your own colors
-- ⏱ **Seven built-in modes** — Time, Words, Quote, Code, Symbols, Zen, and Custom-file
+- ⏱ **Eight built-in modes** — Time, Words, Quote, Code, Symbols, Zen, Custom-file, and a Daily challenge
+- 📅 **Daily challenge** — the same 40 words for everyone on a given day, with today's best
+- 🔁 **Replay any session** — type the exact same words again and see how you compare
+- ⏸ **Pause** — `Ctrl+P` / `F2` stops the clock and hides the text
 - 🔤 **Seven code languages** — Rust, Python, JavaScript, Go, Java, SQL, Shell
 - 📚 **10k-word pool & punctuation/number drills** — toggle them with `b` / `p` / `n` in the menu when you want a tougher session
 - 🗂  **Personal snippet library** — drop `.txt` files in `~/.typerush/snippets/`, each with its own personal best
-- 💾 **Tracks your progress** — every session saved locally, with charts and a personal best
+- 💾 **Tracks your progress** — every session saved locally, with charts and a personal best; export it as CSV
+- ⚙️ **Settings without a text editor** — an in-app Settings screen, or `typerush config set …`
 - 🌍 **Runs everywhere** — Linux · macOS · Windows · WSL · Git Bash
 - 📦 **One binary, zero setup** — `cargo install typerush` and you're done
 
@@ -81,6 +85,8 @@ typerush --words 50           # 50 random English words
 typerush --quote              # one programming quote
 typerush --code rust          # rust | python | js | go | java | sql | shell
 typerush --symbols 25         # programming-punctuation drill
+typerush --daily              # today's daily challenge
+typerush --replay             # type your last session again, word for word
 typerush --zen                # zen mode — no timer, no pressure
 typerush --file my_text.txt   # type anything you want
 typerush --big                # use the 10,000-word English pool
@@ -90,6 +96,15 @@ typerush --no-punctuation     # plain run, even if your config turns it on
 typerush --theme monokai      # try a different theme
 typerush --list-themes        # see all built-in themes
 typerush --list-snippets      # see every snippet in ~/.typerush/snippets/
+```
+
+And a few things that don't open the app:
+
+```bash
+typerush export stats.csv             # your history as CSV (leave out the file to print it)
+typerush config show                  # every setting, and the value in use
+typerush config set theme dracula     # change one (your comments in the file are kept)
+typerush --init-config                # write a starter ~/.typerush/config.toml
 ```
 
 ---
@@ -105,6 +120,7 @@ typerush --list-snippets      # see every snippet in ~/.typerush/snippets/
 | Symbols | Drill punctuation: `(){};=>`, `&&`, `?.`, `<T>` and friends         |
 | Zen     | No timer, no score. Just type and breathe.                          |
 | Custom  | Any text file via `--file` or `.txt` in `~/.typerush/snippets/`     |
+| Daily   | Today's 40 words — the same for everyone, new every day             |
 
 ---
 
@@ -115,11 +131,14 @@ typerush --list-snippets      # see every snippet in ~/.typerush/snippets/
 | `Enter`         | start / restart a session       |
 | `Esc`           | back to menu / end session      |
 | `Ctrl+R` / `F5` | restart the current mode        |
+| `Ctrl+P` / `F2` | pause / resume while typing     |
 | `Tab`           | jump to your stats history      |
+| `c`             | settings (from the menu)        |
 | `?` / `F1`      | open the keybindings overlay    |
 | `Ctrl+C`        | quit                            |
 
-The mouse works too: click a menu option or any footer hint.
+The mouse works too: click a menu option, a stats row, a setting's `‹ ›`, or
+any footer hint.
 
 Full keymap: see [`docs/USAGE.md`](docs/USAGE.md).
 
@@ -128,8 +147,8 @@ Full keymap: see [`docs/USAGE.md`](docs/USAGE.md).
 ## 📈 Track your progress
 
 Every (non-zen) session is saved to `~/.typerush/stats.json`. The Stats screen
-shows your personal best, average accuracy, a trend sparkline, and your last
-10 runs — plus, as of v0.3:
+shows your personal best, average accuracy, a trend sparkline, and every run
+in a scrolling list — plus, as of v0.3:
 
 - 🔥 **Daily streak** — consecutive days you've practiced
 - 📅 **7- and 30-day WPM averages**
@@ -140,12 +159,25 @@ And as of v0.4.1, **stats by category**: flip through every mode with `←` / `�
 to see its own summary, trend and full session list, or a table of your best
 in every mode — with a ★ on each record-holding run.
 
+New in v0.5: pick any session in the list and press `Enter` to **replay it
+word for word** (Results then shows how you did against the original), and
+press `e` to **export your history as CSV**.
+
 ---
 
 ## 🎨 Make it yours
 
-Drop a [`config.toml`](config.example.toml) into `~/.typerush/` to pick a
-theme, set your default mode, or override individual colors:
+Open **Settings** from the menu (`c`) to pick a theme — it changes as you
+pick — the mode the menu starts on, and the word settings; they're saved to
+`~/.typerush/config.toml` straight away. Or from the shell:
+
+```bash
+typerush config set theme monokai
+typerush config set defaults.time_seconds 30
+```
+
+`typerush --init-config` writes a starter [`config.toml`](config.example.toml)
+with every setting explained, and you can also edit it by hand:
 
 ```toml
 theme = "monokai"

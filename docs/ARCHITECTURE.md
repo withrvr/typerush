@@ -36,18 +36,22 @@ The `Screen` enum in `src/app.rs` is the application's high-level state:
 ```mermaid
 stateDiagram-v2
     [*] --> Menu
-    [*] --> Typing: mode flag (--time, --words, --quote, --code, --zen, --symbols, --file)
+    [*] --> Typing: mode flag (--time, --words, --quote, --code, --zen, --symbols, --daily, --replay, --file)
     Menu --> Typing: Enter / Space / click an option
-    Typing --> Typing: Ctrl+R / F5 restart
+    Typing --> Typing: Ctrl+R / F5 restart, Ctrl+P / F2 pause and resume
     Typing --> Results: mode finishes / Esc
-    Results --> Typing: Enter / r restart
-    Results --> Menu: Esc / m
-    Results --> Stats: Tab / s
+    Results --> Typing: Enter / F5 / Ctrl+R restart
+    Results --> Menu: Esc
+    Results --> Stats: Tab
     Menu --> Stats: Tab / s
+    Stats --> Typing: Enter replays the selected session
     Stats --> Menu: Esc / m / Tab
+    Menu --> Settings: c / click settings
+    Settings --> Menu: Esc / m / Tab
     Menu --> Help: ? / F1
-    Results --> Help: ? / F1
+    Results --> Help: F1
     Stats --> Help: ? / F1
+    Settings --> Help: ? / F1
     Help --> [*]: Esc / ? / F1 / q / click
     note right of Help
         Overlay: remembers the previous screen
@@ -102,10 +106,18 @@ flowchart LR
     Entry point: terminal, event loop, panic hook,
     CLI parser (clap), key + mouse dispatch,
     after_input (save once, caches)"]
+    src --> commands["commands.rs
+    subcommands that don't open the app:
+    export (CSV), config path/show/get/set/reset/init"]
+    src --> settings["settings.rs
+    Settings screen state (SettingsView) and actions:
+    change, save through config::edit, apply at once"]
     src --> app["app.rs
     App state machine: all fields and transitions,
-    WPM / accuracy math, mode switching, completion,
-    per-key tracking, menu navigation, click targets"]
+    WPM / accuracy math (paused time left out), pause,
+    mode switching, completion, per-key tracking,
+    replay (Replay, Mode::from_label), session text,
+    menu navigation, click targets"]
     src --> game["game.rs
     get_char_states(target, typed): the matcher
     behind all colored feedback"]
@@ -113,14 +125,15 @@ flowchart LR
     SessionRecord + ~/.typerush/stats.json (atomic writes).
     personal_best, personal_best_for_mode, average_accuracy,
     streak, avg_wpm_last_n_days, key_accuracy,
-    bests_by_mode, StatsSummary, StatsView,
-    ResultsComparison"]
+    bests_by_mode, StatsSummary, StatsView (selection),
+    ResultsComparison, to_csv / export_csv"]
     src --> state["state.rs
     ~/.typerush/state.json: the last custom file
     (atomic writes, path passed in)"]
     src --> text["text.rs
-    printable / shorten: safe, width-aware display
-    of user-supplied names, paths and file text"]
+    printable / shorten / screen_path: safe,
+    width-aware display of user-supplied names,
+    paths and file text"]
     src --> theme["theme/"]
     theme --> theme_mod["mod.rs
     ThemePalette (10 color slots) + per-slot overrides"]
@@ -128,15 +141,21 @@ flowchart LR
     dark, light, monokai, dracula
     (new theme = one row in ALL)"]
     theme --> color["color.rs
-    #RRGGBB and 16 ANSI color names parser"]
+    #RRGGBB and 16 ANSI color names: parse_color,
+    color_name (the other way)"]
     src --> config["config/"]
     config --> config_mod["mod.rs
     Config / Defaults / Colors / Words from config.toml (serde)"]
     config --> load["load.rs
     load_or_default_with(CliOverrides): never errors,
     bad files become one human-readable warning;
-    code_lang: one name table for
-    code_lang and --code"]
+    read_config (regular file, 1 MiB at most);
+    code_lang / word_pool / MODE_NAMES / defaults:
+    one table each for the loader, CLI and edit"]
+    config --> edit["edit.rs
+    KEYS (every setting), check (the loader's rules),
+    effective values, set / reset / reset_all / init
+    with toml_edit: comments and layout kept"]
     src --> ui["ui/"]
     ui --> ui_mod["mod.rs
     render() dispatcher, background paint,
@@ -155,12 +174,16 @@ flowchart LR
     ui --> stats["stats.rs
     categories, summary, key heatmap, sparkline,
     scrolling sessions table (★ bests), bests table"]
+    ui --> settings_ui["settings.rs
+    the saved settings as ‹ value › rows,
+    reset to defaults (asks first)"]
     ui --> help["help.rs
-    help overlay and error modal"]
+    help overlay, error and notice modals"]
     src --> words["words/"]
     words --> words_mod["mod.rs
     word source picker (random, quote, code, symbols, file);
-    WordPool + WordDecor (punctuation / numbers)"]
+    WordPool + WordDecor (punctuation / numbers);
+    daily_words (SplitMix64 seeded by the date)"]
     words --> english["english.rs
     ENGLISH_COMMON (~430 common words) and ENGLISH_10000"]
     words --> quotes["quotes.rs
@@ -215,7 +238,8 @@ JSON, flat array, no schema. The file is small enough (one session ≈ 200B
 before v0.3.0, slightly larger with per-key maps) that we rewrite it whole on
 every save. Zen-mode sessions are deliberately excluded.
 
-v0.3.0 added two optional fields to `SessionRecord`:
+v0.3.0 added two optional fields to `SessionRecord` (and v0.5.0 a third,
+`text` — see [Replay](#replay-and-the-daily-challenge-v050)):
 - `key_hits: HashMap<String, u64>` — per expected character, times typed correctly
 - `key_misses: HashMap<String, u64>` — per expected character, times something
   else was typed instead (the space between words counts as a character)
@@ -276,6 +300,64 @@ so it works from any directory.
 labels get the `+10k` / `+p` / `+n` suffixes of the word settings, which the
 menu's `p` / `n` / `b` keys toggle on `App::word_pool` / `App::word_decor`.
 
+### Pause (v0.5.0)
+
+`App::paused_at` is when the current pause began and `App::paused_for` the
+time spent in earlier pauses. `elapsed()` stops at `paused_at` while paused
+and subtracts `paused_for`, so WPM, a time run's clock and the saved
+duration all leave paused time out without any of them knowing about
+pauses. `finish_game` resumes first, so a run finished while paused ends at
+the moment it was paused. `handle_char` / `handle_backspace` ignore keys
+while paused (one guard where every caller goes through), and the typing
+screen draws the box without its words.
+
+### Replay and the daily challenge (v0.5.0)
+
+`SessionRecord::text` keeps a session's words, space-separated: every word
+of a fixed text, the words reached in a time run (`App::session_text`),
+nothing past `MAX_TEXT_BYTES` (64 KiB). `#[serde(default,
+skip_serializing_if = "String::is_empty")]` keeps old files loading and
+text-less records unchanged on disk.
+
+`Replay::of(record)` turns a record back into a run: its words (held to the
+custom-file rules, since stats.json can be hand-edited), its mode from the
+label (`Mode::from_label`, the reverse of `Mode::label`), the original's
+word settings from the label's `+10k` / `+p` / `+n` for a time run's fresh
+words, and its WPM and date for Results. `App::start_replay` sets
+`App::replay` and calls `begin`, the half of `start_game` that resets the
+session; `restart` replays again while `replay` is set, and `start_game`
+clears it. `session_label` is the original's plus `+replay`.
+
+The Stats lists have a selected row (`StatsView::selected`, scrolled into
+view when drawn); `selected_session` names the history index to replay —
+on the bests table, the mode's best run.
+
+`words::daily_words(date)` picks 40 words with a SplitMix64 written out in
+the source, seeded by the date's day number: `rand`'s generators may change
+between versions, and the daily words must depend on the date alone (a
+test pins today's). `ResultsComparison::new` takes `same_text`, so the
+daily challenge's best is only over earlier runs of today's words
+(`App::best_text`).
+
+### Editing `config.toml` (v0.5.0)
+
+`config::edit` is shared by the `typerush config` subcommands and the
+Settings screen. `KEYS` lists every setting with its `Kind`; `check` holds a
+value to the loader's own rules (the same `check_count`, `code_lang`,
+`word_pool`, `builtin::by_name`, `parse_color`) and writes it one canonical
+way. `set` and `reset` edit the file as a `toml_edit` document — a value
+changed in place keeps the comments above its key and after its value, a
+new section goes after the file's trailing comments — and write it with
+`write_atomic`. A file that isn't valid TOML is never written. `reset_all`
+renames the file aside rather than deleting it. `effective` gives each
+setting's value as the app will use it, and where it comes from (file,
+default, or a file value the loader ignores, with the reason).
+
+The Settings screen keeps a `SettingsView` read from the file on the way in
+(not per frame) and after each change; every change is saved, then applied
+to the running app (theme with the file's color overrides, start mode as
+the menu's highlight, word settings).
+
 ### Config loading
 
 `config::load::load_from(path, cli)` never fails: a missing file means
@@ -294,6 +376,11 @@ crate. We don't directly use any platform-specific code, so the binary is a
 - A `panic::set_hook` resets the terminal before the panic message prints, so a
   crash never leaves the user's shell broken.
 - Disk I/O for stats is best-effort — losing a record is never worth crashing.
+- In the app, a failed action shows the error modal (`App::show_error`) and a
+  finished one that needs saying (an export) the notice modal (`App::notice`);
+  any key or click closes either.
+- Subcommands (`export`, `config …`) run before the terminal is touched and
+  report errors like `main` does (`print_error_and_exit`, status 1).
 
 ---
 
@@ -318,11 +405,29 @@ crate. We don't directly use any platform-specific code, so the binary is a
 2. Pattern-match it inside `App::start_game` to pick a word source.
 3. Update `Mode::label` so it persists nicely in stats.
 4. Add an entry to `build_menu()` — items sharing a `group` render under one
-   heading, options side by side (wrapping when the row is too wide). New rows
-   go after the existing ones so ↑/↓ through the old rows doesn't change.
+   heading, options side by side (wrapping when the row is too wide). Rows
+   with a choice of options go with the other categories (time … custom),
+   a single run with daily, quote and zen; the actions row stays last.
 5. If it has a unique completion condition, handle it in `advance_word()` /
    `tick()`.
 6. (Optional) Add a CLI flag in `main.rs::Cli`.
+
+For v0.5 and later also: give it a name in `Mode::label` that
+`Mode::from_label` reads back (so its sessions can be replayed — a test
+round-trips every menu mode), and if it can be a start mode, a name in
+`config::load::MODE_NAMES`, `resolve_default_mode` and
+`settings::start_settings`.
+
+## When you add a setting
+
+1. Add the field to the `Config` structs in `src/config/mod.rs` and resolve
+   it in `src/config/load.rs`.
+2. Add a `Key` to `config::edit::KEYS`, and its arms in `file_value` and
+   `default_value`. `keys_cover_every_config_field` destructures every
+   struct without `..`, so it won't compile until you look at it.
+3. Document it in `config.example.toml` at its default value (a test checks
+   the starter file loads to exactly the defaults) and in USAGE's table of
+   setting names.
 
 ## When you add a code language
 

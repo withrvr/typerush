@@ -74,6 +74,21 @@ rm -rf /tmp/tr-test
 
 Your real `~/.typerush/` (stats + any config you keep) stays untouched.
 
+### Testing `typerush config` and `export`
+
+The subcommands read and write the same files, so give them the sandbox
+`HOME` too:
+
+```bash
+HOME=/tmp/tr-test cargo run -- config show
+HOME=/tmp/tr-test cargo run -- config set theme dracula
+HOME=/tmp/tr-test cargo run -- --init-config      # refuses if config.toml exists
+HOME=/tmp/tr-test cargo run -- export
+```
+
+In tests, `commands::run` takes the files to use (`commands::Files`) and
+the output streams, so nothing touches a real home directory or terminal.
+
 ### Quickly testing malformed configs
 
 The loader is supposed to fall back gracefully instead of crashing. To verify:
@@ -143,6 +158,11 @@ sleep before the next key.
 
 Sessions shorter than 1 s aren't saved, so pause (`sleep 1.1`) mid-typing when
 you need a saved session. Check `/tmp/tr-e2e/.typerush/stats.json` afterwards.
+
+`F2` / `C-p` pause and resume a run (`tmux send-keys -t tr F2`); while paused
+the words are hidden, so read them off the screen *before* pausing if the
+script types them. Settings writes `/tmp/tr-e2e/.typerush/config.toml` — `cat`
+it after each change.
 
 ---
 

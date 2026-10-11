@@ -47,11 +47,21 @@ pub fn render(f: &mut Frame, app: &App, area: Rect) -> &'static [super::Hint] {
     // Normally computed once on screen entry (main loop); computed here only
     // if something renders Results without going through it (e.g. tests).
     let comparison = app.results_comparison.unwrap_or_else(|| {
-        storage::ResultsComparison::new(sessions, app.session_just_saved, &mode_label)
+        storage::ResultsComparison::new(
+            sessions,
+            app.session_just_saved,
+            &mode_label,
+            app.best_text().as_deref(),
+        )
     });
 
-    // Delta vs the previous any-mode session.
-    let delta = match comparison.last_wpm {
+    // Delta vs the previous any-mode session — or, for a replay, vs the run
+    // it replays.
+    let (reference, against) = match &app.replay {
+        Some(replay) => (Some(replay.wpm), "original"),
+        None => (comparison.last_wpm, "last"),
+    };
+    let delta = match reference {
         Some(prev) => {
             let diff = wpm - prev;
             let sign = if diff >= 0.0 { "+" } else { "" };
@@ -61,7 +71,7 @@ pub fn render(f: &mut Frame, app: &App, area: Rect) -> &'static [super::Hint] {
                 theme.incorrect
             };
             Span::styled(
-                format!("  ({sign}{:.0} vs last)", diff),
+                format!("  ({sign}{:.0} vs {against})", diff),
                 Style::default().fg(color),
             )
         }
@@ -113,7 +123,13 @@ pub fn render(f: &mut Frame, app: &App, area: Rect) -> &'static [super::Hint] {
         } else {
             Span::raw("")
         };
-        Line::from(vec![label(app, "mode best"), pb_value, badge])
+        // The daily challenge's best is today's: other days had other words.
+        let name = if app.best_text().is_some() {
+            "today best"
+        } else {
+            "mode best"
+        };
+        Line::from(vec![label(app, name), pb_value, badge])
     };
 
     let body_lines = vec![
@@ -145,6 +161,12 @@ pub fn render(f: &mut Frame, app: &App, area: Rect) -> &'static [super::Hint] {
         Line::from(vec![
             label(app, "mode"),
             Span::styled(&mode_label, Style::default().fg(theme.mode_tag)),
+            Span::styled(
+                app.replay.as_ref().map_or(String::new(), |replay| {
+                    replay.timestamp.format("  of %Y-%m-%d %H:%M").to_string()
+                }),
+                Style::default().fg(theme.pending),
+            ),
         ]),
         pb_line,
     ];

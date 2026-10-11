@@ -295,17 +295,7 @@ fn word_settings(app: &App) -> (Line<'static>, Vec<(u16, u16, char)>) {
 /// list is dense — for screens too short for all of them.
 fn menu_lines(app: &App, width: usize, gaps_wanted: bool) -> MenuLines {
     let theme = &app.theme;
-    // Selected option: the theme background on accent. On the light theme that
-    // is off-white on deep blue (~5.3:1, WCAG AA); black would be ~3.8:1. The
-    // dark theme's background is `Reset` (terminal default), so use black there.
-    let chip_fg = match theme.background {
-        Color::Reset => Color::Black,
-        background => background,
-    };
-    let selected_style = Style::default()
-        .fg(chip_fg)
-        .bg(theme.accent)
-        .add_modifier(Modifier::BOLD);
+    let selected_style = super::selected_style(theme);
     // Explicit fg everywhere: Reset would render the terminal default, which
     // is invisible on the light theme's white background.
     let option_style = Style::default().fg(theme.neutral);
@@ -316,11 +306,14 @@ fn menu_lines(app: &App, width: usize, gaps_wanted: bool) -> MenuLines {
     let mut selected_line = 0;
     let mut previous_row: Option<std::ops::Range<usize>> = None;
     let mut gaps = 0;
-    // A row gets a heading line when it has several options, or when its one
-    // option is a file (a single custom file or snippet — even one named
-    // `custom.txt` must not look like the bare "nothing yet" placeholder).
-    let has_heading =
-        |row: &std::ops::Range<usize>| row.len() > 1 || app.menu[row.start].custom_path.is_some();
+    // A row of games gets a heading line when it has several options, or
+    // when its one option is a file (a single custom file or snippet — even
+    // one named `custom.txt` must not look like the bare "nothing yet"
+    // placeholder). The actions row (stats, quit) never has one.
+    let has_heading = |row: &std::ops::Range<usize>| {
+        let first = &app.menu[row.start];
+        (row.len() > 1 && first.mode.is_some()) || first.custom_path.is_some()
+    };
     let mut start = 0;
     while start < app.menu.len() {
         let row = menu_row(&app.menu, start);

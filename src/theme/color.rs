@@ -32,19 +32,16 @@ pub fn parse_color(input: &str) -> Result<Color> {
 }
 
 fn parse_hex(hex: &str) -> Result<Color> {
-    if hex.len() != 6 {
+    // Checked as characters first: slicing by byte would panic inside a
+    // multi-byte character, and `from_str_radix` alone would accept a sign.
+    if hex.len() != 6 || !hex.bytes().all(|b| b.is_ascii_hexdigit()) {
         return Err(anyhow!(
-            "hex color must be exactly 6 characters after '#', got '{}'",
+            "hex color must be '#' and exactly 6 hex digits (0-9, a-f), got '#{}'",
             hex
         ));
     }
-    let red = u8::from_str_radix(&hex[0..2], 16)
-        .map_err(|_| anyhow!("invalid red byte in hex color '#{}'", hex))?;
-    let green = u8::from_str_radix(&hex[2..4], 16)
-        .map_err(|_| anyhow!("invalid green byte in hex color '#{}'", hex))?;
-    let blue = u8::from_str_radix(&hex[4..6], 16)
-        .map_err(|_| anyhow!("invalid blue byte in hex color '#{}'", hex))?;
-    Ok(Color::Rgb(red, green, blue))
+    let byte = |i: usize| u8::from_str_radix(&hex[i..i + 2], 16).unwrap_or(0);
+    Ok(Color::Rgb(byte(0), byte(2), byte(4)))
 }
 
 fn parse_named(name: &str) -> Result<Color> {
@@ -73,6 +70,34 @@ fn parse_named(name: &str) -> Result<Color> {
         "reset" | "default" => Ok(Color::Reset),
         _ => Err(anyhow!("unknown color name '{}'", name)),
     }
+}
+
+/// `color` written the way [`parse_color`] reads it: `#RRGGBB`, an ANSI
+/// name (`dark_gray`) or `reset` — for printing config values.
+pub fn color_name(color: Color) -> String {
+    let name = match color {
+        Color::Rgb(red, green, blue) => return format!("#{red:02X}{green:02X}{blue:02X}"),
+        Color::Black => "black",
+        Color::Red => "red",
+        Color::Green => "green",
+        Color::Yellow => "yellow",
+        Color::Blue => "blue",
+        Color::Magenta => "magenta",
+        Color::Cyan => "cyan",
+        Color::Gray => "gray",
+        Color::DarkGray => "dark_gray",
+        Color::LightRed => "light_red",
+        Color::LightGreen => "light_green",
+        Color::LightYellow => "light_yellow",
+        Color::LightBlue => "light_blue",
+        Color::LightMagenta => "light_magenta",
+        Color::LightCyan => "light_cyan",
+        Color::White => "white",
+        Color::Reset => "reset",
+        // Never produced by `parse_color` or a built-in theme.
+        Color::Indexed(index) => return format!("indexed {index}"),
+    };
+    name.to_string()
 }
 
 #[cfg(test)]
@@ -116,6 +141,36 @@ mod tests {
     #[test]
     fn rejects_invalid_hex_chars() {
         assert!(parse_color("#GGGGGG").is_err());
+    }
+
+    /// Regression: a six-*byte* string that isn't six hex digits used to be
+    /// sliced by byte, panicking inside a multi-byte character (`#aé€`), and
+    /// a sign was read as part of the number (`#+F+F+F`).
+    #[test]
+    fn rejects_non_hex_bytes_without_panicking() {
+        for bad in ["#aé€", "#ééé", "#+F+F+F", "#-1-1-1", "# FFFFF"] {
+            assert!(parse_color(bad).is_err(), "{bad:?}");
+        }
+    }
+
+    /// Every color a theme or the parser makes is written back in a form
+    /// the parser reads as the same color.
+    #[test]
+    fn color_names_read_back() {
+        let mut colors = vec![Color::Rgb(0x0A, 0xBC, 0xFF), Color::Reset];
+        for (_, palette) in crate::theme::builtin::ALL {
+            colors.extend([palette.accent, palette.pending, palette.background]);
+        }
+        colors.extend([
+            Color::DarkGray,
+            Color::LightMagenta,
+            Color::Gray,
+            Color::White,
+        ]);
+        for color in colors {
+            assert_eq!(parse_color(&color_name(color)).unwrap(), color, "{color:?}");
+        }
+        assert_eq!(color_name(Color::Rgb(255, 0, 15)), "#FF000F");
     }
 
     #[test]

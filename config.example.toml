@@ -1,7 +1,13 @@
-# TypeRush — example configuration file
+# TypeRush — configuration file
 #
-# Copy this file to `~/.typerush/config.toml` and edit to taste.
-# TypeRush works fine without a config file — every setting below is optional.
+# `typerush --init-config` writes this file to `~/.typerush/config.toml`.
+# Every value below is the built-in default, so the file changes nothing
+# until you edit it. TypeRush works fine without a config file — every
+# setting is optional.
+#
+# Change settings without opening the file: `typerush config set theme
+# dracula`, the Settings screen in the app, `typerush config show` to see
+# them all. Your comments are kept.
 #
 # Precedence: menu keys p / n / b (while open) > CLI flags > this file >
 # built-in defaults.
@@ -11,16 +17,16 @@
 # Available names: dark, light, monokai, dracula
 # Run `typerush --list-themes` to see what's currently shipped.
 # -----------------------------------------------------------------------------
-theme = "monokai"
+theme = "dark"
 
 # -----------------------------------------------------------------------------
 # Defaults — pre-selects a menu row and sets the initial mode when no CLI flag
-# is given. CLI flags (--time, --words, --quote, --code, --zen, --symbols)
-# always win.
+# is given. CLI flags (--time, --words, --quote, --code, --zen, --symbols,
+# --daily) always win.
 # -----------------------------------------------------------------------------
 [defaults]
 # Which menu row to pre-select:
-#   "time" | "words" | "quote" | "code" | "zen" | "symbols"
+#   "time" | "words" | "quote" | "code" | "zen" | "symbols" | "daily"
 mode = "time"
 # Used when mode = "time". Standard menu rows: 15 / 30 / 60 / 120.
 time_seconds = 15
@@ -46,7 +52,8 @@ symbol_count = 25
 
 # -----------------------------------------------------------------------------
 # Color overrides — applied ON TOP of the chosen theme.
-# Any slot omitted here keeps the theme's value.
+# Any slot omitted here keeps the theme's value. (The values below are
+# monokai's, as an example.)
 # Values may be:
 #   - a hex string like "#A6E22E"
 #   - one of the 16 ANSI names: black, red, green, yellow, blue, magenta,

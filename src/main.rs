@@ -11,8 +11,10 @@
 //!   4. Restore the terminal on exit (and on panic, via a hook).
 
 mod app;
+mod commands;
 mod config;
 mod game;
+mod settings;
 mod state;
 mod storage;
 mod text;
@@ -63,6 +65,8 @@ where
     version,
     about = "In your terminal — a fast WPM typing trainer",
     long_about = None,
+    // `typerush --time 30 export` is a mistake, not an export.
+    args_conflicts_with_subcommands = true,
 )]
 struct Cli {
     /// Custom text file to use as the word source.
@@ -88,6 +92,10 @@ struct Cli {
     /// Skip the menu and start zen mode.
     #[arg(long)]
     zen: bool,
+
+    /// Skip the menu and start today's daily challenge.
+    #[arg(long)]
+    daily: bool,
 
     /// Skip the menu and start a programming-symbols drill of N tokens (25/50).
     #[arg(long, value_parser = count::<usize, MAX_COUNT>)]
@@ -117,6 +125,12 @@ struct Cli {
     #[arg(long, overrides_with = "numbers")]
     no_numbers: bool,
 
+    /// Type a recent session again, word for word: 1 is the last one saved,
+    /// 2 the one before, and so on.
+    #[arg(long, value_name = "N", num_args = 0..=1, default_missing_value = "1",
+          value_parser = count::<usize, MAX_COUNT>)]
+    replay: Option<usize>,
+
     /// One-shot theme override: dark | light | monokai | dracula.
     /// Takes precedence over the `theme` setting in `~/.typerush/config.toml`.
     #[arg(long)]
@@ -129,6 +143,14 @@ struct Cli {
     /// Print the snippets found in ~/.typerush/snippets/ and exit.
     #[arg(long)]
     list_snippets: bool,
+
+    /// Write a starter ~/.typerush/config.toml (every setting at its
+    /// default, explained) and exit. Same as `typerush config init`.
+    #[arg(long)]
+    init_config: bool,
+
+    #[command(subcommand)]
+    command: Option<commands::Command>,
 }
 
 impl Cli {
@@ -164,25 +186,51 @@ fn main() -> Result<()> {
     if cli.list_snippets {
         print_snippets_and_exit();
     }
+    // `--init-config` is `typerush config init`, under the name people look
+    // for first.
+    let init = commands::Command::Config {
+        action: commands::ConfigAction::Init,
+    };
+    let command = cli.command.as_ref().or(cli.init_config.then_some(&init));
+    if let Some(command) = command {
+        let files = commands::Files {
+            stats: &storage::stats_path(),
+            config: &config::load::config_path(),
+        };
+        let result = commands::run(
+            command,
+            &files,
+            &mut stdout().lock(),
+            &mut std::io::stderr().lock(),
+        );
+        if let Err(error) = result {
+            print_error_and_exit(&error);
+        }
+        return Ok(());
+    }
     install_panic_hook();
     let mut terminal = setup_terminal()?;
     let run_result = run_app(&mut terminal, cli);
     let restored = restore_terminal(&mut terminal);
     if let Err(error) = run_result {
-        // The report Rust prints for an `Err` from `main`. File paths in it
-        // are already made safe where the error was built; each line goes
-        // through `printable` too, as a backstop.
-        let report = format!("{error:?}");
-        let lines: Vec<_> = report.lines().map(text::printable).collect();
-        eprintln!("Error: {}", lines.join("\n"));
         // The run's error is the one that matters; still mention a failed
         // terminal restore rather than dropping it.
         if let Err(restore_error) = restored {
-            eprintln!("(also: couldn't restore the terminal: {restore_error:#})");
+            eprintln!("(couldn't restore the terminal: {restore_error:#})");
         }
-        std::process::exit(1);
+        print_error_and_exit(&error);
     }
     restored
+}
+
+/// Print `error` the way Rust reports an `Err` from `main`, and exit with
+/// status 1. File paths in it are already made safe where the error was
+/// built; each line goes through `printable` too, as a backstop.
+fn print_error_and_exit(error: &anyhow::Error) -> ! {
+    let report = format!("{error:?}");
+    let lines: Vec<_> = report.lines().map(text::printable).collect();
+    eprintln!("Error: {}", lines.join("\n"));
+    std::process::exit(1);
 }
 
 /// Print every built-in theme name on its own line and exit with status 0.
@@ -284,13 +332,15 @@ fn run_app(terminal: &mut Tui, cli: Cli) -> Result<()> {
     if let Some(first_warning) = warnings.into_iter().next() {
         app.error_message = Some(first_warning);
     }
-    apply_cli_autostart(&mut app, &cli)?;
+    app.export_file = Some(storage::data_dir().join("stats.csv"));
+    app.config_file = Some(config::load::config_path());
+    let stats_file = storage::stats_path();
+    apply_cli_autostart(&mut app, &cli, &stats_file)?;
 
     let tick_rate = Duration::from_millis(100);
     let mut last_tick = Instant::now();
     let mut last_screen = app.screen;
     let mut session_saved = false;
-    let stats_file = storage::stats_path();
 
     loop {
         terminal.draw(|frame| ui::render(frame, &app))?;
@@ -306,9 +356,9 @@ fn run_app(terminal: &mut Tui, cli: Cli) -> Result<()> {
                     if key.kind != KeyEventKind::Press && key.kind != KeyEventKind::Repeat {
                         continue;
                     }
-                    // If a modal error is showing, any key dismisses it.
-                    if app.error_message.is_some() {
-                        app.error_message = None;
+                    // If a modal (error or notice) is showing, any key
+                    // dismisses it.
+                    if app.dismiss_modal() {
                         continue;
                     }
                     handle_key(&mut app, key.code, key.modifiers);
@@ -336,8 +386,9 @@ fn run_app(terminal: &mut Tui, cli: Cli) -> Result<()> {
 }
 
 /// If the user passed a mode flag (`--time`, `--words`, `--quote`, `--code`,
-/// `--zen`, `--symbols`, `--file`) skip the menu and start that mode.
-fn apply_cli_autostart(app: &mut App, cli: &Cli) -> Result<()> {
+/// `--zen`, `--symbols`, `--daily`, `--replay`, `--file`) skip the menu and start that
+/// mode. `stats_file` is where `--replay` finds its session.
+fn apply_cli_autostart(app: &mut App, cli: &Cli, stats_file: &Path) -> Result<()> {
     if let Some(seconds) = cli.time {
         app.start_game(Mode::Time(seconds))?;
     } else if let Some(word_count) = cli.words {
@@ -350,6 +401,17 @@ fn apply_cli_autostart(app: &mut App, cli: &Cli) -> Result<()> {
         app.start_game(Mode::Zen)?;
     } else if let Some(count) = cli.symbols {
         app.start_game(Mode::Symbols(count))?;
+    } else if cli.daily {
+        app.start_game(Mode::Daily)?;
+    } else if let Some(back) = cli.replay {
+        let history = storage::load_sessions_from_path(stats_file).unwrap_or_default();
+        let Some(record) = history.len().checked_sub(back).map(|i| &history[i]) else {
+            anyhow::bail!(
+                "no session {back} back to replay: {} saved so far",
+                history.len()
+            );
+        };
+        app.start_replay(record)?;
     } else if cli.file.is_some() {
         // `App::new` already holds the file; this starts and remembers it.
         app.start_custom(None)?;
@@ -401,6 +463,7 @@ fn handle_key(app: &mut App, code: KeyCode, mods: KeyModifiers) {
         Screen::Typing => handle_typing_key(app, code, mods),
         Screen::Results => handle_results_key(app, code, mods),
         Screen::Stats => handle_stats_key(app, code, mods),
+        Screen::Settings => handle_settings_key(app, code),
         Screen::Help => {}
     }
 }
@@ -425,10 +488,11 @@ fn toggle_help(app: &mut App) {
 /// only highlights it.
 fn handle_mouse(app: &mut App, mouse: MouseEvent) {
     let released = mouse.kind == MouseEventKind::Up(MouseButton::Left);
-    // Modal error / help overlay: a click anywhere closes it, like any key.
-    if app.error_message.is_some() {
+    // Modal error, notice or help overlay: a click anywhere closes it, like
+    // any key.
+    if app.error_message.is_some() || app.notice.is_some() {
         if released {
-            app.error_message = None;
+            app.dismiss_modal();
         }
         return;
     }
@@ -456,10 +520,15 @@ fn handle_mouse(app: &mut App, mouse: MouseEvent) {
         MouseEventKind::ScrollDown if app.screen == Screen::Stats => {
             handle_key(app, KeyCode::Down, KeyModifiers::NONE)
         }
+        MouseEventKind::ScrollUp if app.screen == Screen::Settings => app.settings_move(-1),
+        MouseEventKind::ScrollDown if app.screen == Screen::Settings => app.settings_move(1),
         MouseEventKind::Down(MouseButton::Left) => {
             app.pressed_target = target;
-            if let Some(ClickAction::Menu(index)) = target {
-                app.menu_index = index;
+            match target {
+                Some(ClickAction::Menu(index)) => app.menu_index = index,
+                Some(ClickAction::Select(row)) => select_row(app, row),
+                Some(ClickAction::Setting(row, _)) => app.settings_select(row),
+                _ => {}
             }
         }
         MouseEventKind::Up(MouseButton::Left) => {
@@ -475,10 +544,22 @@ fn handle_mouse(app: &mut App, mouse: MouseEvent) {
                     handle_key(app, KeyCode::Enter, KeyModifiers::NONE);
                 }
                 Some(ClickAction::Key(code, mods)) => handle_key(app, code, mods),
+                Some(ClickAction::Select(row)) => select_row(app, row),
+                Some(ClickAction::Setting(row, code)) => {
+                    app.settings_select(row);
+                    handle_key(app, code, KeyModifiers::NONE);
+                }
                 None => {}
             }
         }
         _ => {}
+    }
+}
+
+/// Select row `row` of the list on screen (a clicked Stats table row).
+fn select_row(app: &mut App, row: usize) {
+    if let Some(view) = app.stats_view.as_mut() {
+        view.select_row(row);
     }
 }
 
@@ -513,6 +594,7 @@ fn handle_menu_key(app: &mut App, code: KeyCode, _mods: KeyModifiers) {
                     }
                 }
                 MenuAction::ShowStats => app.screen = Screen::Stats,
+                MenuAction::ShowSettings => app.screen = Screen::Settings,
                 MenuAction::Quit => app.should_quit = true,
             }
         }
@@ -525,15 +607,38 @@ fn handle_menu_key(app: &mut App, code: KeyCode, _mods: KeyModifiers) {
             }
         }
         KeyCode::Tab | KeyCode::Char('s') => app.screen = Screen::Stats,
+        KeyCode::Char('c') => app.screen = Screen::Settings,
+        KeyCode::Char('q') => app.should_quit = true,
+        _ => {}
+    }
+}
+
+/// Keymap for the Settings screen: ↑/↓ (k/j) pick a setting, ←/→ (h/l)
+/// change it, Enter / Space the next value (or reset, asked twice); Esc
+/// cancels a pending reset, else goes back to the menu like `m` / Tab.
+fn handle_settings_key(app: &mut App, code: KeyCode) {
+    match code {
+        KeyCode::Up | KeyCode::Char('k') => app.settings_move(-1),
+        KeyCode::Down | KeyCode::Char('j') => app.settings_move(1),
+        KeyCode::Left | KeyCode::Char('h') => app.settings_change(false),
+        KeyCode::Right | KeyCode::Char('l') => app.settings_change(true),
+        KeyCode::Enter | KeyCode::Char(' ') => app.settings_activate(),
+        KeyCode::Esc if app.settings_cancel() => {}
+        KeyCode::Esc | KeyCode::Char('m') | KeyCode::Tab => app.screen = Screen::Menu,
         KeyCode::Char('q') => app.should_quit = true,
         _ => {}
     }
 }
 
 /// Keymap for the typing screen. Note that '?' is **not** a help shortcut
-/// here — the user may legitimately need to type it.
+/// here — the user may legitimately need to type it. While paused only
+/// resume, Esc, restart and Ctrl+C act (`App` ignores typing then).
 pub(crate) fn handle_typing_key(app: &mut App, code: KeyCode, mods: KeyModifiers) {
+    let ctrl = mods.contains(KeyModifiers::CONTROL);
     match code {
+        // Pause / resume: keys never typed, like restart's.
+        KeyCode::F(2) => app.toggle_pause(),
+        KeyCode::Char('p') if ctrl => app.toggle_pause(),
         KeyCode::Esc => {
             app.finish_game();
         }
@@ -610,7 +715,8 @@ fn handle_results_key(app: &mut App, code: KeyCode, mods: KeyModifiers) {
 }
 
 /// Keymap for the historical stats screen: ←/→ (h/l) pick a category, `a`
-/// shows all sessions, ↑/↓ (j/k), PgUp/PgDn and Home/End scroll the list.
+/// shows all sessions, ↑/↓ (j/k), PgUp/PgDn and Home/End move the
+/// selection, Enter replays the selected session, `e` exports CSV.
 fn handle_stats_key(app: &mut App, code: KeyCode, _mods: KeyModifiers) {
     let history = app.stats_cache.as_deref().unwrap_or(&[]);
     if let Some(view) = app.stats_view.as_mut() {
@@ -618,19 +724,53 @@ fn handle_stats_key(app: &mut App, code: KeyCode, _mods: KeyModifiers) {
             KeyCode::Left | KeyCode::Char('h') => return view.cycle(history, false),
             KeyCode::Right | KeyCode::Char('l') => return view.cycle(history, true),
             KeyCode::Char('a') => return view.select(history, 0),
-            KeyCode::Up | KeyCode::Char('k') => return view.scroll_by(-1),
-            KeyCode::Down | KeyCode::Char('j') => return view.scroll_by(1),
-            KeyCode::PageUp => return view.scroll_by(-10),
-            KeyCode::PageDown => return view.scroll_by(10),
-            KeyCode::Home => return view.scroll.set(0),
-            KeyCode::End => return view.scroll_by(isize::MAX),
+            KeyCode::Up | KeyCode::Char('k') => return view.move_selection(-1),
+            KeyCode::Down | KeyCode::Char('j') => return view.move_selection(1),
+            KeyCode::PageUp => return view.move_selection(-10),
+            KeyCode::PageDown => return view.move_selection(10),
+            KeyCode::Home => return view.move_selection(isize::MIN),
+            KeyCode::End => return view.move_selection(isize::MAX),
             _ => {}
         }
     }
+    // Enter types the selected session again, word for word.
+    if code == KeyCode::Enter {
+        let selected = app.stats_view.as_ref().and_then(|v| v.selected_session());
+        let record = selected.and_then(|i| app.stats_cache.as_ref()?.get(i).cloned());
+        if let Some(record) = record {
+            if let Err(e) = app.start_replay(&record) {
+                app.show_error(&e);
+            }
+        }
+        return;
+    }
     match code {
+        KeyCode::Char('e') => export_stats(app),
         KeyCode::Char('m') | KeyCode::Esc | KeyCode::Tab => app.screen = Screen::Menu,
         KeyCode::Char('q') => app.should_quit = true,
         _ => {}
+    }
+}
+
+/// `e` on Stats: write every session as CSV to `app.export_file`
+/// (`~/.typerush/stats.csv`, replaced each time) and say where it went.
+fn export_stats(app: &mut App) {
+    let Some(file) = app.export_file.clone() else {
+        return;
+    };
+    let sessions = app.stats_cache.as_deref().unwrap_or(&[]);
+    let count = sessions.len();
+    let shown = text::screen_path(&file);
+    match storage::export_csv(&file, sessions) {
+        Ok(()) => {
+            app.notice = Some(format!(
+                "exported {} to {shown}",
+                commands::sessions_text(count)
+            ));
+        }
+        Err(error) => {
+            app.show_error(&anyhow::Error::new(error).context(format!("can't write {shown}")))
+        }
     }
 }
 
@@ -662,12 +802,22 @@ fn after_input(app: &mut App, last_screen: Screen, session_saved: &mut bool, sta
             sessions,
             app.session_just_saved,
             &app.session_label(),
+            app.best_text().as_deref(),
         ));
     }
     // Coming back from the help overlay keeps the category and scroll; any
     // other way in rebuilds the view (a game may have been saved since).
     // Straight after a run it opens on that run's mode; otherwise it stays
     // on the category that was showing.
+    // Settings are read from the file on the way in (not coming back from
+    // help), so an edit made outside — `typerush config set` — shows up.
+    if app.screen == Screen::Settings && !matches!(last_screen, Screen::Settings | Screen::Help) {
+        let selected = app.settings.as_ref().map_or(0, |view| view.selected);
+        app.settings = Some(settings::SettingsView::load(
+            app.config_file.as_deref(),
+            selected,
+        ));
+    }
     if app.screen == Screen::Stats
         && (app.stats_view.is_none() || !matches!(last_screen, Screen::Stats | Screen::Help))
     {
@@ -722,6 +872,7 @@ fn save_current_session(app: &mut App, stats_file: &Path) {
             .iter()
             .map(|(k, v)| (k.to_string(), *v))
             .collect(),
+        text: app.session_text(),
     };
     match storage::save_session_to_path(stats_file, &record) {
         Ok(history) => {
@@ -737,7 +888,7 @@ fn save_current_session(app: &mut App, stats_file: &Path) {
 mod tests {
     use super::*;
     use crate::app::{Screen, Word};
-    use crate::theme::ThemePalette;
+    use crate::theme::{builtin, ThemePalette};
 
     fn make_typing_app() -> App {
         let mut app = App::new(None, ThemePalette::default(), Mode::Time(15));
@@ -839,6 +990,31 @@ mod tests {
         assert_eq!(app.total_typed_chars, 0);
     }
 
+    /// Ctrl+P and F2 pause and resume; typing while paused does nothing;
+    /// Esc still finishes and Ctrl+R still restarts (unpaused).
+    #[test]
+    fn pause_keys_toggle_and_block_typing() {
+        let mut app = make_typing_app();
+        handle_typing_key(&mut app, KeyCode::Char('h'), KeyModifiers::NONE);
+        handle_typing_key(&mut app, KeyCode::Char('p'), KeyModifiers::CONTROL);
+        assert!(app.is_paused());
+        handle_typing_key(&mut app, KeyCode::Char('e'), KeyModifiers::NONE);
+        handle_typing_key(&mut app, KeyCode::Backspace, KeyModifiers::NONE);
+        assert_eq!(app.words[0].typed, "h");
+        handle_typing_key(&mut app, KeyCode::F(2), KeyModifiers::NONE);
+        assert!(!app.is_paused());
+        handle_typing_key(&mut app, KeyCode::Char('e'), KeyModifiers::NONE);
+        assert_eq!(app.words[0].typed, "he");
+
+        handle_typing_key(&mut app, KeyCode::F(2), KeyModifiers::NONE);
+        handle_typing_key(&mut app, KeyCode::Char('r'), KeyModifiers::CONTROL);
+        assert!(!app.is_paused() && app.screen == Screen::Typing);
+        handle_typing_key(&mut app, KeyCode::F(2), KeyModifiers::NONE);
+        handle_typing_key(&mut app, KeyCode::Esc, KeyModifiers::NONE);
+        assert_eq!(app.screen, Screen::Results);
+        assert!(!app.is_paused());
+    }
+
     // ── mouse ────────────────────────────────────────────────────────────────
 
     /// Draw one frame of `app` at 80×24 so its click targets are registered.
@@ -885,6 +1061,22 @@ mod tests {
         click(&mut app, previous);
         assert_eq!(app.stats_view.as_ref().unwrap().category_name(), "all");
         assert_eq!(previous.1, 0, "arrows sit on the title row");
+    }
+
+    /// The pause hint in the typing footer pauses with a click, and the same
+    /// spot (now "resume") resumes.
+    #[test]
+    fn clicking_the_pause_hint_pauses_and_resumes() {
+        let mut app = make_typing_app();
+        let pause = ClickAction::Key(KeyCode::F(2), KeyModifiers::NONE);
+        draw(&app);
+        let cell = target_cell(&app, pause);
+        click(&mut app, cell);
+        assert!(app.is_paused());
+        draw(&app);
+        let cell = target_cell(&app, pause);
+        click(&mut app, cell);
+        assert!(!app.is_paused());
     }
 
     #[test]
@@ -964,7 +1156,7 @@ mod tests {
     #[test]
     fn menu_scrolls_to_selection_on_short_terminal() {
         let mut app = App::new(None, ThemePalette::default(), Mode::Time(15));
-        app.menu_move_row(false); // wraps to "quit", the last row
+        app.menu_move_row(false); // wraps to the last row (stats, quit)
         let quit = app.menu_index;
         let mut terminal = Terminal::new(ratatui::backend::TestBackend::new(80, 18)).unwrap();
         terminal.draw(|f| ui::render(f, &app)).unwrap();
@@ -975,9 +1167,10 @@ mod tests {
             .chunks(80)
             .map(|row| row.iter().map(|cell| cell.symbol()).collect())
             .collect();
-        // Selected last row is on screen, directly under "stats" (no gap).
-        let quit_row = rows.iter().position(|r| r.contains("➤ quit")).unwrap();
-        assert!(rows[quit_row - 1].contains("  stats"));
+        // Selected last row is on screen, directly under "zen" (no gap).
+        let quit_row = rows.iter().position(|r| r.contains(" quit ")).unwrap();
+        assert!(rows[quit_row].contains("➤ stats "), "{rows:?}");
+        assert!(rows[quit_row - 1].contains("  zen"), "{rows:?}");
         target_cell(&app, ClickAction::Menu(quit)); // panics if not clickable
     }
 
@@ -1437,6 +1630,354 @@ mod tests {
         assert_eq!(app.stats_view.as_ref().unwrap().category_name(), "bests");
         handle_key(&mut app, KeyCode::Char('a'), KeyModifiers::NONE);
         assert_eq!(app.stats_view.as_ref().unwrap().category_name(), "all");
+    }
+
+    // ── replay (v0.5.0) ──────────────────────────────────────────────────────
+
+    fn saved(stats_file: &Path, mode: &str, text: &str, wpm: f64) {
+        let record = SessionRecord {
+            wpm,
+            mode: mode.into(),
+            text: text.into(),
+            timestamp: chrono::Local::now(),
+            ..SessionRecord::default()
+        };
+        storage::save_session_to_path(stats_file, &record).unwrap();
+    }
+
+    /// On Stats, a click selects a row and Enter types that session again;
+    /// the replay is saved as `+replay` with its text, and Results compares
+    /// it with the original run.
+    #[test]
+    fn stats_enter_replays_the_selected_session() {
+        let dir = tempfile::tempdir().unwrap();
+        let stats_file = dir.path().join("stats.json");
+        saved(&stats_file, "words-2", "hello world", 40.0);
+        saved(&stats_file, "words-2", "alpha beta", 50.0);
+        let mut app = App::new(None, ThemePalette::default(), Mode::Time(15));
+        let (mut session_saved, mut last) = (false, app.screen);
+        let mut step = |app: &mut App| {
+            after_input(app, last, &mut session_saved, &stats_file);
+            last = app.screen;
+        };
+        handle_key(&mut app, KeyCode::Char('s'), KeyModifiers::NONE);
+        step(&mut app);
+        draw(&app);
+        let older = target_cell(&app, ClickAction::Select(1)); // newest first
+        click(&mut app, older);
+        assert_eq!(app.stats_view.as_ref().unwrap().selected, 1);
+        assert_eq!(app.screen, Screen::Stats, "a click only selects");
+
+        handle_key(&mut app, KeyCode::Enter, KeyModifiers::NONE);
+        assert_eq!(app.screen, Screen::Typing);
+        step(&mut app);
+        app.started_at = Some(std::time::Instant::now() - Duration::from_secs(3));
+        for ch in "hello world".chars() {
+            app.handle_char(ch);
+        }
+        step(&mut app);
+        let history = storage::load_sessions_from_path(&stats_file).unwrap();
+        let last_saved = history.last().unwrap();
+        assert_eq!(last_saved.mode, "words-2+replay");
+        assert_eq!(last_saved.text, "hello world");
+
+        let mut terminal = Terminal::new(ratatui::backend::TestBackend::new(80, 24)).unwrap();
+        terminal.draw(|f| ui::render(f, &app)).unwrap();
+        let text: String = terminal
+            .backend()
+            .buffer()
+            .content()
+            .iter()
+            .map(|c| c.symbol())
+            .collect();
+        assert!(text.contains("vs original)"), "{text}");
+        assert!(text.contains("words-2+replay  of 20"), "{text}");
+    }
+
+    /// A session saved before v0.5 has no text: Enter explains instead of
+    /// starting anything.
+    #[test]
+    fn stats_enter_on_a_session_without_text_explains() {
+        let mut app = App::new(None, ThemePalette::default(), Mode::Time(15));
+        app.stats_cache = Some(vec![SessionRecord {
+            mode: "time-30s".into(),
+            ..SessionRecord::default()
+        }]);
+        app.screen = Screen::Stats;
+        after_input(&mut app, Screen::Menu, &mut false, Path::new("unused"));
+        handle_key(&mut app, KeyCode::Enter, KeyModifiers::NONE);
+        assert_eq!(app.screen, Screen::Stats);
+        assert!(app
+            .error_message
+            .as_deref()
+            .unwrap()
+            .contains("no words saved"));
+    }
+
+    /// `--replay` types the last saved session again, `--replay 2` the one
+    /// before; a number past the history is an error that says so.
+    #[test]
+    fn replay_flag_picks_a_recent_session() {
+        let dir = tempfile::tempdir().unwrap();
+        let stats_file = dir.path().join("stats.json");
+        saved(&stats_file, "quote", "older words", 40.0);
+        saved(&stats_file, "quote", "newest words", 50.0);
+        let start = |args: &[&str]| {
+            let cli = Cli::try_parse_from(args).unwrap();
+            let mut app = App::new(None, ThemePalette::default(), Mode::Time(15));
+            apply_cli_autostart(&mut app, &cli, &stats_file).map(|()| app.words[0].text.clone())
+        };
+        assert_eq!(start(&["typerush", "--replay"]).unwrap(), "newest");
+        assert_eq!(start(&["typerush", "--replay", "2"]).unwrap(), "older");
+        let error = start(&["typerush", "--replay", "3"]).unwrap_err();
+        assert!(error.to_string().contains("2 saved so far"), "{error}");
+        assert!(Cli::try_parse_from(["typerush", "--replay", "0"]).is_err());
+    }
+
+    /// `--daily` starts today's challenge straight away.
+    #[test]
+    fn daily_flag_starts_the_challenge() {
+        let cli = Cli::try_parse_from(["typerush", "--daily"]).unwrap();
+        let mut app = App::new(None, ThemePalette::default(), Mode::Time(15));
+        apply_cli_autostart(&mut app, &cli, Path::new("unused")).unwrap();
+        assert_eq!((app.screen, app.mode), (Screen::Typing, Mode::Daily));
+    }
+
+    /// Results for the daily challenge names its best "today best": runs of
+    /// other days' words don't count.
+    #[test]
+    fn daily_results_show_todays_best() {
+        let mut app = App::new(None, ThemePalette::default(), Mode::Time(15));
+        app.start_game(Mode::Daily).unwrap();
+        app.stats_cache = Some(vec![SessionRecord {
+            wpm: 99.0,
+            mode: "daily".into(),
+            text: "yesterday's words".into(),
+            ..SessionRecord::default()
+        }]);
+        app.started_at = Some(std::time::Instant::now() - Duration::from_secs(60));
+        app.handle_char('x');
+        app.finish_game();
+        after_input(&mut app, Screen::Typing, &mut true, Path::new("unused"));
+        assert_eq!(app.results_comparison.unwrap().previous_mode_best, None);
+        let rows = screen(&app, 80, 24).join("\n");
+        assert!(rows.contains("today best  — wpm"), "{rows}");
+    }
+
+    /// `e` on Stats writes the CSV export and says where in a notice (not an
+    /// error); any key closes it.
+    #[test]
+    fn stats_e_exports_csv() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut app = App::new(None, ThemePalette::default(), Mode::Time(15));
+        app.export_file = Some(dir.path().join("stats.csv"));
+        app.stats_cache = Some(vec![SessionRecord {
+            mode: "quote".into(),
+            ..SessionRecord::default()
+        }]);
+        app.screen = Screen::Stats;
+        after_input(&mut app, Screen::Menu, &mut false, Path::new("unused"));
+        draw(&app);
+        let export = target_cell(
+            &app,
+            ClickAction::Key(KeyCode::Char('e'), KeyModifiers::NONE),
+        );
+        click(&mut app, export);
+        let notice = app.notice.clone().expect("notice shown");
+        assert!(notice.starts_with("exported 1 session to"), "{notice}");
+        assert!(app.error_message.is_none());
+        let csv = std::fs::read_to_string(dir.path().join("stats.csv")).unwrap();
+        assert!(csv.contains(",quote,"), "{csv}");
+        let rows = screen(&app, 80, 24).join("\n");
+        assert!(rows.contains(" done "), "{rows}");
+        assert!(app.dismiss_modal());
+        assert!(app.notice.is_none() && !app.dismiss_modal());
+    }
+
+    // ── settings (v0.5.0) ────────────────────────────────────────────────────
+
+    /// An app whose Settings screen saves to a config file in a temp dir,
+    /// already on that screen (entered from the menu with `c`).
+    fn settings_app(dir: &tempfile::TempDir) -> (App, PathBuf) {
+        let config_file = dir.path().join(".typerush").join("config.toml");
+        std::fs::create_dir_all(config_file.parent().unwrap()).unwrap();
+        let mut app = App::new(None, ThemePalette::default(), Mode::Time(15));
+        app.config_file = Some(config_file.clone());
+        handle_key(&mut app, KeyCode::Char('c'), KeyModifiers::NONE);
+        assert_eq!(app.screen, Screen::Settings);
+        after_input(&mut app, Screen::Menu, &mut false, Path::new("unused"));
+        (app, config_file)
+    }
+
+    fn press(app: &mut App, code: KeyCode) {
+        handle_key(app, code, KeyModifiers::NONE);
+    }
+
+    /// Changing the theme saves it and shows it at once (with the file's
+    /// color overrides on top); ← goes back, and it wraps.
+    #[test]
+    fn settings_theme_is_saved_and_shown_at_once() {
+        let dir = tempfile::tempdir().unwrap();
+        let (mut app, config_file) = settings_app(&dir);
+        std::fs::write(&config_file, "# mine\n[colors]\nerror = \"#123456\"\n").unwrap();
+        after_input(&mut app, Screen::Menu, &mut false, Path::new("unused"));
+        press(&mut app, KeyCode::Right); // dark → light
+        let text = std::fs::read_to_string(&config_file).unwrap();
+        // A new top-level key goes above the first section; the comment
+        // stays with the section it was written over.
+        assert_eq!(
+            text,
+            "theme = \"light\"\n# mine\n[colors]\nerror = \"#123456\"\n"
+        );
+        assert_eq!(app.theme.background, builtin::LIGHT.background);
+        assert_eq!(
+            app.theme.error,
+            ratatui::style::Color::Rgb(0x12, 0x34, 0x56)
+        );
+        assert_eq!(app.settings.as_ref().unwrap().theme, "light");
+        press(&mut app, KeyCode::Left);
+        press(&mut app, KeyCode::Left); // dark → dracula (wraps)
+        assert_eq!(app.settings.as_ref().unwrap().theme, "dracula");
+        assert_eq!(app.theme.background, builtin::DRACULA.background);
+    }
+
+    /// The start mode cycles through the menu's runs, saves the mode and
+    /// its count, and moves the menu's highlight to it; the switches save
+    /// and apply the word settings.
+    #[test]
+    fn settings_start_mode_and_switches() {
+        let dir = tempfile::tempdir().unwrap();
+        let (mut app, config_file) = settings_app(&dir);
+        press(&mut app, KeyCode::Down);
+        press(&mut app, KeyCode::Right); // time 15s → time 30s
+        press(&mut app, KeyCode::Right); // → time 60s
+        assert_eq!(app.settings.as_ref().unwrap().start, Mode::Time(60));
+        assert_eq!(app.menu[app.menu_index].label, "60s");
+        press(&mut app, KeyCode::Left);
+        press(&mut app, KeyCode::Left);
+        press(&mut app, KeyCode::Left); // wraps to the last run: zen
+        assert_eq!(app.settings.as_ref().unwrap().start, Mode::Zen);
+        press(&mut app, KeyCode::Left); // → quote
+        press(&mut app, KeyCode::Left); // → daily
+        assert_eq!(app.settings.as_ref().unwrap().start, Mode::Daily);
+        let (resolved, warnings) = config::load::load_from(&config_file, CliOverrides::default());
+        assert!(warnings.is_empty(), "{warnings:?}");
+        assert_eq!(resolved.default_mode, Mode::Daily);
+
+        press(&mut app, KeyCode::Down); // punctuation
+        press(&mut app, KeyCode::Enter);
+        press(&mut app, KeyCode::Down); // numbers
+        press(&mut app, KeyCode::Char(' '));
+        press(&mut app, KeyCode::Down); // 10k words
+        press(&mut app, KeyCode::Right);
+        assert!(app.word_decor.punctuation && app.word_decor.numbers);
+        assert_eq!(app.word_pool, WordPool::Extended);
+        let (resolved, _) = config::load::load_from(&config_file, CliOverrides::default());
+        assert!(resolved.word_decor.punctuation && resolved.word_decor.numbers);
+        assert_eq!(resolved.word_pool, WordPool::Extended);
+        press(&mut app, KeyCode::Enter);
+        assert_eq!(app.word_pool, WordPool::Common);
+    }
+
+    /// Reset asks first: one Enter only asks, Esc keeps everything (and
+    /// stays), moving away forgets the question; the second Enter moves the
+    /// file aside, says where, and puts the defaults back in use.
+    #[test]
+    fn settings_reset_asks_first() {
+        let dir = tempfile::tempdir().unwrap();
+        let (mut app, config_file) = settings_app(&dir);
+        press(&mut app, KeyCode::Right); // light theme, saved
+        press(&mut app, KeyCode::End);
+        for _ in 0..5 {
+            press(&mut app, KeyCode::Down);
+        }
+        press(&mut app, KeyCode::Enter);
+        assert!(app.settings.as_ref().unwrap().confirm_reset);
+        let rows = screen(&app, 80, 24).join("\n");
+        assert!(
+            rows.contains("Enter again to reset every setting"),
+            "{rows}"
+        );
+        press(&mut app, KeyCode::Esc);
+        assert_eq!(app.screen, Screen::Settings, "Esc only cancelled");
+        assert!(!app.settings.as_ref().unwrap().confirm_reset);
+        press(&mut app, KeyCode::Enter);
+        press(&mut app, KeyCode::Up);
+        press(&mut app, KeyCode::Down);
+        press(&mut app, KeyCode::Enter);
+        assert!(config_file.exists(), "moving away forgot the question");
+
+        press(&mut app, KeyCode::Enter);
+        assert!(!config_file.exists());
+        assert!(app
+            .notice
+            .as_deref()
+            .unwrap()
+            .contains("your old file is at"));
+        assert_eq!(app.theme, builtin::DARK);
+        assert_eq!(app.settings.as_ref().unwrap().theme, "dark");
+        press(&mut app, KeyCode::Esc);
+        assert_eq!(app.screen, Screen::Menu);
+    }
+
+    /// With the mouse: ‹ › change the theme, a switch's value flips it, and
+    /// a click on another row's value selects that row too.
+    #[test]
+    fn settings_by_mouse() {
+        let dir = tempfile::tempdir().unwrap();
+        let (mut app, _) = settings_app(&dir);
+        draw(&app);
+        let next = target_cell(&app, ClickAction::Setting(0, KeyCode::Right));
+        click(&mut app, next);
+        assert_eq!(app.settings.as_ref().unwrap().theme, "light");
+        draw(&app);
+        let previous = target_cell(&app, ClickAction::Setting(0, KeyCode::Left));
+        click(&mut app, previous);
+        assert_eq!(app.settings.as_ref().unwrap().theme, "dark");
+        draw(&app);
+        let numbers = target_cell(&app, ClickAction::Setting(3, KeyCode::Enter));
+        click(&mut app, numbers);
+        assert_eq!(app.settings.as_ref().unwrap().selected, 3);
+        assert!(app.word_decor.numbers);
+        handle_mouse(&mut app, mouse(MouseEventKind::ScrollDown, (0, 0)));
+        assert_eq!(app.settings.as_ref().unwrap().selected, 4);
+        handle_mouse(&mut app, mouse(MouseEventKind::ScrollUp, (0, 0)));
+        assert_eq!(app.settings.as_ref().unwrap().selected, 3);
+    }
+
+    /// A config that isn't valid TOML is never overwritten from Settings:
+    /// the change shows an error and nothing moves; the screen names the
+    /// problem.
+    #[test]
+    fn settings_leave_a_broken_file_alone() {
+        let dir = tempfile::tempdir().unwrap();
+        let (mut app, config_file) = settings_app(&dir);
+        std::fs::write(&config_file, "theme = = 1").unwrap();
+        press(&mut app, KeyCode::Esc);
+        press(&mut app, KeyCode::Char('c'));
+        after_input(&mut app, Screen::Menu, &mut false, Path::new("unused"));
+        let rows = screen(&app, 80, 24).join("\n");
+        assert!(rows.contains("could not parse"), "{rows}");
+        press(&mut app, KeyCode::Right);
+        assert!(app
+            .error_message
+            .as_deref()
+            .unwrap()
+            .contains("isn't valid TOML"));
+        assert_eq!(
+            std::fs::read_to_string(&config_file).unwrap(),
+            "theme = = 1"
+        );
+        assert_eq!(app.theme, ThemePalette::default());
+    }
+
+    /// The menu's settings option opens the screen too.
+    #[test]
+    fn menu_settings_option_opens_settings() {
+        let mut app = App::new(None, ThemePalette::default(), Mode::Time(15));
+        app.menu_index = app.menu.iter().position(|m| m.label == "settings").unwrap();
+        press(&mut app, KeyCode::Enter);
+        assert_eq!(app.screen, Screen::Settings);
     }
 
     // ── saving ───────────────────────────────────────────────────────────────

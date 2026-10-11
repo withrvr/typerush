@@ -51,6 +51,11 @@ with a throwaway `HOME` — never the real `~/.typerush` — following
 - Every input gets a bound: file size, CLI counts, lists that grow.
 - New theme colors must pass `rgb_themes_meet_contrast_minimum` (4.5:1).
 - Every mouse action has a keyboard equivalent; clicks fire on release.
+- `config.toml` is only written through `config::edit` (comments kept,
+  values checked by the loader's rules); a new setting needs a `KEYS`
+  entry. New modes need a label `Mode::from_label` reads back (replay).
+- Footer hints must fit 80 columns, and the menu and help overlay must fit
+  80×24 — tests check both; count the cells before adding one.
 - Docs: diagrams in `.md` files are mermaid; README.md has no mermaid
   (crates.io renders it). Never name other products or companies in the
   repo — describe features in our own words.

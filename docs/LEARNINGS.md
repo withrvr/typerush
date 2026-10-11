@@ -46,9 +46,99 @@ rule that keeps it fixed).
   lag; measured, the terminal's ~4 KB input buffer was dropping keys and
   the app kept up either way, so batching redraws bought nothing and was
   not merged.
+- **A rule fixed in one reader comes back in the next.** v0.4.1 bounded
+  custom-file reads; the config reader kept `read_to_string` until v0.5.
+  When you add a limit, grep for every other place reading the same kind
+  of input.
 - **Read the terminal's actual bytes.** Ctrl+Backspace arrives as `^H`,
   AltGr arrives as Ctrl+Alt on Windows, `Escape Down` in tmux arrives as
   Alt+Down. Check what the key really sends before writing the keymap.
+
+---
+
+## v0.5.0 — quality of life
+
+### Bugs
+
+- **A six-byte color that wasn't hex panicked at startup.** Symptom:
+  `accent = "#aé€"` in `[colors]` crashed TypeRush before the menu (and
+  `"#+F+F+F"` was read as a color). Cause: `parse_hex` checked the length
+  in *bytes*, then sliced by byte — inside a multi-byte character — and
+  `from_str_radix` accepts a leading sign. Fix: every byte must be a hex
+  digit before the value is split. Guard:
+  `theme::color::tests::rejects_non_hex_bytes_without_panicking`. Found
+  while giving colors to `config set`, which would have passed the same
+  string straight through.
+- **A pipe or device at `config.toml` could hang or fill memory.** Cause:
+  the loader used `read_to_string`, the mistake fixed for custom files in
+  v0.4.1 but not for the config. The first fix opened the file and then
+  checked its type — but opening a named pipe *blocks* until something
+  writes to it; review caught it. Fix: `config::load::read_config` checks
+  the path first (regular file, at most 1 MiB), checks the opened file
+  again, and bounds the read — one function for the loader, `config` and
+  Settings. Guard: `config_must_be_a_small_regular_file` (makes a FIFO).
+- **A count mode whose text ran out before its count ignored every key.**
+  A replay of a hand-edited record (`words-50` with two words saved) would
+  reach the end and sit there: only quote, code and custom runs finished on
+  their last word. Fix: every mode with a fixed text finishes when nothing
+  is left to type. Guard: `app::tests::short_replay_still_finishes`.
+
+### Features and changes
+
+- **Pause.** Two fields — when the pause began, time spent in earlier
+  ones — and `elapsed()` leaves paused time out, so WPM, the time-mode
+  clock and the saved duration all follow without knowing about pauses.
+  Keys are ignored in `handle_char` / `handle_backspace` (one guard where
+  every caller goes through), and the words are hidden: a stopped clock
+  shouldn't let you read ahead.
+- **Replay.** Sessions keep their text (64 KiB at most, skipped when
+  empty, so old files and records are unchanged). `Mode::from_label`
+  reverses `Mode::label` — a test round-trips every menu mode — so a record
+  becomes a run again; its text is filtered like a custom file's, since
+  stats.json can be hand-edited. A replay is saved as `+replay`: seen text
+  must not set a real best. `start_game` split into "build the words" and
+  `begin`, which both new runs and replays use.
+- **Stats selection.** The lists gained a selected row (scrolled into view
+  when drawn) instead of a scroll offset alone, so Enter has something to
+  replay and a click something to select. The selected-row style is now
+  one function shared with the menu.
+- **Daily challenge.** The generator is a SplitMix64 in the source, not
+  `rand`'s: `rand` documents that its generators' output may change
+  between versions, and the daily words must come from the date alone. A
+  test pins one day's words (and SplitMix64's published first value). Its
+  best compares only runs of the same text (`ResultsComparison`'s
+  `same_text`), which is exact where "same date" isn't (a run that ends
+  after midnight).
+- **CSV export.** Mode labels carry file names: made printable, quoted
+  when they hold a comma or quote, and a leading `= + - @` defused with `'`
+  so a spreadsheet can't run it as a formula.
+- **`typerush config` and Settings.** Both go through `config::edit`:
+  `check` reuses the loader's own rules (so `set` never writes something
+  the loader warns about — a test sets every key and reloads), values are
+  written one canonical way, and `toml_edit` keeps comments. Two details
+  only a test showed: replacing a key with `insert` drops the comment above
+  it (change the value in place), and comments after the last setting are
+  the document's trailing text, so a new section would land above them
+  (move them into the new section's prefix). Reset renames the file aside
+  instead of deleting it. `keys_cover_every_config_field` destructures each
+  config struct without `..`, so a new field can't be added without a key.
+  The starter config is `config.example.toml`, now at the built-in
+  defaults (it used to pick monokai), checked to load to exactly them.
+- **The menu at 80×24 with two more options.** `daily` and `settings`
+  pushed the list past a standard terminal again. Instead of shrinking the
+  banner, `stats`, `settings` and `quit` share one headless row — they are
+  actions, not modes — which also reads better. `whole_menu_fits_80x24_at_launch`
+  caught it. After using it, the order changed to categories first (time,
+  words, code, symbols, custom), then the single runs (daily, quote, zen):
+  the "keep old rows in place for ↑/↓" rule gave way to a menu that reads
+  in groups. `menu_offers_new_languages_and_symbols` pins the order.
+- **Footers have a width.** Stats gained Enter replay and e export; at
+  80 columns something had to go, and `↑/↓` (obvious from the highlighted
+  row, and in help) did. Count the footer's cells when adding a hint.
+- **A notice modal** next to the error one: "exported 3 sessions to …" is
+  not an error. Paths on screen write the home folder as `~`
+  (`text::screen_path`), and modal text is inset with the box's padding so
+  a wrapped line keeps its inset.
 
 ---
 

@@ -110,7 +110,7 @@ in v0.3, as the category-grouped menu.)
 
 ## 🚧 In progress
 
-- 🚧 Release v0.2.1, v0.3.0, v0.4.0 and v0.4.1: git tags, GitHub release binaries,
+- 🚧 Release v0.2.1, v0.3.0, v0.4.0, v0.4.1 and v0.5.0: git tags, GitHub release binaries,
   crates.io. The latest published release is v0.2.0 — pre-built binaries on
   the [Releases page](https://github.com/withrvr/typerush/releases) and
   `cargo install typerush` both started with v0.1.1 / v0.2.0.
@@ -149,20 +149,43 @@ one pull request:
 - ✅ Stats opens on the run you just finished; `[all]` button; a title row
   whose buttons and counter never move
 
+## ✅ v0.5 — Quality of life
+
+Worked in this order, one commit (or a few) per step, on one branch and
+one pull request:
+
+1. ✅ Plan (this section)
+2. ✅ Pause / resume mid-session: `Ctrl+P` / `F2` stops the clock and hides
+   the text; paused time never counts
+3. ✅ Replay a recent session word-for-word: every session keeps the text
+   it typed; pick one on the Stats screen (or `--replay N`) and type the
+   same words again, compared with the original run
+4. ✅ Daily challenge: the same words for everyone on a given day, from a
+   seed of the date (`daily` menu row, `--daily`), with today's best
+5. ✅ Export stats as CSV: `typerush export [FILE]`, and `e` on the Stats
+   screen
+6. ✅ `typerush config path / show / get / set / reset` and
+   `typerush --init-config` (also `config init`): edit
+   `~/.typerush/config.toml` from the shell, comments and layout kept
+7. ✅ In-app Settings screen: theme (previewed as you pick), start mode,
+   word settings, reset to defaults — saved to `config.toml` at once
+8. ✅ Review, end-to-end test, docs, version 0.5.0
+
+**Added to v0.5 along the way:**
+
+- ✅ Stats lists have a selected row (keys, wheel, click) — what Enter
+  replays
+- ✅ Menu order: categories first (time, words, code, symbols, custom),
+  then single runs (daily, quote, zen); `stats`, `settings` and `quit`
+  share the last row, so the whole menu still fits 80×24
+- ✅ A notice box for messages that aren't errors (the export), `~` for
+  the home folder in paths on screen
+- ✅ Fixed: a non-hex color in `[colors]` crashed at startup; a pipe or
+  device at `config.toml` could hang or fill memory
+
 ---
 
 ## 🔲 Planned
-
-### v0.5 — Quality of life
-- 🔲 Pause / resume mid-session
-- 🔲 Replay a recent session word-for-word
-- 🔲 Export stats as CSV
-- 🔲 Daily challenge (deterministic seed-of-the-day)
-- 🔲 `typerush config get/set/show/reset/path` CLI subcommands (edit `~/.typerush/config.toml` without opening it)
-- 🔲 In-app Settings screen — theme picker, default mode picker, reset-to-defaults
-- 🔲 `typerush --init-config` writes a starter `config.toml` to `~/.typerush/`
-
----
 
 ### v0.6 — Profile and deeper results
 - 🔲 Profile screen: best per time and per word count side by side,
@@ -178,7 +201,8 @@ one pull request:
 
 ### v0.7 — Practice modes
 - 🔲 Practise missed words: a run built from the words you got wrong
-- 🔲 Repeat the same test (same words) to compare runs fairly
+- 🔲 Repeat the run you just finished (same words) straight from Results —
+  v0.5's replay already does it from the Stats screen and `--replay`
 - 🔲 Stop-on-error and strict modes (must fix a mistake before moving on)
 - 🔲 Blind mode (no red/green while typing; results only at the end)
 - 🔲 Pace cursor: a ghost cursor at your PB or a target WPM

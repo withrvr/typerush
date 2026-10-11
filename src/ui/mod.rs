@@ -21,6 +21,7 @@
 pub mod help;
 pub mod menu;
 pub mod results;
+pub mod settings;
 pub mod stats;
 pub mod typing;
 
@@ -53,12 +54,15 @@ pub fn render(frame: &mut Frame, app: &App) {
         Screen::Typing => typing::render(frame, app, body),
         Screen::Results => results::render(frame, app, body),
         Screen::Stats => stats::render(frame, app, body),
+        Screen::Settings => settings::render(frame, app, body),
         Screen::Help => help::render(frame, app, body),
     };
     render_footer(frame, app, footer, hints);
-    // 3. Error overlay sits on top of everything else when present.
+    // 3. An error or notice sits on top of everything else when present.
     if let Some(message) = &app.error_message {
-        help::render_error(frame, &app.theme, message);
+        help::render_message(frame, " error ", app.theme.error, message);
+    } else if let Some(message) = &app.notice {
+        help::render_message(frame, " done ", app.theme.accent, message);
     }
 }
 
@@ -73,6 +77,21 @@ pub fn label(app: &App, text: &str) -> Span<'static> {
         format!("  {text:<LABEL_WIDTH$}"),
         Style::default().fg(app.theme.pending),
     )
+}
+
+/// The highlighted option or row: the theme background on accent. On the
+/// light theme that is off-white on deep blue (~5.3:1, WCAG AA); black would
+/// be ~3.8:1. The dark theme's background is `Reset` (terminal default), so
+/// it uses black.
+pub fn selected_style(theme: &crate::theme::ThemePalette) -> Style {
+    let fg = match theme.background {
+        Color::Reset => Color::Black,
+        background => background,
+    };
+    Style::default()
+        .fg(fg)
+        .bg(theme.accent)
+        .add_modifier(Modifier::BOLD)
 }
 
 /// A footer hint: its text and, when clicking it should do something, the key
@@ -224,6 +243,63 @@ mod tests {
         assert!(!dump.contains('\x1b'));
     }
 
+    /// A long notice (a path) wraps inside the box's inset: every line of
+    /// it starts two cells in from the border, wrapped ones too.
+    #[test]
+    fn modal_text_keeps_its_inset_when_wrapped() {
+        let mut app = App::new(None, builtin::DARK, Mode::Time(15));
+        app.notice = Some(format!("exported 3 sessions to /{}", "long/".repeat(20)));
+        let mut terminal = Terminal::new(TestBackend::new(80, 24)).unwrap();
+        terminal.draw(|f| render(f, &app)).unwrap();
+        let rows: Vec<String> = terminal
+            .backend()
+            .buffer()
+            .content()
+            .chunks(80)
+            .map(|row| row.iter().map(|c| c.symbol()).collect())
+            .collect();
+        let dump = rows.join("\n");
+        let inside: Vec<&str> = rows
+            .iter()
+            .filter(|r| r.contains("long/") || r.contains("exported"))
+            .map(|r| r.split('│').nth(2).unwrap()) // menu border, then the modal's
+            .collect();
+        assert!(inside.len() >= 2, "{dump}");
+        assert!(
+            inside
+                .iter()
+                .all(|r| r.starts_with("  ") && !r.starts_with("   ")),
+            "{dump}"
+        );
+    }
+
+    /// The help overlay fits a standard 80×24 terminal whole: every line,
+    /// none wrapped, and the close hint on its bottom border.
+    #[test]
+    fn help_fits_80x24() {
+        let mut app = App::new(None, builtin::DARK, Mode::Time(15));
+        app.screen = crate::app::Screen::Help;
+        let mut terminal = Terminal::new(TestBackend::new(80, 24)).unwrap();
+        terminal.draw(|f| render(f, &app)).unwrap();
+        let rows: Vec<String> = terminal
+            .backend()
+            .buffer()
+            .content()
+            .chunks(80)
+            .map(|row| row.iter().map(|c| c.symbol()).collect())
+            .collect();
+        let dump = rows.join("\n");
+        let title = rows
+            .iter()
+            .position(|r| r.contains("TypeRush — keybindings"));
+        let last = rows.iter().position(|r| r.contains("Snippets ~/.typerush"));
+        assert_eq!(last.zip(title).map(|(l, t)| l - t), Some(20), "{dump}");
+        assert!(rows[last.unwrap() + 1].contains("click to close"), "{dump}");
+        for text in ["Ctrl+P  F2", "menu: settings", "replay, export CSV"] {
+            assert!(dump.contains(text), "{text:?} missing:\n{dump}");
+        }
+    }
+
     /// Symbols mode shows a token-count gauge like words mode does.
     #[test]
     fn symbols_mode_shows_token_progress() {
@@ -257,8 +333,7 @@ mod tests {
             total_chars: 52,
             duration_secs: 30.0,
             timestamp: chrono::Local::now(),
-            key_hits: Default::default(),
-            key_misses: Default::default(),
+            ..Default::default()
         }]);
         app.screen = crate::app::Screen::Stats;
         let mut terminal = Terminal::new(TestBackend::new(100, 40)).unwrap();
@@ -297,8 +372,7 @@ mod tests {
             total_chars: 52,
             duration_secs: 30.0,
             timestamp: chrono::Local::now(),
-            key_hits: Default::default(),
-            key_misses: Default::default(),
+            ..Default::default()
         }
     }
 
@@ -331,13 +405,23 @@ mod tests {
         assert!(dump.contains("sessions · 1–"), "{dump}");
         assert!(dump.contains("[all]   ‹ ›   01/04   all"), "{dump}");
 
-        // Scrolling far past the end shows the last page, oldest at the bottom.
-        app.stats_view.as_ref().unwrap().scroll_by(1000);
+        // Selecting far past the end shows the last page, oldest at the bottom.
+        app.stats_view.as_mut().unwrap().move_selection(1000);
         let dump = stats_rows(&app).join("\n");
         assert!(dump.contains("of 13 "), "{dump}");
         assert!(dump.contains("40.0"), "{dump}");
         let first = app.stats_view.as_ref().unwrap().scroll.get();
         assert!(first > 0 && first < 12, "clamped scroll {first}");
+        // The selected (oldest) row is drawn as one highlighted bar.
+        let mut terminal = Terminal::new(TestBackend::new(80, 24)).unwrap();
+        terminal.draw(|f| render(f, &app)).unwrap();
+        let buffer = terminal.backend().buffer();
+        let highlighted: Vec<String> = (0..24)
+            .filter(|&y| (1..79).all(|x| buffer[(x, y)].bg == builtin::DARK.accent))
+            .map(|y| (0..80).map(|x| buffer[(x, y)].symbol()).collect())
+            .collect();
+        assert_eq!(highlighted.len(), 1, "{highlighted:?}");
+        assert!(highlighted[0].contains("40.0"), "{highlighted:?}");
 
         let sessions = app.stats_cache.as_deref().unwrap();
         app.stats_view.as_mut().unwrap().cycle(sessions, true);
@@ -382,6 +466,7 @@ mod tests {
             (24, Screen::Results, "Enter / F5 restart"),
             (24, Screen::Stats, "←/→ category"),
             (24, Screen::Help, "Esc / F1 close"),
+            (24, Screen::Settings, "↑/↓ setting"),
             (40, Screen::Results, "Enter / F5 restart"),
         ] {
             let mut app = App::new(None, builtin::DARK, Mode::Time(15));
@@ -442,7 +527,13 @@ mod tests {
         let mut app = App::new(None, builtin::DARK, Mode::Time(15));
         app.start_game(Mode::Words(2)).unwrap();
         app.stats_cache = Some(vec![record(61.5, "words-2")]);
-        for screen in [Screen::Menu, Screen::Typing, Screen::Results, Screen::Stats] {
+        for screen in [
+            Screen::Menu,
+            Screen::Typing,
+            Screen::Results,
+            Screen::Stats,
+            Screen::Settings,
+        ] {
             app.screen = screen;
             let rows = rows_of(&app);
             let first = rows[0].iter().position(|cell| cell.trim() != "").unwrap();
@@ -457,6 +548,9 @@ mod tests {
                     "30-day avg",
                     "time typed",
                 ],
+                // Not "theme": the selected row has the ➤ in its gutter; not
+                // "punctuation": it fills the label column but one cell.
+                Screen::Settings => &["start mode", "numbers", "10k words"],
                 _ => &[],
             };
             for label in labels {
@@ -479,7 +573,7 @@ mod tests {
                 };
                 let code = rows
                     .iter()
-                    .find(|row| row.concat().contains("javascript"))
+                    .find(|row| row.concat().contains("python"))
                     .unwrap();
                 let first = (1..79).find(|&x| code[x].trim() != "").unwrap();
                 let last = (1..79).rev().find(|&x| code[x].trim() != "").unwrap();
