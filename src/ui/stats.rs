@@ -106,15 +106,16 @@ pub fn render(f: &mut Frame, app: &App, area: Rect) -> &'static [super::Hint] {
         render_sessions_table(f, app, layout[3], sessions, view);
     }
 
+    // What fits in 80 columns; `a` and `q` still work, and [all] is in the
+    // title.
     const HINTS: &[super::Hint] = &[
-        // Two-way navigation hints aren't clickable: ‹ › in the title and
-        // the mouse wheel do it with the mouse.
+        // Two-way navigation hints aren't clickable: ‹ › in the title, the
+        // rows themselves and the mouse wheel do it with the mouse.
         ("←/→ category", None),
-        ("↑/↓ scroll", None),
-        ("a all", key(KeyCode::Char('a'))),
-        ("Esc / m menu", key(KeyCode::Esc)),
+        ("↑/↓ select", None),
+        ("Enter replay", key(KeyCode::Enter)),
+        ("Esc menu", key(KeyCode::Esc)),
         ("? help", key(KeyCode::Char('?'))),
-        ("q quit", key(KeyCode::Char('q'))),
     ];
     HINTS
 }
@@ -348,17 +349,47 @@ fn render_sparkline(
 const MODE_WIDTH: usize = 18;
 
 /// Rows of a bordered table with a header that fit in `area`, and the first
-/// of `total` rows to show: the view's scroll, clamped so the last page is
-/// full (and written back, so scrolling back up responds at once).
+/// of `total` rows to show: the view's scroll, moved just enough to keep the
+/// selected row in view and clamped so the last page is full (written back,
+/// so the next frame starts from it).
 fn visible_rows(area: Rect, total: usize, view: &storage::StatsView) -> (usize, usize) {
     let fits = area.height.saturating_sub(3) as usize;
     if fits == 0 {
         // Too short to show a row (a tiny window): keep the scroll as it is.
         return (view.scroll.get(), 0);
     }
-    let first = view.scroll.get().min(total.saturating_sub(fits));
+    let first = view
+        .scroll
+        .get()
+        .min(view.selected)
+        .max((view.selected + 1).saturating_sub(fits))
+        .min(total.saturating_sub(fits));
     view.scroll.set(first);
     (first, fits)
+}
+
+/// Make each drawn row of a table in `area` clickable: a click selects it.
+/// Rows start under the top border and the header.
+fn register_rows(app: &App, area: Rect, first: usize, shown: usize) {
+    let inner = area.inner(Margin::new(1, 1));
+    let mut targets = app.click_targets.borrow_mut();
+    for row in 0..shown {
+        let y = inner.y + 1 + row as u16;
+        let cell = Rect::new(inner.x, y, inner.width, 1).intersection(inner);
+        if !cell.is_empty() {
+            targets.push((cell, ClickAction::Select(first + row)));
+        }
+    }
+}
+
+/// `style`, or the highlight when the row is the selected one: one style
+/// for the whole row, so it reads as a bar.
+fn row_style(app: &App, selected: bool, style: Style) -> Style {
+    if selected {
+        super::selected_style(&app.theme)
+    } else {
+        style
+    }
 }
 
 /// A bordered table block titled with the rows shown: ` sessions · 1–5 of 42 `.
@@ -392,36 +423,42 @@ fn render_sessions_table(
         .indices
         .iter()
         .rev()
+        .enumerate()
         .skip(first)
         .take(fits)
-        .map(|&i| {
+        .map(|(row, &i)| {
             let s = &sessions[i];
             let star = if view.best_indices.contains(&i) {
                 "★"
             } else {
                 ""
             };
+            let style = |style| row_style(app, row == view.selected, style);
             Row::new(vec![
-                Cell::from(star).style(
+                Cell::from(star).style(style(
                     Style::default()
                         .fg(theme.secondary)
                         .add_modifier(Modifier::BOLD),
-                ),
+                )),
                 // Date column: neutral so it renders cleanly on all themes.
                 Cell::from(s.timestamp.format("%Y-%m-%d %H:%M").to_string())
-                    .style(Style::default().fg(theme.neutral)),
+                    .style(style(Style::default().fg(theme.neutral))),
                 // stats.json can be hand-edited, and custom labels carry file
                 // names: made safe, and long ones shortened to the column.
                 Cell::from(shorten(&printable(&s.mode), MODE_WIDTH).into_owned())
-                    .style(Style::default().fg(theme.mode_tag)),
-                Cell::from(format!("{:.1}", s.wpm)).style(Style::default().fg(theme.secondary)),
-                Cell::from(format!("{:.1}%", s.accuracy)).style(Style::default().fg(theme.correct)),
+                    .style(style(Style::default().fg(theme.mode_tag))),
+                Cell::from(format!("{:.1}", s.wpm))
+                    .style(style(Style::default().fg(theme.secondary))),
+                Cell::from(format!("{:.1}%", s.accuracy))
+                    .style(style(Style::default().fg(theme.correct))),
                 Cell::from(format!("{:.1}s", s.duration_secs))
-                    .style(Style::default().fg(theme.accent)),
+                    .style(style(Style::default().fg(theme.accent))),
             ])
+            .style(style(Style::default()))
         })
         .collect();
     let shown = rows.len();
+    register_rows(app, area, first, shown);
 
     let header = Row::new(vec!["", "Date", "Mode", "WPM", "Acc", "Time"]).style(
         Style::default()
@@ -460,31 +497,37 @@ fn render_bests_table(
     let rows: Vec<Row> = view
         .bests
         .iter()
+        .enumerate()
         .skip(first)
         .take(fits)
-        .map(|best| {
+        .map(|(row, best)| {
             let record = &sessions[best.best_index];
+            let style = |style| row_style(app, row == view.selected, style);
             Row::new(vec![
                 // Empty gutter, like the sessions table's ★ column, so the
                 // first column starts where it does in every other box.
                 Cell::from(""),
                 Cell::from(shorten(&printable(&best.mode), MODE_WIDTH).into_owned())
-                    .style(Style::default().fg(theme.mode_tag)),
-                Cell::from(format!("★ {:.1}", record.wpm)).style(
+                    .style(style(Style::default().fg(theme.mode_tag))),
+                Cell::from(format!("★ {:.1}", record.wpm)).style(style(
                     Style::default()
                         .fg(theme.secondary)
                         .add_modifier(Modifier::BOLD),
-                ),
+                )),
                 Cell::from(format!("{:.1}%", record.accuracy))
-                    .style(Style::default().fg(theme.correct)),
-                Cell::from(format!("{:.1}", best.avg_wpm)).style(Style::default().fg(theme.accent)),
-                Cell::from(best.sessions.to_string()).style(Style::default().fg(theme.neutral)),
+                    .style(style(Style::default().fg(theme.correct))),
+                Cell::from(format!("{:.1}", best.avg_wpm))
+                    .style(style(Style::default().fg(theme.accent))),
+                Cell::from(best.sessions.to_string())
+                    .style(style(Style::default().fg(theme.neutral))),
                 Cell::from(record.timestamp.format("%Y-%m-%d").to_string())
-                    .style(Style::default().fg(theme.neutral)),
+                    .style(style(Style::default().fg(theme.neutral))),
             ])
+            .style(style(Style::default()))
         })
         .collect();
     let shown = rows.len();
+    register_rows(app, area, first, shown);
 
     let header = Row::new(vec!["", "Mode", "Best", "Acc", "Avg", "Runs", "Set on"]).style(
         Style::default()

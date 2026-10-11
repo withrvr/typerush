@@ -22,7 +22,7 @@ use std::{
 /// Field names are part of the on-disk format — don't rename them without a
 /// migration story. New optional fields use `#[serde(default)]` so old records
 /// without them deserialize cleanly.
-#[derive(Clone, Debug, Serialize, Deserialize)]
+#[derive(Clone, Debug, Default, Serialize, Deserialize)]
 pub struct SessionRecord {
     /// Final words-per-minute.
     pub wpm: f64,
@@ -50,7 +50,19 @@ pub struct SessionRecord {
     /// Added in v0.3.0; old records without this field deserialise to an empty map.
     #[serde(default)]
     pub key_misses: HashMap<String, u64>,
+    /// The words of the session, separated by single spaces, so it can be
+    /// replayed word for word: every word of a words, quote, code, symbols,
+    /// custom or daily run; the words reached in a time run. Empty when the
+    /// text was longer than [`MAX_TEXT_BYTES`]. Added in v0.5.0; older
+    /// records have none and aren't written with an empty one.
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub text: String,
 }
+
+/// Longest session text kept for replaying, in bytes: a little over an
+/// hour's typing at 150 WPM. Longer runs (a big custom file) are saved
+/// without their text, so stats.json stays small.
+pub const MAX_TEXT_BYTES: usize = 64 * 1024;
 
 /// Directory we write to: `$HOME/.typerush`. Falls back to the current
 /// directory if no home directory can be found. An empty or relative
@@ -468,8 +480,11 @@ pub struct StatsView {
     pub summary: StatsSummary,
     /// History indices of the sessions holding a mode's best (marked ★).
     pub best_indices: std::collections::HashSet<usize>,
-    /// Sessions table: rows scrolled past, newest first. A `Cell` so drawing
-    /// can clamp it to the rows that fit.
+    /// The highlighted row of the list showing (sessions newest first, or
+    /// the bests table): the one Enter replays.
+    pub selected: usize,
+    /// First row drawn. A `Cell` so drawing can scroll it to keep the
+    /// selected row in view within the rows that fit.
     pub scroll: std::cell::Cell<usize>,
 }
 
@@ -522,7 +537,27 @@ impl StatsView {
             .filter(|&i| mode.is_none_or(|mode| history[i].mode == mode))
             .collect();
         self.summary = StatsSummary::new(self.indices.iter().map(|&i| &history[i]));
+        self.selected = 0;
         self.scroll.set(0);
+    }
+
+    /// Rows in the list showing: the category's sessions, or one per mode.
+    pub fn row_count(&self) -> usize {
+        if self.showing_bests() {
+            self.bests.len()
+        } else {
+            self.indices.len()
+        }
+    }
+
+    /// History index of the session on the selected row: that session, or
+    /// on the bests table the run holding that mode's best.
+    pub fn selected_session(&self) -> Option<usize> {
+        if self.showing_bests() {
+            return self.bests.get(self.selected).map(|best| best.best_index);
+        }
+        let newest_first = self.indices.len().checked_sub(self.selected + 1)?;
+        self.indices.get(newest_first).copied()
     }
 
     /// Next (or previous) category, wrapping around.
@@ -536,11 +571,18 @@ impl StatsView {
         self.select(history, index);
     }
 
-    /// Scroll the sessions table by `rows` (negative: towards the newest).
-    pub fn scroll_by(&self, rows: isize) {
-        let last = self.indices.len().saturating_sub(1);
-        self.scroll
-            .set(self.scroll.get().saturating_add_signed(rows).min(last));
+    /// Move the selection by `rows` (negative: up, towards the newest),
+    /// stopping at either end; the list scrolls with it when drawn.
+    pub fn move_selection(&mut self, rows: isize) {
+        let last = self.row_count().saturating_sub(1);
+        self.selected = self.selected.saturating_add_signed(rows).min(last);
+    }
+
+    /// Select row `row` (clicked), if there is one.
+    pub fn select_row(&mut self, row: usize) {
+        if row < self.row_count() {
+            self.selected = row;
+        }
     }
 }
 
@@ -576,8 +618,7 @@ mod tests {
             total_chars: 105,
             duration_secs: 30.0,
             timestamp,
-            key_hits: HashMap::new(),
-            key_misses: HashMap::new(),
+            ..SessionRecord::default()
         }
     }
 
@@ -1052,6 +1093,7 @@ mod tests {
             timestamp: Local::now(),
             key_hits: hits.clone(),
             key_misses: misses.clone(),
+            text: "def f(): pass".into(),
         };
         let json = serde_json::to_string(&original).unwrap();
         let restored: SessionRecord = serde_json::from_str(&json).unwrap();
@@ -1065,6 +1107,17 @@ mod tests {
         assert!((restored.duration_secs - 45.5).abs() < 1e-9);
         assert_eq!(restored.key_hits, hits);
         assert_eq!(restored.key_misses, misses);
+        assert_eq!(restored.text, "def f(): pass");
+    }
+
+    /// A record without text (every record before v0.5) loads with none, and
+    /// an empty text isn't written out at all.
+    #[test]
+    fn text_is_optional_on_disk() {
+        let json = serde_json::to_string(&make_record(50.0, "time-30s", 0)).unwrap();
+        assert!(!json.contains("\"text\""), "{json}");
+        let restored: SessionRecord = serde_json::from_str(&json).unwrap();
+        assert!(restored.text.is_empty());
     }
 
     // ── Scenario 9: corrupt JSON file → empty vec (no panic) ────────────────
@@ -1528,7 +1581,39 @@ mod tests {
         assert!(view.showing_bests());
         view.cycle(&[], true);
         assert_eq!(view.category_name(), "all");
-        view.scroll_by(5);
-        assert_eq!(view.scroll.get(), 0);
+        view.move_selection(5);
+        assert_eq!(view.selected, 0);
+        assert_eq!(view.selected_session(), None);
+    }
+
+    /// The selection walks the list showing, stops at its ends, and names
+    /// the session to replay: newest first in a sessions list, the best run
+    /// on the bests table. Changing category puts it back on the first row.
+    #[test]
+    fn stats_view_selection_names_the_session() {
+        let sessions = vec![
+            make_record(40.0, "time-30s", 2),
+            make_record(70.0, "words-25", 1),
+            make_record(50.0, "time-30s", 0),
+        ];
+        let mut view = StatsView::new(&sessions, None);
+        assert_eq!(view.selected_session(), Some(2), "newest first");
+        view.move_selection(1);
+        assert_eq!(view.selected_session(), Some(1));
+        view.move_selection(100);
+        assert_eq!((view.selected, view.selected_session()), (2, Some(0)));
+        view.move_selection(-100);
+        assert_eq!(view.selected, 0);
+        view.select_row(9); // no such row: ignored
+        assert_eq!(view.selected, 0);
+
+        view.cycle(&sessions, true); // bests: time-30s, then words-25
+        assert_eq!(view.row_count(), 2);
+        assert_eq!(view.selected_session(), Some(2), "time-30s best is 50");
+        view.select_row(1);
+        assert_eq!(view.selected_session(), Some(1));
+        view.cycle(&sessions, true);
+        assert_eq!((view.category_name(), view.selected), ("time-30s", 0));
+        assert_eq!(view.selected_session(), Some(2));
     }
 }

@@ -157,7 +157,7 @@ one pull request:
 1. 🚧 Plan (this section)
 2. ✅ Pause / resume mid-session: `Ctrl+P` / `F2` stops the clock and hides
    the text; paused time never counts
-3. 🔲 Replay a recent session word-for-word: every session keeps the text
+3. ✅ Replay a recent session word-for-word: every session keeps the text
    it typed; pick one on the Stats screen (or `--replay N`) and type the
    same words again, compared with the original run
 4. 🔲 Daily challenge: the same words for everyone on a given day, from a

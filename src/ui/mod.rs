@@ -75,6 +75,21 @@ pub fn label(app: &App, text: &str) -> Span<'static> {
     )
 }
 
+/// The highlighted option or row: the theme background on accent. On the
+/// light theme that is off-white on deep blue (~5.3:1, WCAG AA); black would
+/// be ~3.8:1. The dark theme's background is `Reset` (terminal default), so
+/// it uses black.
+pub fn selected_style(theme: &crate::theme::ThemePalette) -> Style {
+    let fg = match theme.background {
+        Color::Reset => Color::Black,
+        background => background,
+    };
+    Style::default()
+        .fg(fg)
+        .bg(theme.accent)
+        .add_modifier(Modifier::BOLD)
+}
+
 /// A footer hint: its text and, when clicking it should do something, the key
 /// press it stands for. Navigation hints like "↑/↓ category" carry `None`.
 pub type Hint = (&'static str, Option<(KeyCode, KeyModifiers)>);
@@ -257,8 +272,7 @@ mod tests {
             total_chars: 52,
             duration_secs: 30.0,
             timestamp: chrono::Local::now(),
-            key_hits: Default::default(),
-            key_misses: Default::default(),
+            ..Default::default()
         }]);
         app.screen = crate::app::Screen::Stats;
         let mut terminal = Terminal::new(TestBackend::new(100, 40)).unwrap();
@@ -297,8 +311,7 @@ mod tests {
             total_chars: 52,
             duration_secs: 30.0,
             timestamp: chrono::Local::now(),
-            key_hits: Default::default(),
-            key_misses: Default::default(),
+            ..Default::default()
         }
     }
 
@@ -331,13 +344,23 @@ mod tests {
         assert!(dump.contains("sessions · 1–"), "{dump}");
         assert!(dump.contains("[all]   ‹ ›   01/04   all"), "{dump}");
 
-        // Scrolling far past the end shows the last page, oldest at the bottom.
-        app.stats_view.as_ref().unwrap().scroll_by(1000);
+        // Selecting far past the end shows the last page, oldest at the bottom.
+        app.stats_view.as_mut().unwrap().move_selection(1000);
         let dump = stats_rows(&app).join("\n");
         assert!(dump.contains("of 13 "), "{dump}");
         assert!(dump.contains("40.0"), "{dump}");
         let first = app.stats_view.as_ref().unwrap().scroll.get();
         assert!(first > 0 && first < 12, "clamped scroll {first}");
+        // The selected (oldest) row is drawn as one highlighted bar.
+        let mut terminal = Terminal::new(TestBackend::new(80, 24)).unwrap();
+        terminal.draw(|f| render(f, &app)).unwrap();
+        let buffer = terminal.backend().buffer();
+        let highlighted: Vec<String> = (0..24)
+            .filter(|&y| (1..79).all(|x| buffer[(x, y)].bg == builtin::DARK.accent))
+            .map(|y| (0..80).map(|x| buffer[(x, y)].symbol()).collect())
+            .collect();
+        assert_eq!(highlighted.len(), 1, "{highlighted:?}");
+        assert!(highlighted[0].contains("40.0"), "{highlighted:?}");
 
         let sessions = app.stats_cache.as_deref().unwrap();
         app.stats_view.as_mut().unwrap().cycle(sessions, true);

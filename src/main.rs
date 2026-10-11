@@ -117,6 +117,12 @@ struct Cli {
     #[arg(long, overrides_with = "numbers")]
     no_numbers: bool,
 
+    /// Type a recent session again, word for word: 1 is the last one saved,
+    /// 2 the one before, and so on.
+    #[arg(long, value_name = "N", num_args = 0..=1, default_missing_value = "1",
+          value_parser = count::<usize, MAX_COUNT>)]
+    replay: Option<usize>,
+
     /// One-shot theme override: dark | light | monokai | dracula.
     /// Takes precedence over the `theme` setting in `~/.typerush/config.toml`.
     #[arg(long)]
@@ -284,13 +290,13 @@ fn run_app(terminal: &mut Tui, cli: Cli) -> Result<()> {
     if let Some(first_warning) = warnings.into_iter().next() {
         app.error_message = Some(first_warning);
     }
-    apply_cli_autostart(&mut app, &cli)?;
+    let stats_file = storage::stats_path();
+    apply_cli_autostart(&mut app, &cli, &stats_file)?;
 
     let tick_rate = Duration::from_millis(100);
     let mut last_tick = Instant::now();
     let mut last_screen = app.screen;
     let mut session_saved = false;
-    let stats_file = storage::stats_path();
 
     loop {
         terminal.draw(|frame| ui::render(frame, &app))?;
@@ -336,8 +342,9 @@ fn run_app(terminal: &mut Tui, cli: Cli) -> Result<()> {
 }
 
 /// If the user passed a mode flag (`--time`, `--words`, `--quote`, `--code`,
-/// `--zen`, `--symbols`, `--file`) skip the menu and start that mode.
-fn apply_cli_autostart(app: &mut App, cli: &Cli) -> Result<()> {
+/// `--zen`, `--symbols`, `--replay`, `--file`) skip the menu and start that
+/// mode. `stats_file` is where `--replay` finds its session.
+fn apply_cli_autostart(app: &mut App, cli: &Cli, stats_file: &Path) -> Result<()> {
     if let Some(seconds) = cli.time {
         app.start_game(Mode::Time(seconds))?;
     } else if let Some(word_count) = cli.words {
@@ -350,6 +357,15 @@ fn apply_cli_autostart(app: &mut App, cli: &Cli) -> Result<()> {
         app.start_game(Mode::Zen)?;
     } else if let Some(count) = cli.symbols {
         app.start_game(Mode::Symbols(count))?;
+    } else if let Some(back) = cli.replay {
+        let history = storage::load_sessions_from_path(stats_file).unwrap_or_default();
+        let Some(record) = history.len().checked_sub(back).map(|i| &history[i]) else {
+            anyhow::bail!(
+                "no session {back} back to replay: {} saved so far",
+                history.len()
+            );
+        };
+        app.start_replay(record)?;
     } else if cli.file.is_some() {
         // `App::new` already holds the file; this starts and remembers it.
         app.start_custom(None)?;
@@ -458,8 +474,10 @@ fn handle_mouse(app: &mut App, mouse: MouseEvent) {
         }
         MouseEventKind::Down(MouseButton::Left) => {
             app.pressed_target = target;
-            if let Some(ClickAction::Menu(index)) = target {
-                app.menu_index = index;
+            match target {
+                Some(ClickAction::Menu(index)) => app.menu_index = index,
+                Some(ClickAction::Select(row)) => select_row(app, row),
+                _ => {}
             }
         }
         MouseEventKind::Up(MouseButton::Left) => {
@@ -475,10 +493,18 @@ fn handle_mouse(app: &mut App, mouse: MouseEvent) {
                     handle_key(app, KeyCode::Enter, KeyModifiers::NONE);
                 }
                 Some(ClickAction::Key(code, mods)) => handle_key(app, code, mods),
+                Some(ClickAction::Select(row)) => select_row(app, row),
                 None => {}
             }
         }
         _ => {}
+    }
+}
+
+/// Select row `row` of the list on screen (a clicked Stats table row).
+fn select_row(app: &mut App, row: usize) {
+    if let Some(view) = app.stats_view.as_mut() {
+        view.select_row(row);
     }
 }
 
@@ -615,7 +641,8 @@ fn handle_results_key(app: &mut App, code: KeyCode, mods: KeyModifiers) {
 }
 
 /// Keymap for the historical stats screen: ←/→ (h/l) pick a category, `a`
-/// shows all sessions, ↑/↓ (j/k), PgUp/PgDn and Home/End scroll the list.
+/// shows all sessions, ↑/↓ (j/k), PgUp/PgDn and Home/End move the
+/// selection, Enter replays the selected session.
 fn handle_stats_key(app: &mut App, code: KeyCode, _mods: KeyModifiers) {
     let history = app.stats_cache.as_deref().unwrap_or(&[]);
     if let Some(view) = app.stats_view.as_mut() {
@@ -623,14 +650,25 @@ fn handle_stats_key(app: &mut App, code: KeyCode, _mods: KeyModifiers) {
             KeyCode::Left | KeyCode::Char('h') => return view.cycle(history, false),
             KeyCode::Right | KeyCode::Char('l') => return view.cycle(history, true),
             KeyCode::Char('a') => return view.select(history, 0),
-            KeyCode::Up | KeyCode::Char('k') => return view.scroll_by(-1),
-            KeyCode::Down | KeyCode::Char('j') => return view.scroll_by(1),
-            KeyCode::PageUp => return view.scroll_by(-10),
-            KeyCode::PageDown => return view.scroll_by(10),
-            KeyCode::Home => return view.scroll.set(0),
-            KeyCode::End => return view.scroll_by(isize::MAX),
+            KeyCode::Up | KeyCode::Char('k') => return view.move_selection(-1),
+            KeyCode::Down | KeyCode::Char('j') => return view.move_selection(1),
+            KeyCode::PageUp => return view.move_selection(-10),
+            KeyCode::PageDown => return view.move_selection(10),
+            KeyCode::Home => return view.move_selection(isize::MIN),
+            KeyCode::End => return view.move_selection(isize::MAX),
             _ => {}
         }
+    }
+    // Enter types the selected session again, word for word.
+    if code == KeyCode::Enter {
+        let selected = app.stats_view.as_ref().and_then(|v| v.selected_session());
+        let record = selected.and_then(|i| app.stats_cache.as_ref()?.get(i).cloned());
+        if let Some(record) = record {
+            if let Err(e) = app.start_replay(&record) {
+                app.show_error(&e);
+            }
+        }
+        return;
     }
     match code {
         KeyCode::Char('m') | KeyCode::Esc | KeyCode::Tab => app.screen = Screen::Menu,
@@ -727,6 +765,7 @@ fn save_current_session(app: &mut App, stats_file: &Path) {
             .iter()
             .map(|(k, v)| (k.to_string(), *v))
             .collect(),
+        text: app.session_text(),
     };
     match storage::save_session_to_path(stats_file, &record) {
         Ok(history) => {
@@ -1483,6 +1522,108 @@ mod tests {
         assert_eq!(app.stats_view.as_ref().unwrap().category_name(), "bests");
         handle_key(&mut app, KeyCode::Char('a'), KeyModifiers::NONE);
         assert_eq!(app.stats_view.as_ref().unwrap().category_name(), "all");
+    }
+
+    // ── replay (v0.5.0) ──────────────────────────────────────────────────────
+
+    fn saved(stats_file: &Path, mode: &str, text: &str, wpm: f64) {
+        let record = SessionRecord {
+            wpm,
+            mode: mode.into(),
+            text: text.into(),
+            timestamp: chrono::Local::now(),
+            ..SessionRecord::default()
+        };
+        storage::save_session_to_path(stats_file, &record).unwrap();
+    }
+
+    /// On Stats, a click selects a row and Enter types that session again;
+    /// the replay is saved as `+replay` with its text, and Results compares
+    /// it with the original run.
+    #[test]
+    fn stats_enter_replays_the_selected_session() {
+        let dir = tempfile::tempdir().unwrap();
+        let stats_file = dir.path().join("stats.json");
+        saved(&stats_file, "words-2", "hello world", 40.0);
+        saved(&stats_file, "words-2", "alpha beta", 50.0);
+        let mut app = App::new(None, ThemePalette::default(), Mode::Time(15));
+        let (mut session_saved, mut last) = (false, app.screen);
+        let mut step = |app: &mut App| {
+            after_input(app, last, &mut session_saved, &stats_file);
+            last = app.screen;
+        };
+        handle_key(&mut app, KeyCode::Char('s'), KeyModifiers::NONE);
+        step(&mut app);
+        draw(&app);
+        let older = target_cell(&app, ClickAction::Select(1)); // newest first
+        click(&mut app, older);
+        assert_eq!(app.stats_view.as_ref().unwrap().selected, 1);
+        assert_eq!(app.screen, Screen::Stats, "a click only selects");
+
+        handle_key(&mut app, KeyCode::Enter, KeyModifiers::NONE);
+        assert_eq!(app.screen, Screen::Typing);
+        step(&mut app);
+        app.started_at = Some(std::time::Instant::now() - Duration::from_secs(3));
+        for ch in "hello world".chars() {
+            app.handle_char(ch);
+        }
+        step(&mut app);
+        let history = storage::load_sessions_from_path(&stats_file).unwrap();
+        let last_saved = history.last().unwrap();
+        assert_eq!(last_saved.mode, "words-2+replay");
+        assert_eq!(last_saved.text, "hello world");
+
+        let mut terminal = Terminal::new(ratatui::backend::TestBackend::new(80, 24)).unwrap();
+        terminal.draw(|f| ui::render(f, &app)).unwrap();
+        let text: String = terminal
+            .backend()
+            .buffer()
+            .content()
+            .iter()
+            .map(|c| c.symbol())
+            .collect();
+        assert!(text.contains("vs original)"), "{text}");
+        assert!(text.contains("words-2+replay  of 20"), "{text}");
+    }
+
+    /// A session saved before v0.5 has no text: Enter explains instead of
+    /// starting anything.
+    #[test]
+    fn stats_enter_on_a_session_without_text_explains() {
+        let mut app = App::new(None, ThemePalette::default(), Mode::Time(15));
+        app.stats_cache = Some(vec![SessionRecord {
+            mode: "time-30s".into(),
+            ..SessionRecord::default()
+        }]);
+        app.screen = Screen::Stats;
+        after_input(&mut app, Screen::Menu, &mut false, Path::new("unused"));
+        handle_key(&mut app, KeyCode::Enter, KeyModifiers::NONE);
+        assert_eq!(app.screen, Screen::Stats);
+        assert!(app
+            .error_message
+            .as_deref()
+            .unwrap()
+            .contains("no words saved"));
+    }
+
+    /// `--replay` types the last saved session again, `--replay 2` the one
+    /// before; a number past the history is an error that says so.
+    #[test]
+    fn replay_flag_picks_a_recent_session() {
+        let dir = tempfile::tempdir().unwrap();
+        let stats_file = dir.path().join("stats.json");
+        saved(&stats_file, "quote", "older words", 40.0);
+        saved(&stats_file, "quote", "newest words", 50.0);
+        let start = |args: &[&str]| {
+            let cli = Cli::try_parse_from(args).unwrap();
+            let mut app = App::new(None, ThemePalette::default(), Mode::Time(15));
+            apply_cli_autostart(&mut app, &cli, &stats_file).map(|()| app.words[0].text.clone())
+        };
+        assert_eq!(start(&["typerush", "--replay"]).unwrap(), "newest");
+        assert_eq!(start(&["typerush", "--replay", "2"]).unwrap(), "older");
+        let error = start(&["typerush", "--replay", "3"]).unwrap_err();
+        assert!(error.to_string().contains("2 saved so far"), "{error}");
+        assert!(Cli::try_parse_from(["typerush", "--replay", "0"]).is_err());
     }
 
     // ── saving ───────────────────────────────────────────────────────────────

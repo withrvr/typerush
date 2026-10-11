@@ -295,17 +295,7 @@ fn word_settings(app: &App) -> (Line<'static>, Vec<(u16, u16, char)>) {
 /// list is dense — for screens too short for all of them.
 fn menu_lines(app: &App, width: usize, gaps_wanted: bool) -> MenuLines {
     let theme = &app.theme;
-    // Selected option: the theme background on accent. On the light theme that
-    // is off-white on deep blue (~5.3:1, WCAG AA); black would be ~3.8:1. The
-    // dark theme's background is `Reset` (terminal default), so use black there.
-    let chip_fg = match theme.background {
-        Color::Reset => Color::Black,
-        background => background,
-    };
-    let selected_style = Style::default()
-        .fg(chip_fg)
-        .bg(theme.accent)
-        .add_modifier(Modifier::BOLD);
+    let selected_style = super::selected_style(theme);
     // Explicit fg everywhere: Reset would render the terminal default, which
     // is invisible on the light theme's white background.
     let option_style = Style::default().fg(theme.neutral);
