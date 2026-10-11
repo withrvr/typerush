@@ -214,21 +214,34 @@ one pull request:
 - ✅ The CSV export gains raw WPM, consistency, missed and completed
 - ✅ `profile` joins `stats`, `settings` and `quit` on the menu's last row
 
+## 🚧 v0.7 — Practice modes
+
+Worked in this order, one commit (or a few) per step, on one branch and
+one pull request:
+
+1. 🚧 Plan (this section)
+2. 🔲 Quick restart on `Tab` while typing, and repeat the run you just
+   finished (the same words) from Results with `F6`
+3. 🔲 A `[typing]` section in the config and on the Settings screen:
+   hide the live WPM, and blind mode (no red/green while typing, the
+   numbers only at the end)
+4. 🔲 Stop on error: `letter` (a wrong key doesn't move the cursor) or
+   `word` (a word with a mistake can't be left until it's fixed)
+5. 🔲 Cursor styles — underline, block, bar — and an optional key sound
+   (the terminal's bell, on every key or only on mistakes)
+6. 🔲 Pace cursor: a second, dimmer cursor moving at your best for the
+   mode, or at a target WPM
+7. 🔲 Practise missed words: every session keeps the words you got wrong;
+   a `missed` run is built from your most-missed recent words
+8. 🔲 Idle detection: a run with a long stretch without a key (10 s by
+   default) is not saved, and Results says why
+9. 🔲 Custom themes from files in `~/.typerush/themes/`, on top of a
+   built-in or from scratch, listed and picked like the built-in ones
+10. 🔲 Review, end-to-end test, docs, version 0.7.0
+
 ---
 
 ## 🔲 Planned
-
-### v0.7 — Practice modes
-- 🔲 Practise missed words: a run built from the words you got wrong
-- 🔲 Repeat the run you just finished (same words) straight from Results —
-  v0.5's replay already does it from the Stats screen and `--replay`
-- 🔲 Stop-on-error and strict modes (must fix a mistake before moving on)
-- 🔲 Blind mode (no red/green while typing; results only at the end)
-- 🔲 Pace cursor: a ghost cursor at your PB or a target WPM
-- 🔲 Quick restart on `Tab`, and hide-live-WPM option
-- 🔲 Cursor styles (underline, block, bar) and an optional key-click sound
-- 🔲 Custom themes from a file in `~/.typerush/themes/`
-- 🔲 AFK detection: a run idle for too long is not saved
 
 ---
 
