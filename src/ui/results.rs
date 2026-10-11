@@ -13,7 +13,7 @@ use ratatui::{
     widgets::{Axis, Block, Borders, Chart, Dataset, GraphType, Paragraph},
 };
 
-use ratatui::crossterm::event::{KeyCode, KeyModifiers};
+use ratatui::crossterm::event::KeyCode;
 
 use super::{key, label};
 use crate::{app::App, storage};
@@ -240,15 +240,13 @@ pub fn render(f: &mut Frame, app: &App, area: Rect) -> &'static [super::Hint] {
 
     render_chart(f, app, layout[2]);
 
+    // What fits in 80 columns; Ctrl+C quits here as everywhere.
     const HINTS: &[super::Hint] = &[
         ("Enter / F5 restart", key(KeyCode::Enter)),
+        ("F6 repeat", key(KeyCode::F(6))),
         ("Esc menu", key(KeyCode::Esc)),
         ("Tab stats", key(KeyCode::Tab)),
         ("F1 help", key(KeyCode::F(1))),
-        (
-            "Ctrl+C quit",
-            Some((KeyCode::Char('c'), KeyModifiers::CONTROL)),
-        ),
     ];
     HINTS
 }

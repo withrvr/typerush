@@ -50,14 +50,14 @@ pub fn render(f: &mut Frame, app: &App, area: Rect) -> &'static [super::Hint] {
         Some((KeyCode::Char('c'), KeyModifiers::CONTROL)),
     );
     const RUNNING: &[super::Hint] = &[
-        ("Ctrl+R / F5 restart", super::key(KeyCode::F(5))),
+        ("Tab / F5 restart", super::key(KeyCode::F(5))),
         ("Ctrl+P / F2 pause", super::key(KeyCode::F(2))),
         ("Esc finish", super::key(KeyCode::Esc)),
         QUIT,
     ];
     const PAUSED: &[super::Hint] = &[
         ("Ctrl+P / F2 resume", super::key(KeyCode::F(2))),
-        ("Ctrl+R / F5 restart", super::key(KeyCode::F(5))),
+        ("Tab / F5 restart", super::key(KeyCode::F(5))),
         ("Esc finish", super::key(KeyCode::Esc)),
         QUIT,
     ];

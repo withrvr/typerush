@@ -220,7 +220,7 @@ Worked in this order, one commit (or a few) per step, on one branch and
 one pull request:
 
 1. 🚧 Plan (this section)
-2. 🔲 Quick restart on `Tab` while typing, and repeat the run you just
+2. ✅ Quick restart on `Tab` while typing, and repeat the run you just
    finished (the same words) from Results with `F6`
 3. 🔲 A `[typing]` section in the config and on the Settings screen:
    hide the live WPM, and blind mode (no red/green while typing, the

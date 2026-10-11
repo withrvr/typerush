@@ -680,7 +680,9 @@ pub(crate) fn handle_typing_key(app: &mut App, code: KeyCode, mods: KeyModifiers
         KeyCode::F(2) => app.toggle_pause(),
         KeyCode::Char('p') if ctrl => app.toggle_pause(),
         KeyCode::Esc => app.end_early(),
-        KeyCode::F(5) => {
+        // Tab is never in the text (it is split on whitespace): a quick
+        // restart, like F5 and Ctrl+R.
+        KeyCode::F(5) | KeyCode::Tab => {
             if let Err(e) = app.restart() {
                 app.show_error(&e);
             }
@@ -730,8 +732,8 @@ fn is_altgr(typed_char: char, mods: KeyModifiers) -> bool {
 ///
 /// A fast typist is still typing when the run ends, so the next few keys
 /// land here. Only keys nobody presses while typing act — Enter or F5
-/// (or Ctrl+R, as while typing) restart, Esc goes to the menu, Tab to
-/// stats, F1 opens help, Ctrl+C quits —
+/// (or Ctrl+R, as while typing) restart, F6 repeats the same words, Esc
+/// goes to the menu, Tab to stats, F1 opens help, Ctrl+C quits —
 /// so those stray letters, spaces and `?` can't skip the results.
 fn handle_results_key(app: &mut App, code: KeyCode, mods: KeyModifiers) {
     let ctrl_r = code == KeyCode::Char('r') && mods.contains(KeyModifiers::CONTROL);
@@ -746,6 +748,8 @@ fn handle_results_key(app: &mut App, code: KeyCode, mods: KeyModifiers) {
                 app.show_error(&e);
             }
         }
+        // The same words again, as a replay of this run.
+        KeyCode::F(6) => app.repeat_run(),
         KeyCode::Esc => app.screen = Screen::Menu,
         KeyCode::Tab => app.screen = Screen::Stats,
         _ => {}
@@ -1702,6 +1706,27 @@ mod tests {
         assert_eq!(app.stats_view.as_ref().unwrap().category_name(), "bests");
         handle_key(&mut app, KeyCode::Char('a'), KeyModifiers::NONE);
         assert_eq!(app.stats_view.as_ref().unwrap().category_name(), "all");
+    }
+
+    /// Tab restarts while typing; F6 on Results (or its footer hint)
+    /// repeats the same words.
+    #[test]
+    fn tab_restarts_and_f6_repeats() {
+        let mut app = make_typing_app();
+        app.handle_char('h');
+        handle_key(&mut app, KeyCode::Tab, KeyModifiers::NONE);
+        assert_eq!((app.screen, app.total_typed_chars), (Screen::Typing, 0));
+
+        let mut app = make_typing_app();
+        for ch in "hello world".chars() {
+            app.handle_char(ch);
+        }
+        draw(&app);
+        let repeat = target_cell(&app, ClickAction::Key(KeyCode::F(6), KeyModifiers::NONE));
+        click(&mut app, repeat);
+        let words: Vec<_> = app.words.iter().map(|w| w.text.as_str()).collect();
+        assert_eq!(words, ["hello", "world"]);
+        assert_eq!(app.session_label(), "words-2+replay");
     }
 
     // ── replay (v0.5.0) ──────────────────────────────────────────────────────

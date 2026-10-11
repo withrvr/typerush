@@ -1147,6 +1147,28 @@ impl App {
         Ok(())
     }
 
+    /// Type the run just finished again, the same words (`F6` on Results):
+    /// a replay of it — saved as `+replay`, since the words are now seen,
+    /// and compared with it on Results. A replay is simply replayed again.
+    pub fn repeat_run(&mut self) {
+        if self.replay.is_none() {
+            let mut label = self.session_label();
+            while let Some(original) = label.strip_suffix("+replay") {
+                label = original.to_string();
+            }
+            self.replay = Some(Replay {
+                label,
+                mode: self.mode,
+                words: self.session_text().split(' ').map(str::to_string).collect(),
+                pool: self.word_pool,
+                decor: self.word_decor,
+                wpm: self.wpm(),
+                timestamp: chrono::Local::now(),
+            });
+        }
+        let _ = self.restart();
+    }
+
     /// Reset all session state and start typing `text` in `mode`.
     fn begin(&mut self, mode: Mode, text: Vec<String>) {
         self.mode = mode;
@@ -1523,6 +1545,32 @@ mod tests {
         app.restart().unwrap();
         assert!(!app.is_paused());
         assert_eq!(app.paused_for, Duration::ZERO);
+    }
+
+    // ── practice (v0.7.0) ──────────────────────────────────────────────────
+
+    /// F6 on Results types the same words again as a replay of the run
+    /// just finished; a second F6 replays it again, not a replay of the
+    /// replay. A run too long to keep its text still repeats nothing extra.
+    #[test]
+    fn repeat_types_the_same_words_as_a_replay() {
+        let mut app = custom_app(&["red", "fox"]);
+        app.started_at = Some(Instant::now() - Duration::from_secs(2));
+        for ch in "red fox".chars() {
+            app.handle_char(ch);
+        }
+        assert_eq!(app.screen, Screen::Results);
+        let wpm = app.wpm();
+        app.repeat_run();
+        assert_eq!(app.screen, Screen::Typing);
+        let words: Vec<_> = app.words.iter().map(|w| w.text.as_str()).collect();
+        assert_eq!(words, ["red", "fox"]);
+        assert_eq!(app.session_label(), "custom+replay");
+        assert_eq!(app.replay.as_ref().unwrap().wpm, wpm);
+        app.end_early();
+        app.repeat_run();
+        assert_eq!(app.session_label(), "custom+replay");
+        assert_eq!(app.replay.as_ref().unwrap().wpm, wpm, "still the first run");
     }
 
     // ── deeper results (v0.6.0) ────────────────────────────────────────────

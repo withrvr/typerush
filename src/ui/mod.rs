@@ -733,7 +733,7 @@ mod tests {
         use crate::app::Screen;
         for (height, screen, first_hint) in [
             (24, Screen::Menu, "↑/↓ category"),
-            (24, Screen::Typing, "Ctrl+R / F5 restart"),
+            (24, Screen::Typing, "Tab / F5 restart"),
             (24, Screen::Results, "Enter / F5 restart"),
             (24, Screen::Stats, "←/→ category"),
             (24, Screen::Help, "Esc / F1 close"),
