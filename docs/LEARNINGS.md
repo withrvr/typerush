@@ -75,6 +75,16 @@ rule that keeps it fixed).
   more than a quarter of the chart's height — always, at 80×24. Fix: the
   legend is in the box title (with names, not only colors). Found by the
   render test, not by reading the docs.
+- **Overlays were black on every painted theme.** Symptom (reported from
+  use): the help box, opened from Results or anywhere, and the error and
+  notice boxes showed a black background on `light`, `monokai` and
+  `dracula`. Cause: they cleared their area with ratatui's `Clear`, which
+  resets cells to the terminal's own colors, undoing the theme's
+  background paint. Fix: one `ui::clear` that clears and repaints the
+  theme's base style, used by all three. Guards:
+  `overlays_use_the_theme_background`, and
+  `every_screen_is_on_the_theme_background` — every screen and overlay on
+  every painted theme, no cell in the terminal's own colors.
 - **A test passed by luck.** `results_show_xp_and_level_up` typed "hello
   world" after `restart()`, which deals new random words; it passed only
   while a frame happened to finish. Fix: set the words after restarting.

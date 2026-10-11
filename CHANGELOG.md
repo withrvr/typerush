@@ -57,6 +57,13 @@ practice on a calendar.
 - `state.json` also keeps how many runs you've started, and since when.
 - The help overlay mentions the Stats filters, the Profile and the calendar.
 
+### Fixed
+
+- **The help box and the error / notice boxes now use the theme's
+  colors.** They were drawn on the terminal's own background — a black box
+  on `light`, `monokai` and `dracula` — wherever they opened (the menu,
+  Results, Stats…).
+
 ---
 
 ## [0.5.0] — quality of life

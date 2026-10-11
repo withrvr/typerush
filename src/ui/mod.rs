@@ -41,11 +41,7 @@ pub fn render(frame: &mut Frame, app: &App) {
     //    text drawn without a color (a box title) is never the terminal's
     //    own default — light-on-white on the light theme in a dark terminal.
     let area = frame.area();
-    let mut base = Style::default().bg(app.theme.background);
-    if app.theme.background != Color::Reset {
-        base = base.fg(app.theme.neutral);
-    }
-    frame.buffer_mut().set_style(area, base);
+    frame.buffer_mut().set_style(area, base_style(&app.theme));
 
     // 2. Render the active screen above the footer row, then the footer:
     //    every screen's key hints sit on the last row, in the same place.
@@ -62,10 +58,30 @@ pub fn render(frame: &mut Frame, app: &App) {
     render_footer(frame, app, footer, hints);
     // 3. An error or notice sits on top of everything else when present.
     if let Some(message) = &app.error_message {
-        help::render_message(frame, " error ", app.theme.error, message);
+        help::render_message(frame, &app.theme, " error ", app.theme.error, message);
     } else if let Some(message) = &app.notice {
-        help::render_message(frame, " done ", app.theme.accent, message);
+        help::render_message(frame, &app.theme, " done ", app.theme.accent, message);
     }
+}
+
+/// The style every cell starts from: the theme's background, and (on
+/// themes that paint one) its foreground, so text drawn without a color is
+/// never the terminal's own.
+fn base_style(theme: &crate::theme::ThemePalette) -> Style {
+    let base = Style::default().bg(theme.background);
+    if theme.background == Color::Reset {
+        base
+    } else {
+        base.fg(theme.neutral)
+    }
+}
+
+/// Clear `area` for an overlay (help, error, notice) back to the theme's
+/// colors. ratatui's `Clear` alone resets cells to the terminal's own
+/// colors — black, on most terminals, whatever the theme.
+pub fn clear(frame: &mut Frame, theme: &crate::theme::ThemePalette, area: Rect) {
+    frame.render_widget(ratatui::widgets::Clear, area);
+    frame.buffer_mut().set_style(area, base_style(theme));
 }
 
 /// Width of the label column inside boxes ("accuracy", "time typed", …).
@@ -273,6 +289,83 @@ mod tests {
                 .all(|r| r.starts_with("  ") && !r.starts_with("   ")),
             "{dump}"
         );
+    }
+
+    /// Regression: the help overlay and the error / notice boxes cleared
+    /// their area to the terminal's own background (black), not the
+    /// theme's. Every cell inside them — border, text, blank padding — has
+    /// the theme's background, on every theme.
+    #[test]
+    fn overlays_use_the_theme_background() {
+        use crate::app::Screen;
+        for (name, palette) in builtin::ALL {
+            for overlay in ["help", "error", "notice"] {
+                let mut app = App::new(None, *palette, Mode::Time(15));
+                match overlay {
+                    "help" => app.screen = Screen::Help,
+                    "error" => app.error_message = Some("something went wrong".into()),
+                    _ => app.notice = Some("exported 3 sessions".into()),
+                }
+                let mut terminal = Terminal::new(TestBackend::new(80, 24)).unwrap();
+                terminal.draw(|f| render(f, &app)).unwrap();
+                let buffer = terminal.backend().buffer();
+                // The overlay's middle row, from its left border to its right.
+                let y = 12;
+                let row: Vec<_> = (0..80).map(|x| &buffer[(x, y)]).collect();
+                let left = row.iter().position(|c| "│┃".contains(c.symbol())).unwrap();
+                let right = row.iter().rposition(|c| "│┃".contains(c.symbol())).unwrap();
+                for (x, cell) in row.iter().enumerate().take(right + 1).skip(left) {
+                    assert_eq!(
+                        cell.bg, palette.background,
+                        "{name} {overlay}: cell {x} is {:?}",
+                        cell.bg
+                    );
+                }
+            }
+        }
+    }
+
+    /// Every screen — and every overlay on it — is drawn on the theme's
+    /// background: on a theme that paints one, no cell anywhere is left with
+    /// the terminal's own background or foreground.
+    #[test]
+    fn every_screen_is_on_the_theme_background() {
+        use crate::app::Screen;
+        for (name, palette) in builtin::ALL
+            .iter()
+            .filter(|(_, p)| p.background != Color::Reset)
+        {
+            for screen in [
+                Screen::Menu,
+                Screen::Typing,
+                Screen::Results,
+                Screen::Stats,
+                Screen::Settings,
+                Screen::Profile,
+                Screen::Help,
+            ] {
+                let mut app = App::new(None, *palette, Mode::Time(15));
+                app.start_game(Mode::Words(5)).unwrap();
+                app.stats_cache = Some(vec![record(61.0, "words-5")]);
+                app.screen = screen;
+                if screen == Screen::Results {
+                    app.notice = Some("exported 1 session".into());
+                }
+                let mut terminal = Terminal::new(TestBackend::new(80, 24)).unwrap();
+                terminal.draw(|f| render(f, &app)).unwrap();
+                let buffer = terminal.backend().buffer();
+                for y in 0..24 {
+                    for x in 0..80 {
+                        let cell = &buffer[(x, y)];
+                        assert!(
+                            cell.bg != Color::Reset && cell.fg != Color::Reset,
+                            "{name} {screen:?}: cell ({x}, {y}) {:?} uses the terminal's colors",
+                            cell.symbol()
+                        );
+                    }
+                }
+            }
+        }
     }
 
     /// The help overlay fits a standard 80×24 terminal whole: every line,
