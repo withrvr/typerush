@@ -101,6 +101,46 @@ fn decorate_with_punctuation(word: &str, rng: &mut impl Rng) -> String {
     format!("{}{}", word, tail)
 }
 
+/// Words in the daily challenge.
+pub const DAILY_WORDS: usize = 40;
+
+/// The daily challenge for `date`: [`DAILY_WORDS`] words from the 10,000-word
+/// pool, about one in five ending in a comma or a period. The same date
+/// always gives the same words — on any machine, in any time zone's
+/// calendar day — as long as the word list is the same.
+pub fn daily_words(date: chrono::NaiveDate) -> Vec<String> {
+    use chrono::Datelike;
+    // ponytail: modulo bias over a 10,000-word list is ~1e-15; not worth a
+    // rejection loop.
+    let mut rng = SplitMix64(u64::from(date.num_days_from_ce().unsigned_abs()));
+    let words = english::ENGLISH_10000;
+    (0..DAILY_WORDS)
+        .map(|_| {
+            let word = words[(rng.next() % words.len() as u64) as usize];
+            match rng.next() % 10 {
+                0 => format!("{word},"),
+                1 => format!("{word}."),
+                _ => word.to_string(),
+            }
+        })
+        .collect()
+}
+
+/// SplitMix64, a tiny, well-known generator written out here rather than
+/// taken from `rand`, whose algorithms may change between versions: the
+/// daily words must depend on the date alone.
+struct SplitMix64(u64);
+
+impl SplitMix64 {
+    fn next(&mut self) -> u64 {
+        self.0 = self.0.wrapping_add(0x9E37_79B9_7F4A_7C15);
+        let mut z = self.0;
+        z = (z ^ (z >> 30)).wrapping_mul(0xBF58_476D_1CE4_E5B9);
+        z = (z ^ (z >> 27)).wrapping_mul(0x94D0_49BB_1331_11EB);
+        z ^ (z >> 31)
+    }
+}
+
 /// Pick a random famous programming quote from the built-in list, split into
 /// whitespace-separated words.
 pub fn random_quote() -> Vec<String> {
@@ -268,6 +308,25 @@ mod tests {
         let path = dir.path().join("bom.txt");
         std::fs::write(&path, "\u{FEFF}hello world").unwrap();
         assert_eq!(words_from_file(&path).unwrap(), ["hello", "world"]);
+    }
+
+    /// The daily challenge depends on the date alone: the same date gives
+    /// the same words (pinned, so a change to the generator shows up here),
+    /// the next date different ones.
+    #[test]
+    fn daily_words_are_fixed_by_the_date() {
+        let day = |d| chrono::NaiveDate::from_ymd_opt(2026, 10, d).unwrap();
+        let today = daily_words(day(11));
+        assert_eq!(today.len(), DAILY_WORDS);
+        assert_eq!(today, daily_words(day(11)));
+        assert_ne!(today, daily_words(day(12)));
+        assert!(today
+            .iter()
+            .all(|w| !w.is_empty() && !w.contains(char::is_whitespace)));
+        // Pinned: if this changes, everyone's challenge for the day changes.
+        assert_eq!(today[..3], ["crabbiest", "sherbet", "societies"]);
+        // SplitMix64 reference value for seed 0 (from its published C code).
+        assert_eq!(SplitMix64(0).next(), 0xE220_A839_7B1D_CDAF);
     }
 
     #[test]

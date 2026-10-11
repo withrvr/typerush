@@ -160,7 +160,7 @@ one pull request:
 3. ✅ Replay a recent session word-for-word: every session keeps the text
    it typed; pick one on the Stats screen (or `--replay N`) and type the
    same words again, compared with the original run
-4. 🔲 Daily challenge: the same words for everyone on a given day, from a
+4. ✅ Daily challenge: the same words for everyone on a given day, from a
    seed of the date (`daily` menu row, `--daily`), with today's best
 5. 🔲 Export stats as CSV: `typerush export [FILE]`, and `e` on the Stats
    screen

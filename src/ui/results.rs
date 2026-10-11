@@ -47,7 +47,12 @@ pub fn render(f: &mut Frame, app: &App, area: Rect) -> &'static [super::Hint] {
     // Normally computed once on screen entry (main loop); computed here only
     // if something renders Results without going through it (e.g. tests).
     let comparison = app.results_comparison.unwrap_or_else(|| {
-        storage::ResultsComparison::new(sessions, app.session_just_saved, &mode_label)
+        storage::ResultsComparison::new(
+            sessions,
+            app.session_just_saved,
+            &mode_label,
+            app.best_text().as_deref(),
+        )
     });
 
     // Delta vs the previous any-mode session — or, for a replay, vs the run
@@ -118,7 +123,13 @@ pub fn render(f: &mut Frame, app: &App, area: Rect) -> &'static [super::Hint] {
         } else {
             Span::raw("")
         };
-        Line::from(vec![label(app, "mode best"), pb_value, badge])
+        // The daily challenge's best is today's: other days had other words.
+        let name = if app.best_text().is_some() {
+            "today best"
+        } else {
+            "mode best"
+        };
+        Line::from(vec![label(app, name), pb_value, badge])
     };
 
     let body_lines = vec![

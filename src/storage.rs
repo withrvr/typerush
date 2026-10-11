@@ -348,7 +348,8 @@ pub struct KeyAccuracyStat {
 pub struct ResultsComparison {
     /// WPM of the session before this one (any mode).
     pub last_wpm: Option<f64>,
-    /// Best WPM in this mode *before* this session.
+    /// Best WPM in this mode *before* this session — on the same text only,
+    /// when one was given (the daily challenge: today's best).
     pub previous_mode_best: Option<f64>,
 }
 
@@ -356,12 +357,26 @@ impl ResultsComparison {
     /// `sessions` is the full history; `includes_current` says whether the
     /// last entry is the session being shown (it was saved) and must be left
     /// out. Unsaved sessions (Zen, < 1 s, zero keystrokes) aren't in history.
-    pub fn new(sessions: &[SessionRecord], includes_current: bool, mode_label: &str) -> Self {
+    /// With `same_text`, only earlier runs of exactly that text count
+    /// towards the best.
+    pub fn new(
+        sessions: &[SessionRecord],
+        includes_current: bool,
+        mode_label: &str,
+        same_text: Option<&str>,
+    ) -> Self {
         let previous =
             &sessions[..sessions.len() - usize::from(includes_current).min(sessions.len())];
         Self {
             last_wpm: previous.last().map(|s| s.wpm),
-            previous_mode_best: personal_best_for_mode(previous, mode_label),
+            previous_mode_best: match same_text {
+                None => personal_best_for_mode(previous, mode_label),
+                Some(text) => personal_best(
+                    previous
+                        .iter()
+                        .filter(|s| s.mode == mode_label && s.text == text),
+                ),
+            },
         }
     }
 }
@@ -416,7 +431,7 @@ pub struct ModeBest {
 }
 
 /// Every mode in `sessions` with its best, in menu order: time, words,
-/// code, quote, symbols, custom, then anything else; numbers in numeric
+/// code, quote, symbols, custom, daily, then anything else; numbers in numeric
 /// order within a family (`time-15s` before `time-120s`).
 pub fn bests_by_mode(sessions: &[SessionRecord]) -> Vec<ModeBest> {
     let mut by_mode: HashMap<&str, ModeBest> = HashMap::new();
@@ -447,7 +462,9 @@ pub fn bests_by_mode(sessions: &[SessionRecord]) -> Vec<ModeBest> {
 /// Sort key for a mode label: menu family first, then the label's first
 /// number as a number, then the text around it.
 fn mode_sort_key(mode: &str) -> (usize, String, u64, String) {
-    const FAMILIES: [&str; 6] = ["time-", "words-", "code-", "quote", "symbols-", "custom"];
+    const FAMILIES: [&str; 7] = [
+        "time-", "words-", "code-", "quote", "symbols-", "custom", "daily",
+    ];
     let family = FAMILIES
         .iter()
         .position(|family| mode.starts_with(family))
@@ -1110,6 +1127,23 @@ mod tests {
         assert_eq!(restored.text, "def f(): pass");
     }
 
+    /// With a text to match (the daily challenge), the best counts only
+    /// earlier runs of that same text: today's best, not every day's.
+    #[test]
+    fn results_comparison_on_the_same_text() {
+        let mut yesterday = make_record(90.0, "daily", 1);
+        yesterday.text = "old words".into();
+        let mut today = make_record(60.0, "daily", 0);
+        today.text = "new words".into();
+        let sessions = vec![yesterday, today];
+        let same = ResultsComparison::new(&sessions, false, "daily", Some("new words"));
+        assert_eq!(same.previous_mode_best, Some(60.0));
+        let any = ResultsComparison::new(&sessions, false, "daily", None);
+        assert_eq!(any.previous_mode_best, Some(90.0));
+        let fresh = ResultsComparison::new(&sessions, false, "daily", Some("other"));
+        assert_eq!(fresh.previous_mode_best, None);
+    }
+
     /// A record without text (every record before v0.5) loads with none, and
     /// an empty text isn't written out at all.
     #[test]
@@ -1432,15 +1466,15 @@ mod tests {
             make_record(40.0, "time-30s", 0),
             make_record(90.0, "words-10", 0), // the session just saved
         ];
-        let saved = ResultsComparison::new(&sessions, true, "words-10");
+        let saved = ResultsComparison::new(&sessions, true, "words-10", None);
         assert_eq!(saved.last_wpm, Some(40.0));
         assert_eq!(saved.previous_mode_best, Some(70.0));
         // Not saved: the last entry is a previous session.
-        let unsaved = ResultsComparison::new(&sessions, false, "words-10");
+        let unsaved = ResultsComparison::new(&sessions, false, "words-10", None);
         assert_eq!(unsaved.last_wpm, Some(90.0));
         assert_eq!(unsaved.previous_mode_best, Some(90.0));
         assert_eq!(
-            ResultsComparison::new(&[], true, "zen"),
+            ResultsComparison::new(&[], true, "zen", None),
             ResultsComparison::default()
         );
     }

@@ -306,11 +306,14 @@ fn menu_lines(app: &App, width: usize, gaps_wanted: bool) -> MenuLines {
     let mut selected_line = 0;
     let mut previous_row: Option<std::ops::Range<usize>> = None;
     let mut gaps = 0;
-    // A row gets a heading line when it has several options, or when its one
-    // option is a file (a single custom file or snippet — even one named
-    // `custom.txt` must not look like the bare "nothing yet" placeholder).
-    let has_heading =
-        |row: &std::ops::Range<usize>| row.len() > 1 || app.menu[row.start].custom_path.is_some();
+    // A row of games gets a heading line when it has several options, or
+    // when its one option is a file (a single custom file or snippet — even
+    // one named `custom.txt` must not look like the bare "nothing yet"
+    // placeholder). The actions row (stats, quit) never has one.
+    let has_heading = |row: &std::ops::Range<usize>| {
+        let first = &app.menu[row.start];
+        (row.len() > 1 && first.mode.is_some()) || first.custom_path.is_some()
+    };
     let mut start = 0;
     while start < app.menu.len() {
         let row = menu_row(&app.menu, start);

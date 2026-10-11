@@ -282,6 +282,7 @@ fn resolve_default_mode(defaults: Option<&super::Defaults>, warnings: &mut Vec<S
             }))
         }
         "zen" => Mode::Zen,
+        "daily" => Mode::Daily,
         "symbols" => Mode::Symbols(config_count(
             "symbol_count",
             defaults.symbol_count,
@@ -336,6 +337,20 @@ mod tests {
                 ..Default::default()
             },
         )
+    }
+
+    #[test]
+    fn daily_default_mode() {
+        let raw = Config {
+            defaults: Some(Defaults {
+                mode: Some("daily".into()),
+                ..Default::default()
+            }),
+            ..Default::default()
+        };
+        let (resolved, warnings) = resolve(raw, None);
+        assert!(warnings.is_empty(), "{warnings:?}");
+        assert_eq!(resolved.default_mode, Mode::Daily);
     }
 
     #[test]

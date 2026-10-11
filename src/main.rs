@@ -89,6 +89,10 @@ struct Cli {
     #[arg(long)]
     zen: bool,
 
+    /// Skip the menu and start today's daily challenge.
+    #[arg(long)]
+    daily: bool,
+
     /// Skip the menu and start a programming-symbols drill of N tokens (25/50).
     #[arg(long, value_parser = count::<usize, MAX_COUNT>)]
     symbols: Option<usize>,
@@ -342,7 +346,7 @@ fn run_app(terminal: &mut Tui, cli: Cli) -> Result<()> {
 }
 
 /// If the user passed a mode flag (`--time`, `--words`, `--quote`, `--code`,
-/// `--zen`, `--symbols`, `--replay`, `--file`) skip the menu and start that
+/// `--zen`, `--symbols`, `--daily`, `--replay`, `--file`) skip the menu and start that
 /// mode. `stats_file` is where `--replay` finds its session.
 fn apply_cli_autostart(app: &mut App, cli: &Cli, stats_file: &Path) -> Result<()> {
     if let Some(seconds) = cli.time {
@@ -357,6 +361,8 @@ fn apply_cli_autostart(app: &mut App, cli: &Cli, stats_file: &Path) -> Result<()
         app.start_game(Mode::Zen)?;
     } else if let Some(count) = cli.symbols {
         app.start_game(Mode::Symbols(count))?;
+    } else if cli.daily {
+        app.start_game(Mode::Daily)?;
     } else if let Some(back) = cli.replay {
         let history = storage::load_sessions_from_path(stats_file).unwrap_or_default();
         let Some(record) = history.len().checked_sub(back).map(|i| &history[i]) else {
@@ -705,6 +711,7 @@ fn after_input(app: &mut App, last_screen: Screen, session_saved: &mut bool, sta
             sessions,
             app.session_just_saved,
             &app.session_label(),
+            app.best_text().as_deref(),
         ));
     }
     // Coming back from the help overlay keeps the category and scroll; any
@@ -1049,7 +1056,7 @@ mod tests {
     #[test]
     fn menu_scrolls_to_selection_on_short_terminal() {
         let mut app = App::new(None, ThemePalette::default(), Mode::Time(15));
-        app.menu_move_row(false); // wraps to "quit", the last row
+        app.menu_move_row(false); // wraps to the last row (stats, quit)
         let quit = app.menu_index;
         let mut terminal = Terminal::new(ratatui::backend::TestBackend::new(80, 18)).unwrap();
         terminal.draw(|f| ui::render(f, &app)).unwrap();
@@ -1060,9 +1067,10 @@ mod tests {
             .chunks(80)
             .map(|row| row.iter().map(|cell| cell.symbol()).collect())
             .collect();
-        // Selected last row is on screen, directly under "stats" (no gap).
-        let quit_row = rows.iter().position(|r| r.contains("➤ quit")).unwrap();
-        assert!(rows[quit_row - 1].contains("  stats"));
+        // Selected last row is on screen, directly under "daily" (no gap).
+        let quit_row = rows.iter().position(|r| r.contains(" quit ")).unwrap();
+        assert!(rows[quit_row].contains("➤ stats "), "{rows:?}");
+        assert!(rows[quit_row - 1].contains("  daily"), "{rows:?}");
         target_cell(&app, ClickAction::Menu(quit)); // panics if not clickable
     }
 
@@ -1624,6 +1632,36 @@ mod tests {
         let error = start(&["typerush", "--replay", "3"]).unwrap_err();
         assert!(error.to_string().contains("2 saved so far"), "{error}");
         assert!(Cli::try_parse_from(["typerush", "--replay", "0"]).is_err());
+    }
+
+    /// `--daily` starts today's challenge straight away.
+    #[test]
+    fn daily_flag_starts_the_challenge() {
+        let cli = Cli::try_parse_from(["typerush", "--daily"]).unwrap();
+        let mut app = App::new(None, ThemePalette::default(), Mode::Time(15));
+        apply_cli_autostart(&mut app, &cli, Path::new("unused")).unwrap();
+        assert_eq!((app.screen, app.mode), (Screen::Typing, Mode::Daily));
+    }
+
+    /// Results for the daily challenge names its best "today best": runs of
+    /// other days' words don't count.
+    #[test]
+    fn daily_results_show_todays_best() {
+        let mut app = App::new(None, ThemePalette::default(), Mode::Time(15));
+        app.start_game(Mode::Daily).unwrap();
+        app.stats_cache = Some(vec![SessionRecord {
+            wpm: 99.0,
+            mode: "daily".into(),
+            text: "yesterday's words".into(),
+            ..SessionRecord::default()
+        }]);
+        app.started_at = Some(std::time::Instant::now() - Duration::from_secs(60));
+        app.handle_char('x');
+        app.finish_game();
+        after_input(&mut app, Screen::Typing, &mut true, Path::new("unused"));
+        assert_eq!(app.results_comparison.unwrap().previous_mode_best, None);
+        let rows = screen(&app, 80, 24).join("\n");
+        assert!(rows.contains("today best  — wpm"), "{rows}");
     }
 
     // ── saving ───────────────────────────────────────────────────────────────

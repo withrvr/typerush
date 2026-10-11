@@ -63,6 +63,8 @@ pub enum Mode {
     Custom,
     /// Programming-symbols drill: type N short tokens like `=>` or `(){};`.
     Symbols(usize),
+    /// The daily challenge: the same words for everyone on a given day.
+    Daily,
 }
 
 impl Mode {
@@ -82,6 +84,7 @@ impl Mode {
             Mode::Zen => "zen".to_string(),
             Mode::Custom => "custom".to_string(),
             Mode::Symbols(count) => format!("symbols-{}", count),
+            Mode::Daily => "daily".to_string(),
         }
     }
 
@@ -111,6 +114,7 @@ impl Mode {
         match base {
             "quote" => Some(Mode::Quote),
             "zen" => Some(Mode::Zen),
+            "daily" => Some(Mode::Daily),
             _ if base == "custom" || base.starts_with("custom-") => Some(Mode::Custom),
             _ => None,
         }
@@ -280,8 +284,9 @@ pub fn default_menu() -> Vec<MenuItem> {
 /// is one of the snippets) followed by every snippet; with neither, it shows
 /// a single placeholder option that explains how to add one.
 ///
-/// The v0.3 rows keep their order; the v0.4 `symbols` and `custom` rows sit
-/// between `zen` and `stats`, so ↑/↓ through the original rows is unchanged.
+/// The v0.3 rows keep their order; the v0.4 `symbols` and `custom` rows and
+/// v0.5's `daily` sit between `zen` and the last row, which holds the
+/// actions that don't start a game (`stats`, `quit`) side by side.
 pub fn build_menu(snippets: &[Snippet], last_custom_file: Option<&Path>) -> Vec<MenuItem> {
     use crate::words::CodeLang;
     let start = |group, label: &str, mode| MenuItem {
@@ -291,9 +296,11 @@ pub fn build_menu(snippets: &[Snippet], last_custom_file: Option<&Path>) -> Vec<
         action: MenuAction::Start,
         custom_path: None,
     };
-    let other = |group: &'static str, action| MenuItem {
-        group,
-        label: group.to_string(),
+    // The actions that don't start a game share the last row, with no
+    // heading: "stats  quit".
+    let other = |label: &str, action| MenuItem {
+        group: "app",
+        label: label.to_string(),
         mode: None,
         action,
         custom_path: None,
@@ -338,6 +345,7 @@ pub fn build_menu(snippets: &[Snippet], last_custom_file: Option<&Path>) -> Vec<
     if menu.last().is_some_and(|item| item.group != "custom") {
         menu.push(custom("custom".to_string(), None));
     }
+    menu.push(start("daily", "daily", Mode::Daily));
 
     menu.push(other("stats", MenuAction::ShowStats));
     menu.push(other("quit", MenuAction::Quit));
@@ -892,13 +900,14 @@ impl App {
         }
     }
 
-    /// In `Mode::Words` / `Mode::Symbols`, `(completed, total)`. `None` for
-    /// all other modes.
+    /// In `Mode::Words` / `Mode::Symbols` / `Mode::Daily`, `(completed,
+    /// total)`. `None` for all other modes.
     pub fn progress(&self) -> Option<(usize, usize)> {
         match self.mode {
             Mode::Words(target) | Mode::Symbols(target) => {
                 Some((self.current_word.min(target), target))
             }
+            Mode::Daily => Some((self.current_word.min(self.words.len()), self.words.len())),
             _ => None,
         }
     }
@@ -921,6 +930,7 @@ impl App {
             Mode::Quote => words::random_quote(),
             Mode::Code(lang) => words::random_code_snippet(lang),
             Mode::Symbols(count) => words::symbols::random_symbol_tokens(count),
+            Mode::Daily => words::daily_words(chrono::Local::now().date_naive()),
             Mode::Custom => {
                 let Some(path) = &self.custom_file else {
                     return Err(anyhow::anyhow!(
@@ -971,6 +981,12 @@ impl App {
         self.key_misses.clear();
         self.top_up_words();
         self.screen = Screen::Typing;
+    }
+
+    /// The text the Results best is limited to: today's words for the daily
+    /// challenge (its best is today's best), `None` for everything else.
+    pub fn best_text(&self) -> Option<String> {
+        (self.mode == Mode::Daily && self.replay.is_none()).then(|| self.session_text())
     }
 
     /// The session's words as saved for replaying: every word of a run
@@ -1301,6 +1317,45 @@ mod tests {
         app.restart().unwrap();
         assert!(!app.is_paused());
         assert_eq!(app.paused_for, Duration::ZERO);
+    }
+
+    // ── daily challenge (v0.5.0) ───────────────────────────────────────────
+
+    /// The daily challenge types today's words, shows its progress, ends on
+    /// the last word, is saved as "daily", and its best is limited to
+    /// today's text. A replay of it is an ordinary replay.
+    #[test]
+    fn daily_challenge_types_todays_words() {
+        let mut app = menu_app();
+        app.start_game(Mode::Daily).unwrap();
+        let today = crate::words::daily_words(chrono::Local::now().date_naive());
+        let words: Vec<String> = app.words.iter().map(|w| w.text.clone()).collect();
+        assert_eq!(words, today);
+        assert_eq!(app.session_label(), "daily");
+        assert_eq!(app.progress(), Some((0, crate::words::DAILY_WORDS)));
+        assert_eq!(app.best_text(), Some(today.join(" ")));
+        for ch in today.join(" ").chars() {
+            app.handle_char(ch);
+        }
+        assert_eq!(app.screen, Screen::Results);
+
+        let record = SessionRecord {
+            mode: "daily".into(),
+            text: today.join(" "),
+            ..SessionRecord::default()
+        };
+        app.start_replay(&record).unwrap();
+        assert_eq!(app.mode, Mode::Daily);
+        assert_eq!(app.session_label(), "daily+replay");
+        assert_eq!(app.best_text(), None);
+    }
+
+    #[test]
+    fn menu_offers_the_daily_challenge() {
+        let menu = default_menu();
+        let daily = best_menu_match(&menu, Mode::Daily);
+        assert_eq!(menu[daily].label, "daily");
+        assert_eq!(menu[daily].mode, Some(Mode::Daily));
     }
 
     // ── replay (v0.5.0) ────────────────────────────────────────────────────
@@ -1655,7 +1710,9 @@ mod tests {
         let groups: Vec<&str> = menu.iter().map(|m| m.group).collect();
         let zen = groups.iter().position(|g| *g == "zen").unwrap();
         assert_eq!(groups[zen + 1], "symbols");
-        assert_eq!(&groups[groups.len() - 2..], ["stats", "quit"]);
+        assert_eq!(row("daily"), ["daily"]);
+        assert_eq!(groups[groups.len() - 3], "daily");
+        assert_eq!(row("app"), ["stats", "quit"]);
     }
 
     #[test]
