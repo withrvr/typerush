@@ -1,243 +1,131 @@
-"""Synthesizes the soundtrack for brag.mp4: music and effects written as one piece.
-
-D major, 124 BPM, chords D - Bm - G - A (one bar each). Key clicks follow the real
-keystrokes recorded from the typing take (keys.json), so the sound is in sync with
-the screen. Effects share the pluck's reverb so they sit in one space.
-Writes music.wav (stereo, 48 kHz).
-"""
-import json
-import os
-import wave
-
+"""Music + effects for the brag video, synthesized with numpy -> music.wav (44.1 kHz stereo)."""
+import json, wave
 import numpy as np
 
-SR = 48000
-DUR = 23.0
+SR, DUR, BPM = 44100, 23.0, 120
+BEAT = 60 / BPM
 N = int(SR * DUR)
-t_all = np.arange(N) / SR
-rng = np.random.default_rng(5)
-HERE = os.path.dirname(os.path.abspath(__file__))
-
-BEAT = 60 / 124
-BAR = 4 * BEAT
+L = np.zeros(N); R = np.zeros(N)
+rng = np.random.default_rng(3)
+T = dict(hook=0, reveal=3.0, results=6.1, v07=9.5, stats=14.8, themes=17.6, outro=19.7)
+SUB, TH = [2.0, 1.8, 1.5], 0.42
 
 
-def hz(midi):
-    return 440.0 * 2 ** ((midi - 69) / 12)
+def note(m): return 440 * 2 ** ((m - 69) / 12)
 
 
-# D(D F# A) Bm(B D F#) G(G B D) A(A C# E)
-CHORDS = [[62, 66, 69], [59, 62, 66], [55, 59, 62], [57, 61, 64]]
-ROOTS = [38, 35, 43, 45]
+def add(sig, t, gain=1.0, pan=0.0):
+    i = int(t * SR)
+    if i >= N: return
+    s = sig[: N - i] * gain
+    L[i:i + len(s)] += s * (1 - max(0, pan))
+    R[i:i + len(s)] += s * (1 + min(0, pan))
 
 
-def chord_at(t):
-    return int(t // BAR) % 4
+def lp(x, a):  # one-pole low-pass
+    y = np.empty_like(x); acc = 0.0
+    for i, v in enumerate(x):
+        acc += a * (v - acc); y[i] = acc
+    return y
 
 
-def env_adsr(n, a, d, s, r, sustain_len):
-    """Linear ADSR, lengths in seconds; returns array of length n."""
-    e = np.zeros(n)
-    A, D, S, R = int(a * SR), int(d * SR), int(sustain_len * SR), int(r * SR)
-    i = 0
-    seg = [
-        np.linspace(0, 1, max(A, 1)),
-        np.linspace(1, s, max(D, 1)),
-        np.full(max(S, 1), s),
-        np.linspace(s, 0, max(R, 1)),
-    ]
-    for part in seg:
-        k = min(len(part), n - i)
-        if k <= 0:
-            break
-        e[i : i + k] = part[:k]
-        i += k
-    return e
+def env(n, a, d):
+    t = np.arange(n) / SR
+    return np.minimum(1, t / max(a, 1e-4)) * np.exp(-t / d)
 
 
-def lowpass_fft(x, cutoff, order=2):
-    X = np.fft.rfft(x)
-    f = np.fft.rfftfreq(len(x), 1 / SR)
-    X *= 1 / np.sqrt(1 + (f / cutoff) ** (2 * order))
-    return np.fft.irfft(X, len(x))
+def tone(f, dur, harm=(1,), a=0.005, d=0.3, detune=0.0):
+    n = int(dur * SR); t = np.arange(n) / SR
+    s = sum(np.sin(2 * np.pi * f * k * t * (1 + detune)) / k for k in harm)
+    return s * env(n, a, d)
 
 
-def highpass_fft(x, cutoff, order=2):
-    X = np.fft.rfft(x)
-    f = np.fft.rfftfreq(len(x), 1 / SR)
-    X *= 1 - 1 / np.sqrt(1 + (f / cutoff) ** (2 * order))
-    return np.fft.irfft(X, len(x))
+# chords: Am F C G, one bar (2 s) each, MIDI roots
+CH = [(57, 60, 64), (53, 57, 60), (48, 55, 64), (55, 59, 62)]
+bars = int(DUR / (4 * BEAT)) + 1
+
+# pad: detuned saws, low-passed, under everything
+for b in range(bars):
+    t0 = b * 4 * BEAT
+    if t0 >= T['outro'] + 1.3: break
+    for m in CH[b % 4]:
+        for dt in (-0.004, 0.004):
+            n = int(4 * BEAT * SR); tt = np.arange(n) / SR
+            saw = 2 * ((note(m) * (1 + dt) * tt) % 1) - 1
+            e = np.minimum(1, tt / 0.4) * np.minimum(1, (4 * BEAT - tt) / 0.3)
+            add(lp(saw, 0.035) * e, t0, 0.035, pan=dt * 60)
+
+# final chord at the wordmark, ringing out
+for m in (57, 64, 69, 72, 76):
+    add(tone(note(m), 3.0, harm=(1, 2, 3), a=0.01, d=1.1), T['outro'] + 1.3, 0.06, pan=(m - 66) / 30)
+
+# kick + bass from the reveal to the outro; hats from the start
+t = 0.0
+while t < T['outro'] - 0.01:
+    beat = round(t / BEAT)
+    if t >= T['reveal'] - 0.01:
+        n = int(0.35 * SR); tt = np.arange(n) / SR
+        f = 48 + 90 * np.exp(-tt * 32)
+        kick = np.sin(2 * np.pi * np.cumsum(f) / SR) * np.exp(-tt * 9)
+        add(kick, t, 0.3)
+    m = CH[int(t / (4 * BEAT)) % 4][0] - 12
+    for off in (0, BEAT / 2):   # bass from the first frame, fuller once the kick comes in
+        add(lp(tone(note(m), 0.24, harm=(1, 2, 3, 4), a=0.004, d=0.12), 0.25), t + off,
+            0.16 if t >= T['reveal'] - 0.01 else 0.11)
+    # off-beat hat
+    n = int(0.05 * SR)
+    hat = np.diff(rng.standard_normal(n + 1)) * env(n, 0.001, 0.012)
+    add(hat, t + BEAT / 2, 0.035 if t < T['reveal'] else 0.05, pan=0.3)
+    t += BEAT
+
+# pluck on each scene change: chord tones, bright and short
+cuts = [T['reveal'], T['results'], T['v07'], T['v07'] + SUB[0], T['v07'] + SUB[0] + SUB[1], T['stats'], T['themes'], T['outro']]
+for i, c in enumerate(cuts):
+    m = CH[int(c / (4 * BEAT)) % 4]
+    for j, mm in enumerate(m):
+        add(tone(note(mm + 12), 0.6, harm=(1, 2, 3), a=0.002, d=0.18), c + j * 0.03, 0.05, pan=(j - 1) * 0.3)
+    # soft air swell into the cut
+    n = int(0.35 * SR); nz = lp(rng.standard_normal(n), 0.08)
+    sw = nz * np.linspace(0, 1, n) ** 2
+    add(sw, c - 0.33, 0.05)
+# theme flips: tiny ticks
+for k in range(1, 5):
+    add(tone(note(88), 0.08, a=0.001, d=0.02), T['themes'] + k * TH, 0.05)
+# "new best" chime as the results land
+for j, m in enumerate((81, 88, 93)):
+    add(tone(note(m), 1.4, harm=(1, 2.01), a=0.003, d=0.45), T['results'] + 0.35 + j * 0.07, 0.05, pan=0.2 * (j - 1))
+
+# key clicks at the real keystroke times, mapped from clip time to video time
+keys = json.load(open('keys.json'))
+data = json.load(open('hero.json')); h0 = data['marks']['start']
+marks = {k: json.load(open(k + '.json'))['marks'].get('in') for k in ('missed', 'pace', 'blind')}
+spans = [('hero', h0 - 0.3, 1.7, T['hook'], T['reveal'])]
+s0 = T['v07']
+for (name, off), d in zip([('missed', 1.2), ('pace', 1.6), ('blind', 1.2)], SUB):
+    spans.append((name, marks[name] + off, 1.2, s0, s0 + d)); s0 += d
 
 
-def add(buf, start, sig, gain=1.0):
-    i = int(start * SR)
-    if i >= len(buf):
-        return
-    k = min(len(sig), len(buf) - i)
-    buf[i : i + k] += sig[:k] * gain
-
-
-def automation(points):
-    """Piecewise-linear gain curve from [(time, gain), ...]."""
-    ts, gs = zip(*points)
-    return np.interp(t_all, ts, gs)
-
-
-# ------------------------------------------------------------------ music
-pad = np.zeros(N)
-for b in range(int(DUR / BAR) + 1):
-    notes = CHORDS[b % 4]
-    ln = BAR + 0.6
-    n = int(ln * SR)
-    tt = np.arange(n) / SR
-    e = env_adsr(n, 0.4, 0.4, 0.75, 0.6, ln - 1.4)
-    sig = np.zeros(n)
-    for m in notes + [notes[0] + 12]:
-        for det in (-0.1, 0.0, 0.1):
-            ph = 2 * np.pi * hz(m + det) * tt + rng.uniform(0, 6.28)
-            sig += np.sin(ph) + 0.3 * np.sin(2 * ph) + 0.12 * np.sin(3 * ph)
-    add(pad, b * BAR, sig * e / 16)
-pad = lowpass_fft(pad, 1800)
-
-bass = np.zeros(N)
-for k in range(int(DUR / BEAT)):
-    st = k * BEAT
-    if st < 3.3 or st > 22.2:
-        continue
-    f = hz(ROOTS[chord_at(st)])
-    n = int(0.42 * SR)
-    tt = np.arange(n) / SR
-    e = np.exp(-tt * 6) * np.minimum(1, tt / 0.008)
-    add(bass, st, np.tanh(1.5 * np.sin(2 * np.pi * f * tt)) * e * 0.3)
-bass = lowpass_fft(bass, 520)
-
-pluck = np.zeros(N)
-ARP = [0, 1, 2, 3, 1, 2, 3, 2]
-for k in range(int(DUR / (BEAT / 2))):
-    st = k * BEAT / 2
-    if st < 3.3 or st > 22.0:
-        continue
-    ch = CHORDS[chord_at(st)] + [CHORDS[chord_at(st)][0] + 12]
-    f = hz(ch[ARP[k % 8]] + 12)
-    n = int(0.3 * SR)
-    tt = np.arange(n) / SR
-    e = np.exp(-tt * 15) * np.minimum(1, tt / 0.003)
-    sig = (np.sin(2 * np.pi * f * tt) + 0.3 * np.sin(4 * np.pi * f * tt) * np.exp(-tt * 30)) * e
-    add(pluck, st, sig * (0.10 if k % 2 == 0 else 0.07))
-
-kick = np.zeros(N)
-hats = np.zeros(N)
-for k in range(int(DUR / BEAT)):
-    st = k * BEAT
-    if not (6.1 <= st < 22.0):
-        continue
-    n = int(0.3 * SR)
-    tt = np.arange(n) / SR
-    ph = 2 * np.pi * np.cumsum(48 + 90 * np.exp(-tt * 30)) / SR
-    add(kick, st, np.sin(ph) * np.exp(-tt * 9) * 0.34)
-    nh = int(0.05 * SR)
-    add(hats, st + BEAT / 2, rng.standard_normal(nh) * np.exp(-np.arange(nh) / SR * 80) * 0.02)
-hats = lowpass_fft(highpass_fft(hats, 7000), 12000)
-
-# ------------------------------------------------------------------ effects (same key, same space)
-fx = np.zeros(N)
-
-
-def blip(f, length=0.18, decay=28, bright=0.25):
-    n = int(length * SR)
-    tt = np.arange(n) / SR
-    e = np.exp(-tt * decay) * np.minimum(1, tt / 0.002)
-    return (np.sin(2 * np.pi * f * tt) + bright * np.sin(2 * np.pi * 2 * f * tt)) * e
-
-
-def whoosh(length=0.6, peak=0.75):
-    n = int(length * SR)
-    tt = np.arange(n) / SR
-    e = np.sin(np.pi * np.clip(tt / length, 0, 1)) ** 2
-    e *= np.where(tt / length < peak, (tt / length) / peak, 1)
-    return lowpass_fft(rng.standard_normal(n), 1800) * e
-
-
-k_rng = np.random.default_rng(9)
-PENTA = [74, 76, 78, 81, 83, 86]  # D major pentatonic
-
-
-def keyclick(start, gain):
-    """A soft key: short high-passed noise plus a quiet pitched tick from the key."""
+def click():
     n = int(0.03 * SR)
-    noise = k_rng.standard_normal(n) * np.exp(-np.arange(n) / SR * 260)
-    click = highpass_fft(np.pad(noise, (0, 1500)), 2200)
-    add(fx, start, click, gain)
-    add(fx, start, blip(hz(PENTA[k_rng.integers(len(PENTA))] + 12), 0.06, 70, 0.1), gain * 0.35)
+    nz = np.diff(lp(rng.standard_normal(n + 1), 0.5)) * env(n, 0.0005, 0.006)
+    return nz + tone(2400 + rng.uniform(-200, 200), 0.03, a=0.0005, d=0.004) * 0.3
 
 
-# hook: the headline being typed (line 1 at 0.25 + 0.075k; line 2 is fast, so every other key)
-for k in range(14):
-    keyclick(0.25 + 0.075 * k, 0.05)
-for k in range(0, 23, 2):
-    keyclick(1.45 + 0.032 * k, 0.035)
+for name, base, rate, a, b in spans:
+    for kt in keys[name]:
+        vt = a + (kt - base) / rate
+        if a + 0.05 <= vt < b - 0.05:
+            add(click(), vt, 0.07 * rng.uniform(0.75, 1.0), pan=rng.uniform(-0.15, 0.15))
+# outro: the install command typed at 45 ms a key
+for i in range(len('cargo install typerush')):
+    add(click(), T['outro'] + 0.3 + i * 0.045, 0.06)
 
-# transitions
-for c in (3.3, 6.1, 13.6, 16.6, 19.4):
-    add(fx, c - 0.45, whoosh(0.7), 0.03)
-
-# reveal: `typerush` typed at the prompt, Enter, then menu moves (j j j k k k)
-for k in range(8):
-    keyclick(3.75 + 0.06 * k, 0.045)
-add(fx, 4.32, blip(hz(74), 0.12, 40, 0.5), 0.06)
-for k, rt in enumerate((1.23, 1.5, 1.77, 2.07, 2.33, 2.63)):
-    add(fx, rt + 3.45, blip(hz([81, 83, 86, 83, 81, 78][k]), 0.1, 45), 0.035)
-
-# typing take: every recorded keystroke (recording time -> video time)
-for kt in json.load(open(os.path.join(HERE, "keys.json"))):
-    keyclick(kt - 0.95 + 6.1, 0.045)
-# results screen: a bright D major chime
-for m in (74, 78, 81, 86):
-    add(fx, 12.22, blip(hz(m), 0.9, 4.5), 0.035)
-
-# theme cuts: a soft tick on each cut, rising
-for k in range(1, 4):
-    add(fx, 13.72 + 0.72 * k, blip(hz([78, 81, 86][k - 1]), 0.25, 18), 0.05)
-
-# outro: swell into a D major bloom
-for m in (50, 57, 62, 66, 69, 74):
-    nn = int(3.4 * SR)
-    tt = np.arange(nn) / SR
-    e = np.minimum(1, tt / 0.04) * np.exp(-tt * 1.0)
-    add(fx, 19.5, np.sin(2 * np.pi * hz(m) * tt) * e, 0.04)
-
-
-# ------------------------------------------------------------------ shared reverb on pluck + fx
-def reverb(x, seconds=1.6, wet=0.26):
-    n = int(seconds * SR)
-    tt = np.arange(n) / SR
-    ir = rng.standard_normal(n) * np.exp(-tt * 3.4)
-    ir = lowpass_fft(ir, 5000)
-    ir /= np.sqrt(np.sum(ir**2))
-    L = len(x) + n
-    nfft = 1 << (L - 1).bit_length()
-    y = np.fft.irfft(np.fft.rfft(x, nfft) * np.fft.rfft(ir, nfft), nfft)[: len(x)]
-    return x * (1 - wet) + y * wet * 0.9
-
-
-bus = reverb(pluck + fx)
-pad_r = reverb(pad, 2.4, 0.35)
-
-# ------------------------------------------------------------------ arrangement + mix
-pad_g = automation([(0, 0.4), (3.0, 0.75), (19.2, 0.8), (19.5, 1.0), (DUR, 1.0)])
-master = automation([(0, 0), (0.05, 1), (21.9, 1), (DUR, 0)])
-
-mix = (pad_r * pad_g + bass + kick + hats + bus) * master
-
-left = mix + 0.004 * np.roll(mix, 240)
-right = mix + 0.004 * np.roll(mix, 410)
-st = np.stack([left, right], 1)
-st = np.tanh(st * 1.2) / 1.2
-st *= 0.89 / np.max(np.abs(st))
-
-with wave.open(os.path.join(HERE, "music.wav"), "wb") as w:
-    w.setnchannels(2)
-    w.setsampwidth(2)
-    w.setframerate(SR)
-    w.writeframes((st * 32767).astype("<i2").tobytes())
-print("wrote music.wav", st.shape[0] / SR, "s")
+mix = np.stack([L, R], 1)
+mix /= np.max(np.abs(mix)) + 1e-9
+mix = np.tanh(mix * 1.4) / np.tanh(1.4)
+fade = np.ones(N); fn = int(0.6 * SR); fade[-fn:] = np.linspace(1, 0, fn)
+mix *= fade[:, None] * 0.9
+with wave.open('music.wav', 'wb') as w:
+    w.setnchannels(2); w.setsampwidth(2); w.setframerate(SR)
+    w.writeframes((mix * 32767).astype('<i2').tobytes())
+print('ok', mix.shape)
