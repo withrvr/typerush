@@ -435,6 +435,27 @@ mod tests {
                 app.start_game(Mode::Time(30)).unwrap();
                 app.started_at = Some(Instant::now() - Duration::from_secs(12));
             }),
+            ("typing block cursor, pace, refused key", |app| {
+                app.options.cursor = crate::options::CursorStyle::Block;
+                app.options.stop_on_error = crate::options::StopOnError::Letter;
+                app.start_game(Mode::Words(25)).unwrap();
+                app.started_at = Some(Instant::now() - Duration::from_secs(4));
+                app.pace_wpm = Some(60.0);
+                app.handle_char('#');
+            }),
+            ("typing bar cursor, blind", |app| {
+                app.options.cursor = crate::options::CursorStyle::Bar;
+                app.options.blind = true;
+                app.start_game(Mode::Words(25)).unwrap();
+                app.handle_char('#');
+            }),
+            ("results not saved (idle)", |app| {
+                app.start_game(Mode::Words(10)).unwrap();
+                let end = Instant::now();
+                app.ended_at = Some(end);
+                app.started_at = Some(end - Duration::from_secs(30));
+                app.screen = Screen::Results;
+            }),
             ("paused", |app| {
                 app.start_game(Mode::Words(25)).unwrap();
                 app.toggle_pause();

@@ -2280,6 +2280,31 @@ mod tests {
         assert!(Cli::try_parse_from(["typerush", "--stop-on-error", "always"]).is_err());
     }
 
+    /// On a terminal too short for every setting, the list scrolls to keep
+    /// the selected row in view — reset included, still clickable — and
+    /// the border says there's more; at 80×24 everything fits.
+    #[test]
+    fn settings_scroll_on_a_short_terminal() {
+        let dir = tempfile::tempdir().unwrap();
+        let (mut app, _) = settings_app(&dir);
+        assert!(!screen(&app, 80, 24).join("\n").contains("more"));
+        let reset = settings::ROWS.len() - 1;
+        app.settings_select(reset);
+        let rows = screen(&app, 80, 14);
+        let dump = rows.join("\n");
+        assert!(dump.contains("reset to defaults"), "{dump}");
+        assert!(dump.contains("▲ more"), "{dump}");
+        let mut terminal = Terminal::new(ratatui::backend::TestBackend::new(80, 14)).unwrap();
+        terminal.draw(|f| ui::render(f, &app)).unwrap();
+        target_cell(&app, ClickAction::Setting(reset, KeyCode::Enter)); // clickable
+        app.settings_select(0);
+        let dump = screen(&app, 80, 14).join("\n");
+        assert!(
+            dump.contains("▼ more") && !dump.contains("▲ more"),
+            "{dump}"
+        );
+    }
+
     /// The menu's settings option opens the screen too.
     #[test]
     fn menu_settings_option_opens_settings() {

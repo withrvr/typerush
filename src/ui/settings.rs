@@ -54,27 +54,24 @@ pub fn render(f: &mut Frame, app: &App, area: Rect) -> &'static [super::Hint] {
         },
     );
     let block = block.title_bottom(Span::styled(saved_to, Style::default().fg(theme.pending)));
-    f.render_widget(block, box_area);
 
     // A blank line, the settings, a blank line, reset, then any problem
-    // with the file.
+    // with the file. Clickable parts are kept by line until the scroll is
+    // known.
     let mut lines = vec![Line::raw("")];
-    let mut targets = app.click_targets.borrow_mut();
+    let mut chips_by_line = Vec::new();
+    let mut selected_line = 0;
     for (index, row) in ROWS.iter().enumerate() {
         if *row == Row::Reset {
             lines.push(Line::raw(""));
         }
-        let y = inner.y + lines.len() as u16;
         let (line, chips) = row_line(app, view, index, *row);
-        for (x, width, code) in chips {
-            let cell = Rect::new(inner.x + x, y, width, 1).intersection(inner);
-            if !cell.is_empty() {
-                targets.push((cell, ClickAction::Setting(index, code)));
-            }
+        if index == view.selected {
+            selected_line = lines.len();
         }
+        chips_by_line.push((lines.len(), index, chips));
         lines.push(line);
     }
-    drop(targets);
     if let Some(problem) = &view.problem {
         // The first line of the loader's warning: the file is still used
         // where it can be, and the problem stays until it is fixed.
@@ -86,7 +83,36 @@ pub fn render(f: &mut Frame, app: &App, area: Rect) -> &'static [super::Hint] {
             Style::default().fg(theme.error),
         ));
     }
-    f.render_widget(Paragraph::new(lines), inner);
+
+    // Too short for every row: scroll so the selected one is in view, with
+    // a sign on the border for what's above or below.
+    let visible = inner.height as usize;
+    let scroll = (selected_line + 1).saturating_sub(visible);
+    let hint = Style::default().fg(theme.pending);
+    let mut block = block;
+    if scroll > 0 {
+        block = block.title(Line::styled(" ▲ more ", hint).right_aligned());
+    }
+    if scroll + visible < lines.len() {
+        block = block.title_bottom(Line::styled(" ▼ more ", hint).right_aligned());
+    }
+    f.render_widget(block, box_area);
+
+    let mut targets = app.click_targets.borrow_mut();
+    for (line, index, chips) in chips_by_line {
+        if line < scroll || line - scroll >= visible {
+            continue;
+        }
+        let y = inner.y + (line - scroll) as u16;
+        for (x, width, code) in chips {
+            let cell = Rect::new(inner.x + x, y, width, 1).intersection(inner);
+            if !cell.is_empty() {
+                targets.push((cell, ClickAction::Setting(index, code)));
+            }
+        }
+    }
+    drop(targets);
+    f.render_widget(Paragraph::new(lines).scroll((scroll as u16, 0)), inner);
 
     const HINTS: &[super::Hint] = &[
         ("↑/↓ setting", None),
