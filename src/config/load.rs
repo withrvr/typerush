@@ -36,7 +36,7 @@ impl Default for ResolvedConfig {
         Self {
             palette: ThemePalette::default(),
             // Picked in agreement with the v0.2.0 spec: "default scheme time 15 sec".
-            default_mode: Mode::Time(15),
+            default_mode: Mode::Time(DEFAULT_SECONDS),
             word_pool: WordPool::Common,
             word_decor: WordDecor::default(),
         }
@@ -79,15 +79,15 @@ pub fn load_or_default_with(cli: CliOverrides<'_>) -> (ResolvedConfig, Vec<Strin
 pub fn load_from(path: &Path, cli: CliOverrides<'_>) -> (ResolvedConfig, Vec<String>) {
     // The path is shown in the error modal: made safe like every other path.
     let shown = || crate::text::printable(&path.display().to_string()).into_owned();
-    let (raw_config, file_warning) = match std::fs::read_to_string(path) {
-        Ok(text) => match toml::from_str::<Config>(&text) {
+    let (raw_config, file_warning) = match read_config(path) {
+        Ok(Some(text)) => match toml::from_str::<Config>(&text) {
             Ok(parsed) => (parsed, None),
             Err(err) => (
                 Config::default(),
                 Some(format!("could not parse {}: {}", shown(), err)),
             ),
         },
-        Err(err) if err.kind() == std::io::ErrorKind::NotFound => (Config::default(), None),
+        Ok(None) => (Config::default(), None),
         Err(err) => (
             Config::default(),
             Some(format!("could not read {}: {}", shown(), err)),
@@ -99,6 +99,31 @@ pub fn load_from(path: &Path, cli: CliOverrides<'_>) -> (ResolvedConfig, Vec<Str
         warnings.insert(0, warning);
     }
     (resolved, warnings)
+}
+
+/// Largest config file read: a real one is a few hundred bytes.
+const MAX_CONFIG_BYTES: u64 = 1024 * 1024;
+
+/// The text of the config file at `path`, `None` if there is none. Like a
+/// custom file, only a regular file up to 1 MiB is read — a pipe or device
+/// put there would otherwise block or fill memory before the menu opens.
+pub fn read_config(path: &Path) -> std::io::Result<Option<String>> {
+    use std::io::Read;
+    let file = match std::fs::File::open(path) {
+        Ok(file) => file,
+        Err(err) if err.kind() == std::io::ErrorKind::NotFound => return Ok(None),
+        Err(err) => return Err(err),
+    };
+    let metadata = file.metadata()?;
+    if !metadata.is_file() {
+        return Err(std::io::Error::other("not a regular file"));
+    }
+    if metadata.len() > MAX_CONFIG_BYTES {
+        return Err(std::io::Error::other("too big (over 1 MiB)"));
+    }
+    let mut text = String::new();
+    file.take(MAX_CONFIG_BYTES).read_to_string(&mut text)?;
+    Ok(Some(text))
 }
 
 /// Full pure resolver. Applies CLI overrides after the file-derived defaults.
@@ -164,17 +189,13 @@ fn resolve_words_section(
     };
     let pool = match words.pool.as_deref() {
         None => WordPool::Common,
-        Some(name) => match name.to_lowercase().as_str() {
-            "common" | "small" => WordPool::Common,
-            "extended" | "big" | "10000" | "10k" => WordPool::Extended,
-            other => {
-                warnings.push(format!(
-                    "unknown word pool '{}', falling back to 'common'",
-                    other
-                ));
-                WordPool::Common
-            }
-        },
+        Some(name) => word_pool(name).unwrap_or_else(|| {
+            warnings.push(format!(
+                "unknown word pool '{}', falling back to 'common'",
+                name.to_lowercase()
+            ));
+            WordPool::Common
+        }),
     };
     let decor = WordDecor {
         punctuation: words.punctuation.unwrap_or(false),
@@ -214,6 +235,24 @@ fn apply_color_overrides(
     palette
 }
 
+/// The `[words] pool` names (case-insensitive). `None` for anything else.
+pub fn word_pool(name: &str) -> Option<WordPool> {
+    match name.to_lowercase().as_str() {
+        "common" | "small" => Some(WordPool::Common),
+        "extended" | "big" | "10000" | "10k" => Some(WordPool::Extended),
+        _ => None,
+    }
+}
+
+/// The `[defaults] mode` names, in menu order.
+pub const MODE_NAMES: [&str; 7] = ["time", "words", "quote", "code", "zen", "symbols", "daily"];
+
+/// Built-in defaults for the `[defaults]` counts: what a time, words or
+/// symbols run starts with when the config doesn't say.
+pub const DEFAULT_SECONDS: u64 = 15;
+pub const DEFAULT_WORDS: usize = 25;
+pub const DEFAULT_SYMBOLS: usize = 25;
+
 /// Longest time run, in seconds: an hour.
 pub const MAX_SECONDS: u16 = 3600;
 /// Most words or symbol tokens in one run.
@@ -252,7 +291,7 @@ where
 
 fn resolve_default_mode(defaults: Option<&super::Defaults>, warnings: &mut Vec<String>) -> Mode {
     let Some(defaults) = defaults else {
-        return Mode::Time(15);
+        return Mode::Time(DEFAULT_SECONDS);
     };
     let mode_name = defaults.mode.as_deref().unwrap_or("time");
     match mode_name.to_lowercase().as_str() {
@@ -260,14 +299,14 @@ fn resolve_default_mode(defaults: Option<&super::Defaults>, warnings: &mut Vec<S
             "time_seconds",
             defaults.time_seconds,
             MAX_SECONDS,
-            15,
+            DEFAULT_SECONDS,
             warnings,
         )),
         "words" => Mode::Words(config_count(
             "word_count",
             defaults.word_count,
             MAX_COUNT,
-            25,
+            DEFAULT_WORDS,
             warnings,
         )),
         "quote" => Mode::Quote,
@@ -287,7 +326,7 @@ fn resolve_default_mode(defaults: Option<&super::Defaults>, warnings: &mut Vec<S
             "symbol_count",
             defaults.symbol_count,
             MAX_COUNT,
-            25,
+            DEFAULT_SYMBOLS,
             warnings,
         )),
         other => {
@@ -299,7 +338,7 @@ fn resolve_default_mode(defaults: Option<&super::Defaults>, warnings: &mut Vec<S
                 "time_seconds",
                 defaults.time_seconds,
                 MAX_SECONDS,
-                15,
+                DEFAULT_SECONDS,
                 warnings,
             ))
         }
@@ -337,6 +376,41 @@ mod tests {
                 ..Default::default()
             },
         )
+    }
+
+    /// The config is read like a custom file: only a regular file of at
+    /// most 1 MiB. A folder (or a pipe, a device) where config.toml should be
+    /// is a warning, not a hang; so is a huge file.
+    #[test]
+    fn config_must_be_a_small_regular_file() {
+        let dir = tempfile::tempdir().unwrap();
+        let folder = dir.path().join("config.toml");
+        std::fs::create_dir(&folder).unwrap();
+        let (_, warnings) = load_from(&folder, CliOverrides::default());
+        assert!(warnings[0].contains("not a regular file"), "{warnings:?}");
+
+        let huge = dir.path().join("huge.toml");
+        let file = std::fs::File::create(&huge).unwrap();
+        file.set_len(MAX_CONFIG_BYTES + 1).unwrap();
+        let (resolved, warnings) = load_from(&huge, CliOverrides::default());
+        assert!(warnings[0].contains("too big"), "{warnings:?}");
+        assert_eq!(resolved, ResolvedConfig::default());
+    }
+
+    /// Every mode name the config documents resolves without a warning.
+    #[test]
+    fn every_mode_name_resolves() {
+        for name in MODE_NAMES {
+            let raw = Config {
+                defaults: Some(Defaults {
+                    mode: Some(name.into()),
+                    ..Default::default()
+                }),
+                ..Default::default()
+            };
+            let (_, warnings) = resolve(raw, None);
+            assert!(warnings.is_empty(), "{name}: {warnings:?}");
+        }
     }
 
     #[test]

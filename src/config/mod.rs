@@ -10,7 +10,7 @@
 //! theme = "monokai"            # built-in name: dark | light | monokai | dracula
 //!
 //! [defaults]
-//! mode = "time"                 # time | words | quote | code | zen | symbols
+//! mode = "time"                 # time | words | quote | code | zen | symbols | daily
 //! time_seconds = 15             # default duration for time mode
 //! word_count = 25               # default count for words mode
 //! code_lang = "rust"            # rust | python | js | go | java | sql | shell
@@ -29,6 +29,7 @@
 //! Complete inline docs for every knob live in `config.example.toml` at the
 //! repo root; keep the two in sync when adding a new field.
 
+pub mod edit;
 pub mod load;
 
 use serde::Deserialize;
@@ -173,7 +174,7 @@ not_a_real_slot = "red"
     fn shipped_example_config_round_trips() {
         let example = include_str!("../../config.example.toml");
         let cfg: Config = toml::from_str(example).expect("config.example.toml must parse");
-        assert_eq!(cfg.theme.as_deref(), Some("monokai"));
+        assert_eq!(cfg.theme.as_deref(), Some("dark"));
         let defaults = cfg.defaults.expect("defaults section");
         assert_eq!(defaults.mode.as_deref(), Some("time"));
         assert_eq!(defaults.time_seconds, Some(15));

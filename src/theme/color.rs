@@ -72,6 +72,34 @@ fn parse_named(name: &str) -> Result<Color> {
     }
 }
 
+/// `color` written the way [`parse_color`] reads it: `#RRGGBB`, an ANSI
+/// name (`dark_gray`) or `reset` — for printing config values.
+pub fn color_name(color: Color) -> String {
+    let name = match color {
+        Color::Rgb(red, green, blue) => return format!("#{red:02X}{green:02X}{blue:02X}"),
+        Color::Black => "black",
+        Color::Red => "red",
+        Color::Green => "green",
+        Color::Yellow => "yellow",
+        Color::Blue => "blue",
+        Color::Magenta => "magenta",
+        Color::Cyan => "cyan",
+        Color::Gray => "gray",
+        Color::DarkGray => "dark_gray",
+        Color::LightRed => "light_red",
+        Color::LightGreen => "light_green",
+        Color::LightYellow => "light_yellow",
+        Color::LightBlue => "light_blue",
+        Color::LightMagenta => "light_magenta",
+        Color::LightCyan => "light_cyan",
+        Color::White => "white",
+        Color::Reset => "reset",
+        // Never produced by `parse_color` or a built-in theme.
+        Color::Indexed(index) => return format!("indexed {index}"),
+    };
+    name.to_string()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -123,6 +151,26 @@ mod tests {
         for bad in ["#aé€", "#ééé", "#+F+F+F", "#-1-1-1", "# FFFFF"] {
             assert!(parse_color(bad).is_err(), "{bad:?}");
         }
+    }
+
+    /// Every color a theme or the parser makes is written back in a form
+    /// the parser reads as the same color.
+    #[test]
+    fn color_names_read_back() {
+        let mut colors = vec![Color::Rgb(0x0A, 0xBC, 0xFF), Color::Reset];
+        for (_, palette) in crate::theme::builtin::ALL {
+            colors.extend([palette.accent, palette.pending, palette.background]);
+        }
+        colors.extend([
+            Color::DarkGray,
+            Color::LightMagenta,
+            Color::Gray,
+            Color::White,
+        ]);
+        for color in colors {
+            assert_eq!(parse_color(&color_name(color)).unwrap(), color, "{color:?}");
+        }
+        assert_eq!(color_name(Color::Rgb(255, 0, 15)), "#FF000F");
     }
 
     #[test]

@@ -143,6 +143,11 @@ struct Cli {
     #[arg(long)]
     list_snippets: bool,
 
+    /// Write a starter ~/.typerush/config.toml (every setting at its
+    /// default, explained) and exit. Same as `typerush config init`.
+    #[arg(long)]
+    init_config: bool,
+
     #[command(subcommand)]
     command: Option<commands::Command>,
 }
@@ -180,10 +185,20 @@ fn main() -> Result<()> {
     if cli.list_snippets {
         print_snippets_and_exit();
     }
-    if let Some(command) = &cli.command {
+    // `--init-config` is `typerush config init`, under the name people look
+    // for first.
+    let init = commands::Command::Config {
+        action: commands::ConfigAction::Init,
+    };
+    let command = cli.command.as_ref().or(cli.init_config.then_some(&init));
+    if let Some(command) = command {
+        let files = commands::Files {
+            stats: &storage::stats_path(),
+            config: &config::load::config_path(),
+        };
         let result = commands::run(
             command,
-            &storage::stats_path(),
+            &files,
             &mut stdout().lock(),
             &mut std::io::stderr().lock(),
         );
