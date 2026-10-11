@@ -41,7 +41,7 @@ pub fn render(f: &mut Frame, app: &App, screen: Rect) -> &'static [super::Hint] 
         Line::from("  Tab  s           stats (only Tab on results)"),
         Line::from("  c                menu: settings"),
         Line::from("  Enter  e         stats: replay, export CSV"),
-        Line::from("  a  PgUp/Dn       stats: all sessions, scroll"),
+        Line::from("  a d w s r        stats: all/dates/words/sort"),
         Line::from("  ?  F1            help (only F1 on results)"),
         Line::from("  Ctrl+C           quit"),
         Line::from("  Mouse            click options, rows, hints;"),

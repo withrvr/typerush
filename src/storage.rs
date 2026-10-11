@@ -521,8 +521,18 @@ pub struct ModeBest {
 /// code, symbols, custom, daily, quote, then anything else; numbers in numeric
 /// order within a family (`time-15s` before `time-120s`).
 pub fn bests_by_mode(sessions: &[SessionRecord]) -> Vec<ModeBest> {
+    bests_among(sessions, 0..sessions.len())
+}
+
+/// [`bests_by_mode`] over only the sessions at `indices` of `sessions`
+/// (a filtered history); `best_index` is still an index into `sessions`.
+pub fn bests_among(
+    sessions: &[SessionRecord],
+    indices: impl IntoIterator<Item = usize>,
+) -> Vec<ModeBest> {
     let mut by_mode: HashMap<&str, ModeBest> = HashMap::new();
-    for (index, session) in sessions.iter().enumerate() {
+    for index in indices {
+        let session = &sessions[index];
         let best = by_mode.entry(&session.mode).or_insert_with(|| ModeBest {
             mode: session.mode.clone(),
             best_index: index,
@@ -570,6 +580,215 @@ fn mode_sort_key(mode: &str) -> (usize, String, u64, String) {
     )
 }
 
+/// How far back the Stats screen looks, in calendar days ending today.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum DateRange {
+    #[default]
+    All,
+    Today,
+    Week,
+    Month,
+    Year,
+}
+
+impl DateRange {
+    const ORDER: [DateRange; 5] = [
+        DateRange::All,
+        DateRange::Today,
+        DateRange::Week,
+        DateRange::Month,
+        DateRange::Year,
+    ];
+
+    pub fn label(self) -> &'static str {
+        match self {
+            DateRange::All => "all time",
+            DateRange::Today => "today",
+            DateRange::Week => "7 days",
+            DateRange::Month => "30 days",
+            DateRange::Year => "a year",
+        }
+    }
+
+    /// Calendar days included, today counted; `None` for all time.
+    fn days(self) -> Option<u64> {
+        match self {
+            DateRange::All => None,
+            DateRange::Today => Some(1),
+            DateRange::Week => Some(7),
+            DateRange::Month => Some(30),
+            DateRange::Year => Some(365),
+        }
+    }
+}
+
+/// Which word settings a session was played with (its label's `+10k`,
+/// `+p`, `+n`; other modes count as plain).
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum WordsFilter {
+    #[default]
+    Any,
+    Plain,
+    Punctuation,
+    Numbers,
+    Big,
+}
+
+impl WordsFilter {
+    const ORDER: [WordsFilter; 5] = [
+        WordsFilter::Any,
+        WordsFilter::Plain,
+        WordsFilter::Punctuation,
+        WordsFilter::Numbers,
+        WordsFilter::Big,
+    ];
+
+    pub fn label(self) -> &'static str {
+        match self {
+            WordsFilter::Any => "any",
+            WordsFilter::Plain => "plain",
+            WordsFilter::Punctuation => "+p",
+            WordsFilter::Numbers => "+n",
+            WordsFilter::Big => "+10k",
+        }
+    }
+
+    fn keeps(self, mode: &str) -> bool {
+        let suffixes: Vec<&str> = mode.split('+').skip(1).collect();
+        match self {
+            WordsFilter::Any => true,
+            WordsFilter::Plain => !suffixes.iter().any(|s| ["10k", "p", "n"].contains(s)),
+            WordsFilter::Punctuation => suffixes.contains(&"p"),
+            WordsFilter::Numbers => suffixes.contains(&"n"),
+            WordsFilter::Big => suffixes.contains(&"10k"),
+        }
+    }
+}
+
+/// What the sessions list is sorted by.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum SortBy {
+    #[default]
+    Date,
+    Wpm,
+    Raw,
+    Accuracy,
+    Consistency,
+    Time,
+}
+
+impl SortBy {
+    const ORDER: [SortBy; 6] = [
+        SortBy::Date,
+        SortBy::Wpm,
+        SortBy::Raw,
+        SortBy::Accuracy,
+        SortBy::Consistency,
+        SortBy::Time,
+    ];
+
+    pub fn label(self) -> &'static str {
+        match self {
+            SortBy::Date => "date",
+            SortBy::Wpm => "wpm",
+            SortBy::Raw => "raw",
+            SortBy::Accuracy => "accuracy",
+            SortBy::Consistency => "consistency",
+            SortBy::Time => "time",
+        }
+    }
+
+    /// The figure sorted on; `None` (no consistency on a short or old run)
+    /// always sorts last.
+    fn key(self, session: &SessionRecord) -> Option<f64> {
+        match self {
+            SortBy::Date => Some(session.timestamp.timestamp_millis() as f64),
+            SortBy::Wpm => Some(session.wpm),
+            SortBy::Raw => session.raw_wpm(),
+            SortBy::Accuracy => Some(session.accuracy),
+            SortBy::Consistency => session.consistency,
+            SortBy::Time => Some(session.duration_secs),
+        }
+    }
+}
+
+/// The item after `current` in `order`, wrapping.
+fn next_in<T: Copy + PartialEq>(order: &[T], current: T) -> T {
+    let at = order.iter().position(|&item| item == current).unwrap_or(0);
+    order[(at + 1) % order.len()]
+}
+
+/// The Stats screen's filters and sort, kept across categories and visits.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct Filters {
+    pub range: DateRange,
+    pub words: WordsFilter,
+    pub sort: SortBy,
+    /// Smallest first; the default is largest (newest) first.
+    pub ascending: bool,
+}
+
+impl Filters {
+    /// The next date range (`d`).
+    pub fn next_range(self) -> Self {
+        Self {
+            range: next_in(&DateRange::ORDER, self.range),
+            ..self
+        }
+    }
+
+    /// The next word-settings filter (`w`).
+    pub fn next_words(self) -> Self {
+        Self {
+            words: next_in(&WordsFilter::ORDER, self.words),
+            ..self
+        }
+    }
+
+    /// The next sort (`s`), largest first again.
+    pub fn next_sort(self) -> Self {
+        Self {
+            sort: next_in(&SortBy::ORDER, self.sort),
+            ascending: false,
+            ..self
+        }
+    }
+
+    /// The same sort the other way round (`r`).
+    pub fn reversed(self) -> Self {
+        Self {
+            ascending: !self.ascending,
+            ..self
+        }
+    }
+
+    /// Whether anything is filtered out.
+    pub fn filtering(self) -> bool {
+        self.range != DateRange::All || self.words != WordsFilter::Any
+    }
+
+    /// Whether `session` passes the date range (as of `today`) and words.
+    fn keeps(self, session: &SessionRecord, today: chrono::NaiveDate) -> bool {
+        let recent = self.range.days().is_none_or(|days| {
+            session.timestamp.date_naive() >= today - chrono::Days::new(days - 1)
+        });
+        recent && self.words.keeps(&session.mode)
+    }
+
+    /// `indices` (oldest first) in the order the list shows them. Ties —
+    /// and every run without the figure, always last — newest first.
+    fn sorted(self, history: &[SessionRecord], indices: &[usize]) -> Vec<usize> {
+        let mut order: Vec<usize> = indices.iter().rev().copied().collect();
+        let key = |&i: &usize| self.sort.key(&history[i]);
+        order.sort_by(|a, b| match (key(a), key(b)) {
+            (Some(x), Some(y)) if self.ascending => x.total_cmp(&y),
+            (Some(x), Some(y)) => y.total_cmp(&x),
+            (a, b) => b.is_some().cmp(&a.is_some()),
+        });
+        order
+    }
+}
+
 /// What the Stats screen is showing: a category, its sessions and summary,
 /// and every mode's best.
 #[derive(Debug, Default)]
@@ -578,8 +797,16 @@ pub struct StatsView {
     pub bests: Vec<ModeBest>,
     /// 0 = every session, 1 = the bests table, `2 + i` = `bests[i].mode` only.
     pub category: usize,
-    /// History indices of the category's sessions, oldest first.
+    /// History indices of the category's sessions that pass the filters,
+    /// oldest first: what the summary and trend are drawn from.
     pub indices: Vec<usize>,
+    /// The same sessions in the order the list shows them (the sort).
+    pub order: Vec<usize>,
+    /// The bests table's rows: each mode's best among the sessions that
+    /// pass the filters (`bests`, unfiltered, are the categories and ★).
+    pub table_bests: Vec<ModeBest>,
+    /// Date range, word settings and sort.
+    pub filters: Filters,
     /// Summary of the category's sessions.
     pub summary: StatsSummary,
     /// History indices of the sessions holding a mode's best (marked ★).
@@ -594,13 +821,15 @@ pub struct StatsView {
 
 impl StatsView {
     /// The view of `history`, on the category named `category` if there
-    /// still is one (`"all"`, `"bests"` or a mode label), else on all.
-    pub fn new(history: &[SessionRecord], category: Option<&str>) -> Self {
+    /// still is one (`"all"`, `"bests"` or a mode label), else on all, with
+    /// `filters` applied.
+    pub fn new(history: &[SessionRecord], category: Option<&str>, filters: Filters) -> Self {
         let bests = bests_by_mode(history);
         let best_indices = bests.iter().map(|best| best.best_index).collect();
         let mut view = Self {
             bests,
             best_indices,
+            filters,
             ..Self::default()
         };
         let index = (0..view.category_count())
@@ -633,24 +862,36 @@ impl StatsView {
         self.category == 1
     }
 
-    /// Switch to category `index` (wrapping), recomputing its summary.
+    /// Switch to category `index` (wrapping), recomputing its sessions,
+    /// summary and bests under the filters; back to the first row.
     pub fn select(&mut self, history: &[SessionRecord], index: usize) {
         self.category = index % self.category_count();
         let mode = (self.category >= 2).then(|| self.bests[self.category - 2].mode.as_str());
+        let today = Local::now().date_naive();
         self.indices = (0..history.len())
             .filter(|&i| mode.is_none_or(|mode| history[i].mode == mode))
+            .filter(|&i| self.filters.keeps(&history[i], today))
             .collect();
         self.summary = StatsSummary::new(self.indices.iter().map(|&i| &history[i]));
+        self.order = self.filters.sorted(history, &self.indices);
+        self.table_bests = bests_among(history, self.indices.iter().copied());
         self.selected = 0;
         self.scroll.set(0);
+    }
+
+    /// Apply `filters` (a new range, word settings or sort), staying on the
+    /// same category.
+    pub fn set_filters(&mut self, history: &[SessionRecord], filters: Filters) {
+        self.filters = filters;
+        self.select(history, self.category);
     }
 
     /// Rows in the list showing: the category's sessions, or one per mode.
     pub fn row_count(&self) -> usize {
         if self.showing_bests() {
-            self.bests.len()
+            self.table_bests.len()
         } else {
-            self.indices.len()
+            self.order.len()
         }
     }
 
@@ -658,10 +899,12 @@ impl StatsView {
     /// on the bests table the run holding that mode's best.
     pub fn selected_session(&self) -> Option<usize> {
         if self.showing_bests() {
-            return self.bests.get(self.selected).map(|best| best.best_index);
+            return self
+                .table_bests
+                .get(self.selected)
+                .map(|best| best.best_index);
         }
-        let newest_first = self.indices.len().checked_sub(self.selected + 1)?;
-        self.indices.get(newest_first).copied()
+        self.order.get(self.selected).copied()
     }
 
     /// Next (or previous) category, wrapping around.
@@ -1738,7 +1981,7 @@ mod tests {
         ];
         sessions[0].duration_secs = 30.0;
         sessions[2].duration_secs = 30.5;
-        let mut view = StatsView::new(&sessions, None);
+        let mut view = StatsView::new(&sessions, None, Filters::default());
         assert_eq!(view.category_count(), 4);
         assert_eq!((view.category_name(), view.indices.len()), ("all", 3));
         assert_eq!(view.summary.personal_best, Some(80.0));
@@ -1758,22 +2001,109 @@ mod tests {
         view.cycle(&sessions, false);
         assert_eq!(view.category_name(), "words-25"); // wrapped
 
-        let again = StatsView::new(&sessions, Some("time-30s"));
+        let again = StatsView::new(&sessions, Some("time-30s"), Filters::default());
         assert_eq!(again.category_name(), "time-30s");
-        let gone = StatsView::new(&sessions, Some("zen"));
+        let gone = StatsView::new(&sessions, Some("zen"), Filters::default());
         assert_eq!(gone.category_name(), "all");
     }
 
     /// An empty history still has the two fixed categories.
     #[test]
     fn stats_view_of_empty_history() {
-        let mut view = StatsView::new(&[], Some("bests"));
+        let mut view = StatsView::new(&[], Some("bests"), Filters::default());
         assert!(view.showing_bests());
         view.cycle(&[], true);
         assert_eq!(view.category_name(), "all");
         view.move_selection(5);
         assert_eq!(view.selected, 0);
         assert_eq!(view.selected_session(), None);
+    }
+
+    /// The date range counts calendar days ending today; the words filter
+    /// reads the label's suffixes (a replay's `+replay` doesn't count, and
+    /// modes without word settings are plain).
+    #[test]
+    fn filters_keep_by_date_and_word_settings() {
+        let today = Local::now().date_naive();
+        let at = |mode: &str, days| make_record(50.0, mode, days);
+        let keeps = |filters: Filters, record: &SessionRecord| filters.keeps(record, today);
+        let range = |range| Filters {
+            range,
+            ..Filters::default()
+        };
+        assert!(keeps(range(DateRange::Today), &at("quote", 0)));
+        assert!(!keeps(range(DateRange::Today), &at("quote", 1)));
+        assert!(keeps(range(DateRange::Week), &at("quote", 6)));
+        assert!(!keeps(range(DateRange::Week), &at("quote", 7)));
+        assert!(keeps(range(DateRange::Year), &at("quote", 364)));
+        assert!(keeps(range(DateRange::All), &at("quote", 4000)));
+
+        let words = |words| Filters {
+            words,
+            ..Filters::default()
+        };
+        assert!(keeps(words(WordsFilter::Plain), &at("time-30s", 0)));
+        assert!(keeps(words(WordsFilter::Plain), &at("code-rust+replay", 0)));
+        assert!(!keeps(words(WordsFilter::Plain), &at("time-30s+n", 0)));
+        assert!(keeps(
+            words(WordsFilter::Punctuation),
+            &at("words-50+10k+p", 0)
+        ));
+        assert!(!keeps(
+            words(WordsFilter::Punctuation),
+            &at("words-50+10k", 0)
+        ));
+        assert!(keeps(words(WordsFilter::Big), &at("words-50+10k", 0)));
+        assert!(keeps(
+            words(WordsFilter::Numbers),
+            &at("time-15s+n+replay", 0)
+        ));
+    }
+
+    /// The list sorts by the chosen figure, largest first unless reversed;
+    /// runs without it (no consistency) always come last, ties newest
+    /// first. Summary, trend and bests use the filtered sessions; the ★
+    /// stays on each mode's best of all time.
+    #[test]
+    fn stats_view_filters_and_sorts() {
+        let mut sessions = vec![
+            make_record(40.0, "time-30s", 40),
+            make_record(70.0, "time-30s+p", 3),
+            make_record(55.0, "time-30s", 1),
+            make_record(55.0, "words-25", 0),
+        ];
+        sessions[1].consistency = Some(60.0);
+        sessions[2].consistency = Some(90.0);
+        let mut view = StatsView::new(&sessions, None, Filters::default());
+        assert_eq!(view.order, [3, 2, 1, 0], "newest first");
+
+        view.set_filters(&sessions, view.filters.next_sort()); // wpm ↓
+        assert_eq!(view.order, [1, 3, 2, 0], "ties newest first");
+        view.set_filters(&sessions, view.filters.reversed()); // wpm ↑
+        assert_eq!(view.order, [0, 3, 2, 1]);
+        let consistency = Filters {
+            sort: SortBy::Consistency,
+            ..Filters::default()
+        };
+        view.set_filters(&sessions, consistency);
+        assert_eq!(view.order, [2, 1, 3, 0], "no figure last");
+        view.set_filters(&sessions, consistency.reversed());
+        assert_eq!(view.order, [1, 2, 3, 0], "no figure last either way");
+
+        let week_plain = Filters {
+            range: DateRange::Week,
+            words: WordsFilter::Plain,
+            ..Filters::default()
+        };
+        view.set_filters(&sessions, week_plain);
+        assert_eq!(view.indices, [2, 3]);
+        assert_eq!(view.summary.sessions, 2);
+        assert_eq!(view.selected_session(), Some(3));
+        view.cycle(&sessions, true); // bests, under the same filters
+        let bests: Vec<_> = view.table_bests.iter().map(|b| b.best_index).collect();
+        assert_eq!(bests, [2, 3]);
+        assert_eq!(view.best_indices, [1, 2, 3].into(), "★ ignores the filters");
+        assert!(view.filters.filtering());
     }
 
     /// The selection walks the list showing, stops at its ends, and names
@@ -1786,7 +2116,7 @@ mod tests {
             make_record(70.0, "words-25", 1),
             make_record(50.0, "time-30s", 0),
         ];
-        let mut view = StatsView::new(&sessions, None);
+        let mut view = StatsView::new(&sessions, None, Filters::default());
         assert_eq!(view.selected_session(), Some(2), "newest first");
         view.move_selection(1);
         assert_eq!(view.selected_session(), Some(1));

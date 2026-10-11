@@ -194,7 +194,7 @@ one pull request:
    incorrect / missed) on Results, saved with every session
 3. ✅ Results chart: WPM, raw speed and errors second by second for the
    session you just finished ([#4](https://github.com/withrvr/typerush/issues/4))
-4. 🔲 History: raw WPM and consistency columns; filters by date range and
+4. ✅ History: raw WPM and consistency columns; filters by date range and
    word settings (the mode is the category), sortable by date, WPM,
    accuracy, raw, consistency or time
 5. 🔲 Level and experience points, earned from time spent typing; the XP a

@@ -389,7 +389,11 @@ mod tests {
         app.stats_cache = Some(history);
         app.screen = crate::app::Screen::Stats;
         let sessions = app.stats_cache.as_deref().unwrap();
-        app.stats_view = Some(crate::storage::StatsView::new(sessions, None));
+        app.stats_view = Some(crate::storage::StatsView::new(
+            sessions,
+            None,
+            Default::default(),
+        ));
 
         let rows = stats_rows(&app);
         let dump = rows.join("\n");
@@ -439,7 +443,11 @@ mod tests {
         let mut app = App::new(None, builtin::DARK, Mode::Time(15));
         app.stats_cache = Some((0..13).map(|_| record(50.0, "time-30s")).collect());
         app.screen = crate::app::Screen::Stats;
-        let view = crate::storage::StatsView::new(app.stats_cache.as_deref().unwrap(), None);
+        let view = crate::storage::StatsView::new(
+            app.stats_cache.as_deref().unwrap(),
+            None,
+            Default::default(),
+        );
         view.scroll.set(3);
         app.stats_view = Some(view);
         let mut terminal = Terminal::new(TestBackend::new(80, 3)).unwrap();
@@ -609,7 +617,11 @@ mod tests {
         ]);
         app.screen = crate::app::Screen::Stats;
         let sessions = app.stats_cache.as_deref().unwrap();
-        app.stats_view = Some(crate::storage::StatsView::new(sessions, None));
+        app.stats_view = Some(crate::storage::StatsView::new(
+            sessions,
+            None,
+            Default::default(),
+        ));
         let mut columns = Vec::new();
         for _ in 0..app.stats_view.as_ref().unwrap().category_count() {
             let rows = stats_rows(&app);

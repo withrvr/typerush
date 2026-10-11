@@ -714,7 +714,9 @@ fn handle_results_key(app: &mut App, code: KeyCode, mods: KeyModifiers) {
 
 /// Keymap for the historical stats screen: ←/→ (h/l) pick a category, `a`
 /// shows all sessions, ↑/↓ (j/k), PgUp/PgDn and Home/End move the
-/// selection, Enter replays the selected session, `e` exports CSV.
+/// selection, Enter replays the selected session, `e` exports CSV; `d`,
+/// `w`, `s` and `r` change the date range, word settings, sort and its
+/// direction.
 fn handle_stats_key(app: &mut App, code: KeyCode, _mods: KeyModifiers) {
     let history = app.stats_cache.as_deref().unwrap_or(&[]);
     if let Some(view) = app.stats_view.as_mut() {
@@ -722,6 +724,10 @@ fn handle_stats_key(app: &mut App, code: KeyCode, _mods: KeyModifiers) {
             KeyCode::Left | KeyCode::Char('h') => return view.cycle(history, false),
             KeyCode::Right | KeyCode::Char('l') => return view.cycle(history, true),
             KeyCode::Char('a') => return view.select(history, 0),
+            KeyCode::Char('d') => return view.set_filters(history, view.filters.next_range()),
+            KeyCode::Char('w') => return view.set_filters(history, view.filters.next_words()),
+            KeyCode::Char('s') => return view.set_filters(history, view.filters.next_sort()),
+            KeyCode::Char('r') => return view.set_filters(history, view.filters.reversed()),
             KeyCode::Up | KeyCode::Char('k') => return view.move_selection(-1),
             KeyCode::Down | KeyCode::Char('j') => return view.move_selection(1),
             KeyCode::PageUp => return view.move_selection(-10),
@@ -826,8 +832,17 @@ fn after_input(app: &mut App, last_screen: Screen, session_saved: &mut bool, sta
                 .as_ref()
                 .map(|view| view.category_name().to_string())
         };
+        // The filters and sort stay as they were.
+        let filters = app
+            .stats_view
+            .as_ref()
+            .map_or_else(Default::default, |view| view.filters);
         let sessions = app.stats_cache.as_deref().unwrap_or(&[]);
-        app.stats_view = Some(storage::StatsView::new(sessions, category.as_deref()));
+        app.stats_view = Some(storage::StatsView::new(
+            sessions,
+            category.as_deref(),
+            filters,
+        ));
     }
 }
 
@@ -2009,6 +2024,60 @@ mod tests {
             rows.contains("4 correct  ·  1 incorrect  ·  6 missed"),
             "{rows}"
         );
+    }
+
+    /// `d`, `w`, `s` and `r` (or their chips on the table's border) change
+    /// the Stats filters and sort, which stay when you come back.
+    #[test]
+    fn stats_filters_by_key_and_click_and_stay() {
+        let mut app = App::new(None, ThemePalette::default(), Mode::Time(15));
+        app.stats_cache = Some(vec![
+            SessionRecord {
+                wpm: 40.0,
+                mode: "time-30s".into(),
+                timestamp: chrono::Local::now(),
+                ..SessionRecord::default()
+            },
+            SessionRecord {
+                wpm: 90.0,
+                mode: "time-30s+p".into(),
+                timestamp: chrono::Local::now(),
+                ..SessionRecord::default()
+            },
+        ]);
+        app.screen = Screen::Stats;
+        after_input(&mut app, Screen::Menu, &mut false, Path::new("unused"));
+        let filters = |app: &App| app.stats_view.as_ref().unwrap().filters;
+        handle_key(&mut app, KeyCode::Char('d'), KeyModifiers::NONE);
+        assert_eq!(filters(&app).range, storage::DateRange::Today);
+        handle_key(&mut app, KeyCode::Char('s'), KeyModifiers::NONE);
+        handle_key(&mut app, KeyCode::Char('r'), KeyModifiers::NONE);
+        assert_eq!(filters(&app).sort, storage::SortBy::Wpm);
+        assert!(filters(&app).ascending);
+
+        draw(&app);
+        let words = ClickAction::Key(KeyCode::Char('w'), KeyModifiers::NONE);
+        let chip = target_cell(&app, words);
+        click(&mut app, chip);
+        assert_eq!(filters(&app).words, storage::WordsFilter::Plain);
+        assert_eq!(app.stats_view.as_ref().unwrap().order, [0]);
+        let rows = screen(&app, 80, 24).join("\n");
+        assert!(
+            rows.contains("d dates today   w words plain   s sort wpm ↑"),
+            "{rows}"
+        );
+
+        handle_key(&mut app, KeyCode::Esc, KeyModifiers::NONE);
+        after_input(&mut app, Screen::Stats, &mut false, Path::new("unused"));
+        handle_key(&mut app, KeyCode::Char('s'), KeyModifiers::NONE);
+        after_input(&mut app, Screen::Menu, &mut false, Path::new("unused"));
+        assert_eq!(filters(&app).words, storage::WordsFilter::Plain, "kept");
+
+        handle_key(&mut app, KeyCode::Char('d'), KeyModifiers::NONE); // 7 days
+        handle_key(&mut app, KeyCode::Char('w'), KeyModifiers::NONE); // +p
+        handle_key(&mut app, KeyCode::Char('w'), KeyModifiers::NONE); // +n
+        let rows = screen(&app, 80, 24).join("\n");
+        assert!(rows.contains("sessions · none match"), "{rows}");
     }
 
     // ── saving ───────────────────────────────────────────────────────────────
