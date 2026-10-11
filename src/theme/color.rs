@@ -32,19 +32,16 @@ pub fn parse_color(input: &str) -> Result<Color> {
 }
 
 fn parse_hex(hex: &str) -> Result<Color> {
-    if hex.len() != 6 {
+    // Checked as characters first: slicing by byte would panic inside a
+    // multi-byte character, and `from_str_radix` alone would accept a sign.
+    if hex.len() != 6 || !hex.bytes().all(|b| b.is_ascii_hexdigit()) {
         return Err(anyhow!(
-            "hex color must be exactly 6 characters after '#', got '{}'",
+            "hex color must be '#' and exactly 6 hex digits (0-9, a-f), got '#{}'",
             hex
         ));
     }
-    let red = u8::from_str_radix(&hex[0..2], 16)
-        .map_err(|_| anyhow!("invalid red byte in hex color '#{}'", hex))?;
-    let green = u8::from_str_radix(&hex[2..4], 16)
-        .map_err(|_| anyhow!("invalid green byte in hex color '#{}'", hex))?;
-    let blue = u8::from_str_radix(&hex[4..6], 16)
-        .map_err(|_| anyhow!("invalid blue byte in hex color '#{}'", hex))?;
-    Ok(Color::Rgb(red, green, blue))
+    let byte = |i: usize| u8::from_str_radix(&hex[i..i + 2], 16).unwrap_or(0);
+    Ok(Color::Rgb(byte(0), byte(2), byte(4)))
 }
 
 fn parse_named(name: &str) -> Result<Color> {
@@ -116,6 +113,16 @@ mod tests {
     #[test]
     fn rejects_invalid_hex_chars() {
         assert!(parse_color("#GGGGGG").is_err());
+    }
+
+    /// Regression: a six-*byte* string that isn't six hex digits used to be
+    /// sliced by byte, panicking inside a multi-byte character (`#aé€`), and
+    /// a sign was read as part of the number (`#+F+F+F`).
+    #[test]
+    fn rejects_non_hex_bytes_without_panicking() {
+        for bad in ["#aé€", "#ééé", "#+F+F+F", "#-1-1-1", "# FFFFF"] {
+            assert!(parse_color(bad).is_err(), "{bad:?}");
+        }
     }
 
     #[test]
