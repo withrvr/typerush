@@ -192,7 +192,7 @@ one pull request:
 2. ✅ Raw WPM (every keystroke, errors included), consistency (how even
    your speed was, second by second) and a character breakdown (correct /
    incorrect / missed) on Results, saved with every session
-3. 🔲 Results chart: WPM, raw speed and errors second by second for the
+3. ✅ Results chart: WPM, raw speed and errors second by second for the
    session you just finished ([#4](https://github.com/withrvr/typerush/issues/4))
 4. 🔲 History: raw WPM and consistency columns; filters by date range and
    word settings (the mode is the category), sortable by date, WPM,
