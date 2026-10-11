@@ -67,6 +67,14 @@ your best, type blind — and make TypeRush look the way you want.
   border's first cell.
 - **The help box has a blank line above and below its text** (two
   two-line entries became one line each, so it still fits 80×24 whole).
+- **A new launch video**, recorded from this version: the menu, a full run
+  and its chart, missed words, the pace cursor, blind mode, Stats and the
+  themes. The old v0.2 video and demo GIF are gone.
+- **The README is rewritten for new users:** what TypeRush is, a
+  step-by-step download for Windows, macOS and Linux, and the first keys.
+  Contributor material moved to `CONTRIBUTING.md` (now with ways to help
+  without code and a map of the docs); `docs/RELEASE.md` follows the
+  release workflow as it is.
 - Dependencies: crate patch updates (`serde_json`, `syn`, `cc`, `nix`,
   `mac_address`) and newer GitHub Actions (`checkout` v7,
   `upload-artifact` v7, `download-artifact` v8, `action-gh-release` v3).
