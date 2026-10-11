@@ -291,10 +291,10 @@ pub fn default_menu() -> Vec<MenuItem> {
 /// is one of the snippets) followed by every snippet; with neither, it shows
 /// a single placeholder option that explains how to add one.
 ///
-/// The v0.3 rows keep their order; the v0.4 `symbols` and `custom` rows and
-/// v0.5's `daily` sit between `zen` and the last row, which holds the
-/// actions that don't start a game (`stats`, `settings`, `quit`) side by
-/// side.
+/// Categories with several options come first (time, words, code, symbols,
+/// custom), then the single runs (daily, quote, zen), then one row with
+/// the actions that don't start a game (`stats`, `settings`, `quit`) side
+/// by side.
 pub fn build_menu(snippets: &[Snippet], last_custom_file: Option<&Path>) -> Vec<MenuItem> {
     use crate::words::CodeLang;
     let start = |group, label: &str, mode| MenuItem {
@@ -337,8 +337,6 @@ pub fn build_menu(snippets: &[Snippet], last_custom_file: Option<&Path>) -> Vec<
         start("code", "java", Mode::Code(CodeLang::Java)),
         start("code", "sql", Mode::Code(CodeLang::Sql)),
         start("code", "shell", Mode::Code(CodeLang::Shell)),
-        start("quote", "quote", Mode::Quote),
-        start("zen", "zen", Mode::Zen),
         start("symbols", "25", Mode::Symbols(25)),
         start("symbols", "50", Mode::Symbols(50)),
     ];
@@ -353,7 +351,10 @@ pub fn build_menu(snippets: &[Snippet], last_custom_file: Option<&Path>) -> Vec<
     if menu.last().is_some_and(|item| item.group != "custom") {
         menu.push(custom("custom".to_string(), None));
     }
+    // The rows with a choice of options come first, then the single runs.
     menu.push(start("daily", "daily", Mode::Daily));
+    menu.push(start("quote", "quote", Mode::Quote));
+    menu.push(start("zen", "zen", Mode::Zen));
 
     menu.push(other("stats", MenuAction::ShowStats));
     menu.push(other("settings", MenuAction::ShowSettings));
@@ -1277,9 +1278,11 @@ mod tests {
         app.menu_move_row(true);
         assert_eq!(app.menu[app.menu_index].label, "python");
         app.menu_move_row(true);
-        assert_eq!(app.menu[app.menu_index].label, "quote"); // clamped
+        assert_eq!(app.menu[app.menu_index].label, "50"); // symbols
+        app.menu_move_row(true);
+        assert_eq!(app.menu[app.menu_index].label, "custom"); // clamped
         app.menu_move_row(false);
-        assert_eq!(app.menu[app.menu_index].label, "rust");
+        assert_eq!(app.menu[app.menu_index].label, "25");
     }
 
     #[test]
@@ -1745,12 +1748,15 @@ mod tests {
             ["rust", "python", "javascript", "go", "java", "sql", "shell"]
         );
         assert_eq!(row("symbols"), ["25", "50"]);
-        // The new rows sit after zen, so the v0.3 rows keep their order.
-        let groups: Vec<&str> = menu.iter().map(|m| m.group).collect();
-        let zen = groups.iter().position(|g| *g == "zen").unwrap();
-        assert_eq!(groups[zen + 1], "symbols");
+        // Rows with a choice of options first, then the single runs, then
+        // the actions.
+        let mut groups: Vec<&str> = menu.iter().map(|m| m.group).collect();
+        groups.dedup();
+        assert_eq!(
+            groups,
+            ["time", "words", "code", "symbols", "custom", "daily", "quote", "zen", "app"]
+        );
         assert_eq!(row("daily"), ["daily"]);
-        assert_eq!(groups[groups.len() - 4], "daily");
         assert_eq!(row("app"), ["stats", "settings", "quit"]);
     }
 

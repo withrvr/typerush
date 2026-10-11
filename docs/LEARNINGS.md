@@ -128,7 +128,10 @@ rule that keeps it fixed).
   pushed the list past a standard terminal again. Instead of shrinking the
   banner, `stats`, `settings` and `quit` share one headless row — they are
   actions, not modes — which also reads better. `whole_menu_fits_80x24_at_launch`
-  caught it.
+  caught it. After using it, the order changed to categories first (time,
+  words, code, symbols, custom), then the single runs (daily, quote, zen):
+  the "keep old rows in place for ↑/↓" rule gave way to a menu that reads
+  in groups. `menu_offers_new_languages_and_symbols` pins the order.
 - **Footers have a width.** Stats gained Enter replay and e export; at
   80 columns something had to go, and `↑/↓` (obvious from the highlighted
   row, and in help) did. Count the footer's cells when adding a hint.

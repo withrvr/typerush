@@ -1167,10 +1167,10 @@ mod tests {
             .chunks(80)
             .map(|row| row.iter().map(|cell| cell.symbol()).collect())
             .collect();
-        // Selected last row is on screen, directly under "daily" (no gap).
+        // Selected last row is on screen, directly under "zen" (no gap).
         let quit_row = rows.iter().position(|r| r.contains(" quit ")).unwrap();
         assert!(rows[quit_row].contains("➤ stats "), "{rows:?}");
-        assert!(rows[quit_row - 1].contains("  daily"), "{rows:?}");
+        assert!(rows[quit_row - 1].contains("  zen"), "{rows:?}");
         target_cell(&app, ClickAction::Menu(quit)); // panics if not clickable
     }
 
@@ -1855,7 +1855,10 @@ mod tests {
         assert_eq!(app.menu[app.menu_index].label, "60s");
         press(&mut app, KeyCode::Left);
         press(&mut app, KeyCode::Left);
-        press(&mut app, KeyCode::Left); // wraps to the last run: daily
+        press(&mut app, KeyCode::Left); // wraps to the last run: zen
+        assert_eq!(app.settings.as_ref().unwrap().start, Mode::Zen);
+        press(&mut app, KeyCode::Left); // → quote
+        press(&mut app, KeyCode::Left); // → daily
         assert_eq!(app.settings.as_ref().unwrap().start, Mode::Daily);
         let (resolved, warnings) = config::load::load_from(&config_file, CliOverrides::default());
         assert!(warnings.is_empty(), "{warnings:?}");

@@ -486,7 +486,7 @@ pub struct ModeBest {
 }
 
 /// Every mode in `sessions` with its best, in menu order: time, words,
-/// code, quote, symbols, custom, daily, then anything else; numbers in numeric
+/// code, symbols, custom, daily, quote, then anything else; numbers in numeric
 /// order within a family (`time-15s` before `time-120s`).
 pub fn bests_by_mode(sessions: &[SessionRecord]) -> Vec<ModeBest> {
     let mut by_mode: HashMap<&str, ModeBest> = HashMap::new();
@@ -518,7 +518,7 @@ pub fn bests_by_mode(sessions: &[SessionRecord]) -> Vec<ModeBest> {
 /// number as a number, then the text around it.
 fn mode_sort_key(mode: &str) -> (usize, String, u64, String) {
     const FAMILIES: [&str; 7] = [
-        "time-", "words-", "code-", "quote", "symbols-", "custom", "daily",
+        "time-", "words-", "code-", "symbols-", "custom", "daily", "quote",
     ];
     let family = FAMILIES
         .iter()

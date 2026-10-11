@@ -405,8 +405,9 @@ crate. We don't directly use any platform-specific code, so the binary is a
 2. Pattern-match it inside `App::start_game` to pick a word source.
 3. Update `Mode::label` so it persists nicely in stats.
 4. Add an entry to `build_menu()` — items sharing a `group` render under one
-   heading, options side by side (wrapping when the row is too wide). New rows
-   go after the existing ones so ↑/↓ through the old rows doesn't change.
+   heading, options side by side (wrapping when the row is too wide). Rows
+   with a choice of options go with the other categories (time … custom),
+   a single run with daily, quote and zen; the actions row stays last.
 5. If it has a unique completion condition, handle it in `advance_word()` /
    `tick()`.
 6. (Optional) Add a CLI flag in `main.rs::Cli`.

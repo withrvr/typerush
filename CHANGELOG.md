@@ -56,8 +56,10 @@ your history as CSV, and settings you can change without opening a file.
 
 ### Changed
 
-- **`stats`, `settings` and `quit` share the last row of the menu,** so
-  the two new options still fit a standard 80×24 terminal.
+- **The menu lists categories first, then single runs:** time, words,
+  code, symbols, custom, then daily, quote, zen. `stats`, `settings` and
+  `quit` share the last row, so the two new options still fit a standard
+  80×24 terminal. The Stats bests table follows the same order.
 - **Stats lists have a selected row** (highlighted) that `↑` / `↓`, the
   mouse wheel and a click move; the list scrolls with it. The footer now
   offers `Enter replay` and `e export`.

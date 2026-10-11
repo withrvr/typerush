@@ -175,8 +175,9 @@ one pull request:
 
 - ✅ Stats lists have a selected row (keys, wheel, click) — what Enter
   replays
-- ✅ `stats`, `settings` and `quit` share the menu's last row, so the whole
-  menu still fits 80×24
+- ✅ Menu order: categories first (time, words, code, symbols, custom),
+  then single runs (daily, quote, zen); `stats`, `settings` and `quit`
+  share the last row, so the whole menu still fits 80×24
 - ✅ A notice box for messages that aren't errors (the export), `~` for
   the home folder in paths on screen
 - ✅ Fixed: a non-hex color in `[colors]` crashed at startup; a pipe or

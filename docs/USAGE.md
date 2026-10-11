@@ -179,10 +179,11 @@ needs `Shift` held while dragging.
 
 ### Main menu
 
-Modes are grouped by category. `time`, `words`, `code`, `symbols` and
-`custom` show a heading with their options on the line below (a row too wide
-for the menu continues on the next line); `quote`, `zen` and `daily` are
-single options, and `stats`, `settings` and `quit` share the last row:
+Modes are grouped by category, the ones with a choice of options first:
+`time`, `words`, `code`, `symbols` and `custom` show a heading with their
+options on the line below (a row too wide for the menu continues on the next
+line). Then come the single runs `daily`, `quote` and `zen`, and `stats`,
+`settings` and `quit` share the last row:
 
 ```mermaid
 flowchart TD
@@ -210,7 +211,7 @@ flowchart TD
         direction LR
         stats ~~~ settings ~~~ quit
     end
-    time ~~~ words ~~~ code ~~~ quote ~~~ zen ~~~ symbols ~~~ custom ~~~ daily ~~~ app
+    time ~~~ words ~~~ code ~~~ symbols ~~~ custom ~~~ daily ~~~ quote ~~~ zen ~~~ app
 ```
 
 The bottom border of the list shows the three word settings — `p
