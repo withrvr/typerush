@@ -3,7 +3,7 @@
 //! A `ThemePalette` is a flat struct of named color slots. Built-in palettes
 //! (dark / light / monokai / dracula) live in [`builtin`]; the user can also
 //! pick one by name in `~/.typerush/config.toml` and optionally override
-//! individual slots.
+//! individual slots, or add their own in `~/.typerush/themes/` ([`custom`]).
 //!
 //! All UI code reads from the active `ThemePalette` rather than hardcoding
 //! `Color::*`, so adding a new theme is a matter of dropping a `ThemePalette`
@@ -11,6 +11,7 @@
 
 pub mod builtin;
 pub mod color;
+pub mod custom;
 
 use ratatui::style::Color;
 

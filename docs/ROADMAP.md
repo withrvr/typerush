@@ -235,7 +235,7 @@ one pull request:
    a `missed` run is built from your most-missed recent words
 8. ✅ Idle detection: a run with a long stretch without a key (10 s by
    default) is not saved, and Results says why
-9. 🔲 Custom themes from files in `~/.typerush/themes/`, on top of a
+9. ✅ Custom themes from files in `~/.typerush/themes/`, on top of a
    built-in or from scratch, listed and picked like the built-in ones
 10. 🔲 Review, end-to-end test, docs, version 0.7.0
 

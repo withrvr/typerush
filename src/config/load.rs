@@ -323,7 +323,10 @@ fn resolve_words_section(
     (pool, decor)
 }
 
-fn apply_color_overrides(
+/// `overrides` applied on top of `palette`; a color that doesn't parse
+/// keeps the palette's slot and adds a warning. Custom theme files use it
+/// too (`theme::custom`).
+pub(crate) fn apply_color_overrides(
     mut palette: ThemePalette,
     overrides: &Colors,
     warnings: &mut Vec<String>,

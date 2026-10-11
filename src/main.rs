@@ -221,8 +221,12 @@ impl Cli {
 
 fn main() -> Result<()> {
     let cli = Cli::parse();
+    // Custom themes are read first: every theme lookup after this — the
+    // config, --theme, --list-themes, `config set theme` — sees them.
+    let (themes, theme_warnings) = theme::custom::discover_in(&theme::custom::themes_dir());
+    theme::custom::install(themes);
     if cli.list_themes {
-        print_themes_and_exit();
+        print_themes_and_exit(&theme_warnings);
     }
     if cli.list_snippets {
         print_snippets_and_exit();
@@ -251,7 +255,7 @@ fn main() -> Result<()> {
     }
     install_panic_hook();
     let mut terminal = setup_terminal()?;
-    let run_result = run_app(&mut terminal, cli);
+    let run_result = run_app(&mut terminal, cli, theme_warnings);
     let restored = restore_terminal(&mut terminal);
     if let Err(error) = run_result {
         // The run's error is the one that matters; still mention a failed
@@ -274,11 +278,20 @@ fn print_error_and_exit(error: &anyhow::Error) -> ! {
     std::process::exit(1);
 }
 
-/// Print every built-in theme name on its own line and exit with status 0.
-/// Intended for shell completion / discoverability.
-fn print_themes_and_exit() -> ! {
+/// Print every theme name — built-in, then custom — on its own line and
+/// exit with status 0 (for shell completion and scripts). Problems with
+/// theme files, and custom text colors that are hard to read, go to stderr.
+fn print_themes_and_exit(warnings: &[String]) -> ! {
     for theme_name in builtin::names() {
         println!("{}", theme_name);
+    }
+    for line in warnings.iter().flat_map(|warning| warning.lines()) {
+        eprintln!("note: {}", text::printable(line));
+    }
+    for theme in theme::custom::installed() {
+        for note in theme::custom::contrast_notes(&theme.palette) {
+            eprintln!("note: theme {}: {note}", theme.name);
+        }
     }
     std::process::exit(0);
 }
@@ -363,8 +376,10 @@ fn install_panic_hook() {
 /// `tick_rate` is 100ms — small enough that the WPM display feels live, large
 /// enough that we're not busy-looping. `event::poll` blocks for the remainder
 /// of the tick interval so keystrokes are still handled instantly.
-fn run_app(terminal: &mut Tui, cli: Cli) -> Result<()> {
-    let (resolved, warnings) = config::load::load_or_default_with(cli.overrides());
+fn run_app(terminal: &mut Tui, cli: Cli, theme_warnings: Vec<String>) -> Result<()> {
+    let (resolved, config_warnings) = config::load::load_or_default_with(cli.overrides());
+    // A broken theme file is a warning like a broken config.
+    let warnings: Vec<String> = theme_warnings.into_iter().chain(config_warnings).collect();
     let mut app = App::new(cli.file.clone(), resolved.palette, resolved.default_mode);
     app.set_word_source(resolved.word_pool, resolved.word_decor);
     app.options = resolved.typing;

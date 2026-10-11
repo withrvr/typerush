@@ -14,7 +14,9 @@
 
 # -----------------------------------------------------------------------------
 # Theme — pick one of the built-in palettes by name.
-# Available names: dark, light, monokai, dracula
+# Available names: dark, light, monokai, dracula — and your own: a TOML file
+# in ~/.typerush/themes/ (ocean.toml is "ocean") with `base = "dark"` (or
+# another built-in) and any of the color slots listed under [colors] below.
 # Run `typerush --list-themes` to see what's currently shipped.
 # -----------------------------------------------------------------------------
 theme = "dark"
