@@ -69,6 +69,10 @@ pub struct SessionRecord {
     /// completed run. Added in v0.6.0 (older records count as completed).
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub ended_early: bool,
+    /// The words typed wrong (a wrong key in the word, fixed or not), for
+    /// the missed-words practice; at most 200. Added in v0.7.0.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub mistyped: Vec<String>,
 }
 
 fn is_zero(n: &usize) -> bool {
@@ -529,7 +533,7 @@ pub struct ModeBest {
 }
 
 /// Every mode in `sessions` with its best, in menu order: time, words,
-/// code, symbols, custom, daily, quote, then anything else; numbers in numeric
+/// code, symbols, custom, daily, missed, quote, then anything else; numbers in numeric
 /// order within a family (`time-15s` before `time-120s`).
 pub fn bests_by_mode(sessions: &[SessionRecord]) -> Vec<ModeBest> {
     bests_among(sessions, 0..sessions.len())
@@ -570,8 +574,8 @@ pub fn bests_among(
 /// Sort key for a mode label: menu family first, then the label's first
 /// number as a number, then the text around it.
 fn mode_sort_key(mode: &str) -> (usize, String, u64, String) {
-    const FAMILIES: [&str; 7] = [
-        "time-", "words-", "code-", "symbols-", "custom", "daily", "quote",
+    const FAMILIES: [&str; 8] = [
+        "time-", "words-", "code-", "symbols-", "custom", "daily", "missed", "quote",
     ];
     let family = FAMILIES
         .iter()

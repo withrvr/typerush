@@ -116,6 +116,10 @@ struct Cli {
     #[arg(long)]
     daily: bool,
 
+    /// Skip the menu and practise the words you've got wrong lately.
+    #[arg(long)]
+    missed: bool,
+
     /// Skip the menu and start a programming-symbols drill of N tokens (25/50).
     #[arg(long, value_parser = count::<usize, MAX_COUNT>)]
     symbols: Option<usize>,
@@ -468,6 +472,8 @@ fn apply_cli_autostart(app: &mut App, cli: &Cli, stats_file: &Path) -> Result<()
         app.start_game(Mode::Symbols(count))?;
     } else if cli.daily {
         app.start_game(Mode::Daily)?;
+    } else if cli.missed {
+        app.start_game(Mode::Missed)?;
     } else if let Some(back) = cli.replay {
         let history = storage::load_sessions_from_path(stats_file).unwrap_or_default();
         let Some(record) = history.len().checked_sub(back).map(|i| &history[i]) else {
@@ -1009,6 +1015,7 @@ fn save_current_session(app: &mut App, stats_file: &Path) {
         consistency: app.consistency(),
         missed: app.missed,
         ended_early: app.ended_early,
+        mistyped: app.mistyped_words(),
     };
     match storage::save_session_to_path(stats_file, &record) {
         Ok(history) => {
@@ -1893,6 +1900,28 @@ mod tests {
         assert!(Cli::try_parse_from(["typerush", "--replay", "0"]).is_err());
     }
 
+    /// A saved session keeps its missed words; `--missed` practises them.
+    #[test]
+    fn missed_words_are_saved_and_practised() {
+        let dir = tempfile::tempdir().unwrap();
+        let stats_file = dir.path().join("stats.json");
+        let mut app = make_typing_app(); // "hello world"
+        app.started_at = Some(std::time::Instant::now() - Duration::from_secs(3));
+        for ch in "hellp world".chars() {
+            app.handle_char(ch);
+        }
+        after_input(&mut app, Screen::Typing, &mut false, &stats_file);
+        let saved = storage::load_sessions_from_path(&stats_file).unwrap();
+        assert_eq!(saved[0].mistyped, ["hello"]);
+
+        let cli = Cli::try_parse_from(["typerush", "--missed"]).unwrap();
+        let mut app = App::new(None, ThemePalette::default(), Mode::Time(15));
+        app.stats_file = Some(stats_file.clone());
+        apply_cli_autostart(&mut app, &cli, &stats_file).unwrap();
+        assert_eq!(app.mode, Mode::Missed);
+        assert!(app.words.iter().all(|w| w.text == "hello"));
+    }
+
     /// `--daily` starts today's challenge straight away.
     #[test]
     fn daily_flag_starts_the_challenge() {
@@ -2017,6 +2046,7 @@ mod tests {
         press(&mut app, KeyCode::Left); // wraps to the last run: zen
         assert_eq!(app.settings.as_ref().unwrap().start, Mode::Zen);
         press(&mut app, KeyCode::Left); // → quote
+        press(&mut app, KeyCode::Left); // → missed
         press(&mut app, KeyCode::Left); // → daily
         assert_eq!(app.settings.as_ref().unwrap().start, Mode::Daily);
         let (resolved, warnings) = config::load::load_from(&config_file, CliOverrides::default());

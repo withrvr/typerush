@@ -350,7 +350,9 @@ pub fn word_pool(name: &str) -> Option<WordPool> {
 }
 
 /// The `[defaults] mode` names, in menu order.
-pub const MODE_NAMES: [&str; 7] = ["time", "words", "quote", "code", "zen", "symbols", "daily"];
+pub const MODE_NAMES: [&str; 8] = [
+    "time", "words", "quote", "code", "zen", "symbols", "daily", "missed",
+];
 
 /// Built-in defaults for the `[defaults]` counts: what a time, words or
 /// symbols run starts with when the config doesn't say.
@@ -427,6 +429,7 @@ fn resolve_default_mode(defaults: Option<&super::Defaults>, warnings: &mut Vec<S
         }
         "zen" => Mode::Zen,
         "daily" => Mode::Daily,
+        "missed" => Mode::Missed,
         "symbols" => Mode::Symbols(config_count(
             "symbol_count",
             defaults.symbol_count,

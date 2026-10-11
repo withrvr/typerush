@@ -415,6 +415,7 @@ mod tests {
                     consistency: (i % 3 != 0).then_some(70.0 + i as f64),
                     missed: i % 2,
                     ended_early: i % 7 == 0,
+                    mistyped: vec!["fox".into()],
                 }
             })
             .collect();

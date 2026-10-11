@@ -10,7 +10,7 @@
 //! theme = "monokai"            # built-in name: dark | light | monokai | dracula
 //!
 //! [defaults]
-//! mode = "time"                 # time | words | quote | code | zen | symbols | daily
+//! mode = "time"                 # time | words | quote | code | zen | symbols | daily | missed
 //! time_seconds = 15             # default duration for time mode
 //! word_count = 25               # default count for words mode
 //! code_lang = "rust"            # rust | python | js | go | java | sql | shell

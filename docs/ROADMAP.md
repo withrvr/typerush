@@ -231,7 +231,7 @@ one pull request:
    (the terminal's bell, on every key or only on mistakes)
 6. ✅ Pace cursor: a second, dimmer cursor moving at your best for the
    mode, or at a target WPM
-7. 🔲 Practise missed words: every session keeps the words you got wrong;
+7. ✅ Practise missed words: every session keeps the words you got wrong;
    a `missed` run is built from your most-missed recent words
 8. 🔲 Idle detection: a run with a long stretch without a key (10 s by
    default) is not saved, and Results says why

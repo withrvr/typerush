@@ -26,7 +26,7 @@ theme = "dark"
 # -----------------------------------------------------------------------------
 [defaults]
 # Which menu row to pre-select:
-#   "time" | "words" | "quote" | "code" | "zen" | "symbols" | "daily"
+#   "time" | "words" | "quote" | "code" | "zen" | "symbols" | "daily" | "missed"
 mode = "time"
 # Used when mode = "time". Standard menu rows: 15 / 30 / 60 / 120.
 time_seconds = 15

@@ -70,6 +70,8 @@ pub enum Mode {
     Symbols(usize),
     /// The daily challenge: the same words for everyone on a given day.
     Daily,
+    /// A run built from the words you got wrong lately.
+    Missed,
 }
 
 impl Mode {
@@ -90,6 +92,7 @@ impl Mode {
             Mode::Custom => "custom".to_string(),
             Mode::Symbols(count) => format!("symbols-{}", count),
             Mode::Daily => "daily".to_string(),
+            Mode::Missed => "missed".to_string(),
         }
     }
 
@@ -120,6 +123,7 @@ impl Mode {
             "quote" => Some(Mode::Quote),
             "zen" => Some(Mode::Zen),
             "daily" => Some(Mode::Daily),
+            "missed" => Some(Mode::Missed),
             _ if base == "custom" || base.starts_with("custom-") => Some(Mode::Custom),
             _ => None,
         }
@@ -207,6 +211,9 @@ pub struct Word {
     /// True when a non-space key was typed where the trailing space belongs —
     /// the space is rendered as an error until backspaced.
     pub space_missed: bool,
+    /// A wrong key was pressed somewhere in this word (or on its space),
+    /// even if it was fixed: the word goes to the missed-words practice.
+    pub had_error: bool,
 }
 
 impl Word {
@@ -215,6 +222,7 @@ impl Word {
             text,
             typed: String::new(),
             space_missed: false,
+            had_error: false,
         }
     }
 }
@@ -296,6 +304,15 @@ pub fn best_menu_match(menu: &[MenuItem], default_mode: Mode) -> usize {
         .unwrap_or(0)
 }
 
+/// Most mistyped words saved with one session.
+pub const MAX_MISTYPED: usize = 200;
+/// How many recent sessions the missed-words practice looks through.
+const MISSED_SESSIONS: usize = 100;
+/// Most different words in a missed-words practice run.
+const MISSED_DISTINCT: usize = 50;
+/// Fewest words in a missed-words practice run.
+const MISSED_RUN: usize = 25;
+
 /// The menu with no custom sources — what tests and a fresh `App` start from.
 #[cfg(test)]
 pub fn default_menu() -> Vec<MenuItem> {
@@ -368,6 +385,7 @@ pub fn build_menu(snippets: &[Snippet], last_custom_file: Option<&Path>) -> Vec<
     }
     // The rows with a choice of options come first, then the single runs.
     menu.push(start("daily", "daily", Mode::Daily));
+    menu.push(start("missed", "missed", Mode::Missed));
     menu.push(start("quote", "quote", Mode::Quote));
     menu.push(start("zen", "zen", Mode::Zen));
 
@@ -1108,7 +1126,9 @@ impl App {
             Mode::Words(target) | Mode::Symbols(target) => {
                 Some((self.current_word.min(target), target))
             }
-            Mode::Daily => Some((self.current_word.min(self.words.len()), self.words.len())),
+            Mode::Daily | Mode::Missed => {
+                Some((self.current_word.min(self.words.len()), self.words.len()))
+            }
             _ => None,
         }
     }
@@ -1132,6 +1152,7 @@ impl App {
             Mode::Code(lang) => words::random_code_snippet(lang),
             Mode::Symbols(count) => words::symbols::random_symbol_tokens(count),
             Mode::Daily => words::daily_words(chrono::Local::now().date_naive()),
+            Mode::Missed => self.missed_words_run()?,
             Mode::Custom => {
                 let Some(path) = &self.custom_file else {
                     return Err(anyhow::anyhow!(
@@ -1209,6 +1230,67 @@ impl App {
         self.top_up_words();
         self.screen = Screen::Typing;
         self.pace_wpm = self.pace_for_run();
+    }
+
+    /// The words of this run you got wrong (a wrong key in the word or on
+    /// its space, fixed or not), in order, as saved for practice: at most
+    /// [`MAX_MISTYPED`] of them.
+    pub fn mistyped_words(&self) -> Vec<String> {
+        let reached = (self.current_word + 1).min(self.words.len());
+        self.words[..reached]
+            .iter()
+            .filter(|word| word.had_error)
+            .take(MAX_MISTYPED)
+            .map(|word| word.text.clone())
+            .collect()
+    }
+
+    /// A practice run of the words you've got wrong lately: from the last
+    /// [`MISSED_SESSIONS`] sessions, the [`MISSED_DISTINCT`] words missed
+    /// most often (the most recent first on a tie), shuffled, and repeated
+    /// to at least [`MISSED_RUN`] words so a short list is still a run.
+    pub fn missed_words_run(&mut self) -> anyhow::Result<Vec<String>> {
+        use rand::seq::SliceRandom;
+        // (times missed, how recently: lower is newer)
+        let mut seen: HashMap<String, (usize, usize)> = HashMap::new();
+        let history = self.history();
+        for (age, session) in history.iter().rev().take(MISSED_SESSIONS).enumerate() {
+            for word in &session.mistyped {
+                // Held to the custom-file rules: stats.json can be edited.
+                let word: String = word
+                    .chars()
+                    .filter(|&c| !crate::text::is_untypeable(c))
+                    .collect();
+                if word.is_empty() || word.contains(char::is_whitespace) {
+                    continue;
+                }
+                let entry = seen.entry(word).or_insert((0, age));
+                entry.0 += 1;
+            }
+        }
+        if seen.is_empty() {
+            anyhow::bail!(
+                "no missed words yet: sessions keep the words you get wrong from TypeRush 0.7 on"
+            );
+        }
+        let mut words: Vec<(String, (usize, usize))> = seen.into_iter().collect();
+        words.sort_by(|(a, (count_a, age_a)), (b, (count_b, age_b))| {
+            count_b.cmp(count_a).then(age_a.cmp(age_b)).then(a.cmp(b))
+        });
+        let distinct: Vec<String> = words
+            .into_iter()
+            .take(MISSED_DISTINCT)
+            .map(|(word, _)| word)
+            .collect();
+        let mut rng = rand::rng();
+        let mut run = Vec::new();
+        while run.len() < MISSED_RUN.max(distinct.len()) {
+            let mut round = distinct.clone();
+            round.shuffle(&mut rng);
+            run.extend(round);
+        }
+        run.truncate(MISSED_RUN.max(distinct.len()));
+        Ok(run)
     }
 
     /// The history: the cache, read from `stats_file` the first time it's
@@ -1380,6 +1462,7 @@ impl App {
         };
         self.rejected_key = blocked;
         let is_correct = typed_char == target_char && !blocked;
+        active_word.had_error |= !is_correct;
         self.bell = match self.options.sound {
             KeySound::Off => false,
             KeySound::Errors => !is_correct,
@@ -1700,6 +1783,77 @@ mod tests {
         app.handle_backspace(false);
         app.handle_char('d');
         assert_eq!(app.screen, Screen::Results);
+    }
+
+    /// A word counts as missed when a wrong key was pressed in it or on its
+    /// space — even if it was fixed; the run's missed words are saved in
+    /// order, the word being typed included.
+    #[test]
+    fn missed_words_are_marked_even_when_fixed() {
+        let mut app = custom_app(&["one", "two", "three", "four"]);
+        for ch in "onx".chars() {
+            app.handle_char(ch);
+        }
+        app.handle_backspace(false);
+        for ch in "e two ".chars() {
+            app.handle_char(ch);
+        }
+        app.handle_char('x'); // wrong first letter of "three"
+        assert!(app.words[0].had_error, "fixed, still missed");
+        assert!(!app.words[1].had_error);
+        assert_eq!(app.mistyped_words(), ["one", "three"]);
+        // A wrong key on a word's space counts for that word.
+        let mut app = custom_app(&["ab", "cd"]);
+        for ch in "abx".chars() {
+            app.handle_char(ch);
+        }
+        assert_eq!(app.mistyped_words(), ["ab"]);
+    }
+
+    /// The practice run: the most-missed recent words first in weight
+    /// (ties: the most recent), shuffled and repeated to at least 25 words;
+    /// text from stats.json filtered like a custom file's; none yet is an
+    /// error that explains.
+    #[test]
+    fn missed_words_run_is_built_from_recent_mistakes() {
+        let mut app = menu_app();
+        let session = |words: &[&str]| SessionRecord {
+            mistyped: words.iter().map(|w| w.to_string()).collect(),
+            ..SessionRecord::default()
+        };
+        app.stats_cache = Some(vec![]);
+        let error = app.missed_words_run().unwrap_err().to_string();
+        assert!(error.contains("no missed words yet"), "{error}");
+
+        app.stats_cache = Some(vec![
+            session(&["their", "because"]),
+            session(&["their", "wh\u{1b}ich", "two words"]),
+        ]);
+        let run = app.missed_words_run().unwrap();
+        assert_eq!(run.len(), 25, "repeated to a full run");
+        for word in ["their", "because", "which"] {
+            assert!(run.contains(&word.to_string()), "{word} missing");
+        }
+        assert!(!run.iter().any(|w| w.contains(' ') || w.contains('\u{1b}')));
+
+        app.start_game(Mode::Missed).unwrap();
+        assert_eq!(app.session_label(), "missed");
+        assert_eq!(app.progress(), Some((0, 25)));
+
+        // Many different words: the 50 most missed, each once.
+        let many: Vec<String> = (0..80).map(|i| format!("w{i}")).collect();
+        let mut sessions: Vec<SessionRecord> = vec![SessionRecord {
+            mistyped: many.clone(),
+            ..SessionRecord::default()
+        }];
+        sessions.push(SessionRecord {
+            mistyped: vec!["w79".into()],
+            ..SessionRecord::default()
+        });
+        app.stats_cache = Some(sessions);
+        let run = app.missed_words_run().unwrap();
+        assert_eq!(run.len(), 50);
+        assert!(run.contains(&"w79".to_string()), "missed twice: kept");
     }
 
     /// The bell is asked for on every key, on mistakes only (refused keys
@@ -2284,7 +2438,10 @@ mod tests {
         groups.dedup();
         assert_eq!(
             groups,
-            ["time", "words", "code", "symbols", "custom", "daily", "quote", "zen", "app"]
+            [
+                "time", "words", "code", "symbols", "custom", "daily", "missed", "quote", "zen",
+                "app"
+            ]
         );
         assert_eq!(row("daily"), ["daily"]);
         assert_eq!(row("app"), ["stats", "profile", "settings", "quit"]);

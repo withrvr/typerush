@@ -345,6 +345,7 @@ fn start_settings(mode: Mode) -> Vec<(&'static str, String)> {
         Mode::Zen => "zen",
         Mode::Symbols(_) => "symbols",
         Mode::Daily => "daily",
+        Mode::Missed => "missed",
         // Never offered (see `start_modes`).
         Mode::Custom => "time",
     };
