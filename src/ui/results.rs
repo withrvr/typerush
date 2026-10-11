@@ -21,10 +21,10 @@ use crate::{app::App, storage};
 pub fn render(f: &mut Frame, app: &App, area: Rect) -> &'static [super::Hint] {
     let theme = &app.theme;
     // Title row and a blank row (as on every screen), the results box sized
-    // to its six lines, then a compact trend strip.
+    // to its eight lines, then a compact trend strip.
     let layout = Layout::vertical([
         Constraint::Length(2),
-        Constraint::Length(8),
+        Constraint::Length(10),
         Constraint::Length(6),
         Constraint::Min(0),
     ])
@@ -144,17 +144,46 @@ pub fn render(f: &mut Frame, app: &App, area: Rect) -> &'static [super::Hint] {
             delta,
         ]),
         Line::from(vec![
+            label(app, "raw wpm"),
+            Span::styled(
+                format!("{:.1}", app.raw_wpm()),
+                Style::default().fg(theme.neutral),
+            ),
+        ]),
+        Line::from(vec![
             label(app, "accuracy"),
             Span::styled(format!("{acc:.1}%"), Style::default().fg(theme.correct)),
+        ]),
+        Line::from(vec![
+            label(app, "consistency"),
+            Span::styled(
+                app.consistency()
+                    .map_or("—".to_string(), |c| format!("{c:.0}%")),
+                Style::default().fg(theme.accent),
+            ),
         ]),
         Line::from(vec![
             label(app, "time"),
             Span::styled(format!("{elapsed:.1}s"), Style::default().fg(theme.accent)),
         ]),
+        // Keys right, keys wrong, and characters of the text never reached.
         Line::from(vec![
             label(app, "chars"),
             Span::styled(
-                format!("{}/{}", app.correct_chars, app.total_typed_chars),
+                format!("{} correct", app.correct_chars),
+                Style::default().fg(theme.correct),
+            ),
+            Span::styled("  ·  ", Style::default().fg(theme.pending)),
+            Span::styled(
+                format!(
+                    "{} incorrect",
+                    app.total_typed_chars.saturating_sub(app.correct_chars)
+                ),
+                Style::default().fg(theme.incorrect),
+            ),
+            Span::styled("  ·  ", Style::default().fg(theme.pending)),
+            Span::styled(
+                format!("{} missed", app.missed_chars()),
                 Style::default().fg(theme.neutral),
             ),
         ]),

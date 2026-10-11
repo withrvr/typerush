@@ -539,7 +539,16 @@ mod tests {
             let first = rows[0].iter().position(|cell| cell.trim() != "").unwrap();
             assert_eq!(first, 2, "{screen:?} title column");
             let labels: &[&str] = match screen {
-                Screen::Results => &["wpm", "accuracy", "time", "chars", "mode", "mode best"],
+                // Not "consistency": it fills the label column but one cell.
+                Screen::Results => &[
+                    "wpm",
+                    "raw wpm",
+                    "accuracy",
+                    "time",
+                    "chars",
+                    "mode",
+                    "mode best",
+                ],
                 Screen::Stats => &[
                     "best wpm",
                     "sessions",

@@ -57,6 +57,31 @@ pub struct SessionRecord {
     /// records have none and aren't written with an empty one.
     #[serde(default, skip_serializing_if = "String::is_empty")]
     pub text: String,
+    /// How even the speed was, 0–100 (see `App::consistency`); `None` for
+    /// runs under two seconds and records before v0.6.0.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub consistency: Option<f64>,
+    /// Characters of a fixed text left untyped when the run ended early.
+    /// Added in v0.6.0 (older records: 0).
+    #[serde(default, skip_serializing_if = "is_zero")]
+    pub missed: usize,
+    /// Ended with Esc rather than by its clock or last character: not a
+    /// completed run. Added in v0.6.0 (older records count as completed).
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub ended_early: bool,
+}
+
+fn is_zero(n: &usize) -> bool {
+    *n == 0
+}
+
+impl SessionRecord {
+    /// Raw WPM: every key typed, right or wrong. Worked out from the saved
+    /// key count and duration, so records from before v0.6 have it too.
+    pub fn raw_wpm(&self) -> Option<f64> {
+        (self.duration_secs > 0.0)
+            .then(|| (self.total_chars as f64 / 5.0) / (self.duration_secs / 60.0))
+    }
 }
 
 /// Longest session text kept for replaying, in bytes: a little over an
@@ -155,19 +180,22 @@ pub fn save_session_to_path(path: &Path, record: &SessionRecord) -> Result<Vec<S
 }
 
 /// Columns of the CSV export, in order.
-pub const CSV_HEADER: &str =
-    "timestamp,mode,wpm,accuracy,duration_secs,words,correct_chars,total_chars";
+pub const CSV_HEADER: &str = "timestamp,mode,wpm,accuracy,duration_secs,words,correct_chars,total_chars,raw_wpm,consistency,missed,completed";
 
 /// `sessions` as CSV (RFC 4180, one row per session, oldest first) for a
 /// spreadsheet. Timestamps are RFC 3339 with the UTC offset; numbers have
-/// two decimals. Key counts and session text are left out.
+/// two decimals; `completed` is `true` / `false`. Key counts and session
+/// text are left out. Columns are only ever added at the end.
 pub fn to_csv(sessions: &[SessionRecord]) -> String {
     use std::fmt::Write as _;
     let mut csv = format!("{CSV_HEADER}\n");
     for s in sessions {
+        // An unknown figure (raw WPM of a zero-length record, consistency
+        // of a short or pre-0.6 run) is an empty field.
+        let figure = |value: Option<f64>| value.map_or(String::new(), |v| format!("{v:.2}"));
         let _ = writeln!(
             csv,
-            "{},{},{:.2},{:.2},{:.2},{},{},{}",
+            "{},{},{:.2},{:.2},{:.2},{},{},{},{},{},{},{}",
             s.timestamp
                 .to_rfc3339_opts(chrono::SecondsFormat::Secs, false),
             csv_field(&crate::text::printable(&s.mode)),
@@ -177,6 +205,10 @@ pub fn to_csv(sessions: &[SessionRecord]) -> String {
             s.word_count,
             s.correct_chars,
             s.total_chars,
+            figure(s.raw_wpm()),
+            figure(s.consistency),
+            s.missed,
+            !s.ended_early,
         );
     }
     csv
@@ -1166,6 +1198,7 @@ mod tests {
             key_hits: hits.clone(),
             key_misses: misses.clone(),
             text: "def f(): pass".into(),
+            ..SessionRecord::default()
         };
         let json = serde_json::to_string(&original).unwrap();
         let restored: SessionRecord = serde_json::from_str(&json).unwrap();
@@ -1222,7 +1255,9 @@ mod tests {
         );
         assert_eq!(
             lines[1],
-            format!("2026-10-11T09:05:07{offset},time-30s+p,61.23,95.00,30.00,30,100,105")
+            format!(
+                "2026-10-11T09:05:07{offset},time-30s+p,61.23,95.00,30.00,30,100,105,42.00,,0,true"
+            )
         );
         assert!(
             lines[2].contains(",\"custom-a,\"\"b\"\"\",70.00,"),
@@ -1240,6 +1275,29 @@ mod tests {
     fn first_offset(csv: &str) -> String {
         let timestamp = csv.lines().nth(1).unwrap().split(',').next().unwrap();
         timestamp["2026-10-11T09:05:07".len()..].to_string()
+    }
+
+    /// Raw WPM comes from the saved counts, so old records have it too; a
+    /// zero-length record has none. The v0.6 fields are left out of the
+    /// file when they hold nothing.
+    #[test]
+    fn raw_wpm_and_optional_v06_fields() {
+        let mut record = make_record(50.0, "time-30s", 0);
+        record.total_chars = 150; // 30 words in 30 s
+        assert_eq!(record.raw_wpm(), Some(60.0));
+        let json = serde_json::to_string(&record).unwrap();
+        for field in ["consistency", "missed", "ended_early"] {
+            assert!(!json.contains(field), "{json}");
+        }
+        record.consistency = Some(81.5);
+        record.missed = 4;
+        record.ended_early = true;
+        let restored: SessionRecord =
+            serde_json::from_str(&serde_json::to_string(&record).unwrap()).unwrap();
+        assert_eq!(restored.consistency, Some(81.5));
+        assert_eq!((restored.missed, restored.ended_early), (4, true));
+        record.duration_secs = 0.0;
+        assert_eq!(record.raw_wpm(), None);
     }
 
     /// A record without text (every record before v0.5) loads with none, and

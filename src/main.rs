@@ -639,9 +639,7 @@ pub(crate) fn handle_typing_key(app: &mut App, code: KeyCode, mods: KeyModifiers
         // Pause / resume: keys never typed, like restart's.
         KeyCode::F(2) => app.toggle_pause(),
         KeyCode::Char('p') if ctrl => app.toggle_pause(),
-        KeyCode::Esc => {
-            app.finish_game();
-        }
+        KeyCode::Esc => app.end_early(),
         KeyCode::F(5) => {
             if let Err(e) = app.restart() {
                 app.show_error(&e);
@@ -873,6 +871,9 @@ fn save_current_session(app: &mut App, stats_file: &Path) {
             .map(|(k, v)| (k.to_string(), *v))
             .collect(),
         text: app.session_text(),
+        consistency: app.consistency(),
+        missed: app.missed_chars(),
+        ended_early: app.ended_early,
     };
     match storage::save_session_to_path(stats_file, &record) {
         Ok(history) => {
@@ -1978,6 +1979,36 @@ mod tests {
         app.menu_index = app.menu.iter().position(|m| m.label == "settings").unwrap();
         press(&mut app, KeyCode::Enter);
         assert_eq!(app.screen, Screen::Settings);
+    }
+
+    // ── deeper results (v0.6.0) ──────────────────────────────────────────────
+
+    /// A run ended with Esc is saved as ended early, with the characters it
+    /// missed and its consistency; Results shows raw WPM, consistency and
+    /// the breakdown.
+    #[test]
+    fn esc_saves_an_early_end_with_its_breakdown() {
+        let dir = tempfile::tempdir().unwrap();
+        let stats_file = dir.path().join("stats.json");
+        let mut app = make_typing_app(); // "hello world"
+        app.started_at = Some(std::time::Instant::now() - Duration::from_secs(4));
+        for ch in "hellx".chars() {
+            app.handle_char(ch);
+        }
+        handle_key(&mut app, KeyCode::Esc, KeyModifiers::NONE);
+        after_input(&mut app, Screen::Typing, &mut false, &stats_file);
+        let saved = storage::load_sessions_from_path(&stats_file).unwrap();
+        let record = &saved[0];
+        assert!(record.ended_early);
+        assert_eq!(record.missed, 6); // " world"
+        assert_eq!(record.consistency, app.consistency());
+        let rows = screen(&app, 80, 24).join("\n");
+        assert!(rows.contains("raw wpm"), "{rows}");
+        assert!(rows.contains("consistency"), "{rows}");
+        assert!(
+            rows.contains("4 correct  ·  1 incorrect  ·  6 missed"),
+            "{rows}"
+        );
     }
 
     // ── saving ───────────────────────────────────────────────────────────────

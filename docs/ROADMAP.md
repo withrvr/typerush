@@ -189,7 +189,7 @@ Worked in this order, one commit (or a few) per step, on one branch and
 one pull request:
 
 1. 🚧 Plan (this section)
-2. 🔲 Raw WPM (every keystroke, errors included), consistency (how even
+2. ✅ Raw WPM (every keystroke, errors included), consistency (how even
    your speed was, second by second) and a character breakdown (correct /
    incorrect / missed) on Results, saved with every session
 3. 🔲 Results chart: WPM, raw speed and errors second by second for the

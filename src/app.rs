@@ -216,6 +216,16 @@ impl Word {
     }
 }
 
+/// One second of a run (paused time left out): keys typed in it, and how
+/// many of them were right and wrong. Drives raw speed per second, the
+/// consistency figure and the Results chart.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct Second {
+    pub typed: u32,
+    pub correct: u32,
+    pub errors: u32,
+}
+
 /// What a mouse click on a drawn region does. Every click maps onto an
 /// existing keyboard action, so the mouse never reaches anything the
 /// keyboard can't.
@@ -550,6 +560,14 @@ pub struct App {
     /// Per expected character: how many times something else was typed instead.
     pub key_misses: HashMap<char, u64>,
 
+    // --- deeper results (v0.6.0) ---
+    /// The run second by second: index = whole seconds of typing elapsed
+    /// when the key was pressed. ponytail: one entry per second typed —
+    /// 12 bytes a second, so even a day of zen is under a megabyte.
+    pub timeline: Vec<Second>,
+    /// The run was ended with Esc, not by its clock or its last character.
+    pub ended_early: bool,
+
     // --- stats caching (v0.3.0) ---
     /// Full session history, read from disk the first time the Stats or
     /// Results screen needs it and replaced by the updated list on every
@@ -650,6 +668,8 @@ impl App {
             theme: palette,
             key_hits: HashMap::new(),
             key_misses: HashMap::new(),
+            timeline: Vec::new(),
+            ended_early: false,
             stats_cache: None,
             stats_view: None,
             results_comparison: None,
@@ -924,6 +944,67 @@ impl App {
         (self.correct_chars as f64 / self.total_typed_chars as f64) * 100.0
     }
 
+    /// Raw words per minute: every key typed, right or wrong —
+    /// `(total_typed_chars / 5) / minutes`. Next to `wpm` it shows how
+    /// much speed the mistakes cost.
+    pub fn raw_wpm(&self) -> f64 {
+        let minutes = self.elapsed().as_secs_f64() / 60.0;
+        if minutes <= 0.0 {
+            return 0.0;
+        }
+        (self.total_typed_chars as f64 / 5.0) / minutes
+    }
+
+    /// How even the typing speed was, 0–100%: 100 minus the spread of the
+    /// keys typed per whole second, as a percentage of their mean (100% =
+    /// the same number of keys every second). Seconds with no key count, so
+    /// stopping to think lowers it. `None` under two whole seconds.
+    pub fn consistency(&self) -> Option<f64> {
+        let seconds = self.elapsed().as_secs() as usize;
+        if seconds < 2 {
+            return None;
+        }
+        let typed = |i: usize| self.timeline.get(i).map_or(0.0, |s| f64::from(s.typed));
+        let mean = (0..seconds).map(typed).sum::<f64>() / seconds as f64;
+        if mean <= 0.0 {
+            return None;
+        }
+        let variance =
+            (0..seconds).map(|i| (typed(i) - mean).powi(2)).sum::<f64>() / seconds as f64;
+        Some((100.0 * (1.0 - variance.sqrt() / mean)).clamp(0.0, 100.0))
+    }
+
+    /// Characters of the text never typed: what was left of a fixed text
+    /// (words, quote, code, symbols, custom, daily) when the run ended
+    /// early. Endless runs (time, zen) miss nothing — there is always more.
+    pub fn missed_chars(&self) -> usize {
+        if matches!(self.mode, Mode::Time(_) | Mode::Zen) {
+            return 0;
+        }
+        let Some(current) = self.words.get(self.current_word) else {
+            return 0;
+        };
+        let rest_of_word = current
+            .text
+            .chars()
+            .count()
+            .saturating_sub(current.typed.chars().count());
+        // Each later word, and the space before it.
+        let later: usize = self.words[self.current_word + 1..]
+            .iter()
+            .map(|word| word.text.chars().count() + 1)
+            .sum();
+        rest_of_word + later
+    }
+
+    /// End the run now (Esc): it counts as ended early, not completed.
+    pub fn end_early(&mut self) {
+        if self.ended_at.is_none() {
+            self.ended_early = true;
+        }
+        self.finish_game();
+    }
+
     /// In `Mode::Time`, how long is left on the clock. `None` for all other modes.
     pub fn time_remaining(&self) -> Option<Duration> {
         if let Mode::Time(seconds) = self.mode {
@@ -1018,6 +1099,8 @@ impl App {
         self.total_typed_chars = 0;
         self.key_hits.clear();
         self.key_misses.clear();
+        self.timeline.clear();
+        self.ended_early = false;
         self.top_up_words();
         self.screen = Screen::Typing;
     }
@@ -1116,6 +1199,7 @@ impl App {
         }
 
         let is_last_word = self.current_word + 1 >= self.words.len();
+        let second = self.elapsed().as_secs() as usize;
         let active_word = &mut self.words[self.current_word];
         let cursor_position = active_word.typed.chars().count();
         let word_len = active_word.text.chars().count();
@@ -1133,6 +1217,16 @@ impl App {
             &mut self.key_misses
         };
         *key_counts.entry(target_char).or_insert(0) += 1;
+        if self.timeline.len() <= second {
+            self.timeline.resize(second + 1, Second::default());
+        }
+        let tally = &mut self.timeline[second];
+        tally.typed += 1;
+        if is_correct {
+            tally.correct += 1;
+        } else {
+            tally.errors += 1;
+        }
 
         if expected_char.is_none() {
             // Cursor on the space after the word: that slot is a character too.
@@ -1359,6 +1453,94 @@ mod tests {
         app.restart().unwrap();
         assert!(!app.is_paused());
         assert_eq!(app.paused_for, Duration::ZERO);
+    }
+
+    // ── deeper results (v0.6.0) ────────────────────────────────────────────
+
+    /// Each key lands in the second it was typed (paused time left out):
+    /// counted as typed, and as right or wrong.
+    #[test]
+    fn keys_are_tallied_per_second() {
+        let mut app = make_app_with_word("abcdef");
+        app.started_at = Some(Instant::now() - Duration::from_millis(2500));
+        app.handle_char('a');
+        app.handle_char('x');
+        assert_eq!(app.timeline.len(), 3);
+        assert_eq!(app.timeline[0], Second::default());
+        assert_eq!(
+            app.timeline[2],
+            Second {
+                typed: 2,
+                correct: 1,
+                errors: 1
+            }
+        );
+        app.restart().unwrap();
+        assert!(app.timeline.is_empty());
+    }
+
+    /// Raw WPM counts every key; consistency is 100% for an even pace,
+    /// lower for an uneven one, and needs two whole seconds.
+    #[test]
+    fn raw_wpm_and_consistency() {
+        let mut app = make_app_with_word("abcdef");
+        app.ended_at = Some(Instant::now());
+        app.started_at = app.ended_at.map(|end| end - Duration::from_secs(60));
+        app.total_typed_chars = 300;
+        app.correct_chars = 250;
+        assert!((app.raw_wpm() - 60.0).abs() < 1e-9);
+        assert!((app.wpm() - 50.0).abs() < 1e-9);
+
+        let even = Second {
+            typed: 5,
+            correct: 5,
+            errors: 0,
+        };
+        app.timeline = vec![even; 60];
+        assert_eq!(app.consistency(), Some(100.0));
+        // Alternating 2 and 8 keys a second: mean 5, spread 3 → 40%.
+        app.timeline = (0..60)
+            .map(|i| Second {
+                typed: if i % 2 == 0 { 2 } else { 8 },
+                ..Second::default()
+            })
+            .collect();
+        assert!((app.consistency().unwrap() - 40.0).abs() < 1e-9);
+        // Seconds with no keys count, as zero: half the minute idle is a
+        // spread as large as the mean.
+        app.timeline = vec![even; 30];
+        assert!(app.consistency().unwrap().abs() < 1e-9);
+
+        app.started_at = app.ended_at.map(|end| end - Duration::from_millis(1900));
+        assert_eq!(app.consistency(), None, "under two whole seconds");
+    }
+
+    /// Missed characters: what was left of a fixed text when the run ended
+    /// early — the rest of the word, later words and the spaces before
+    /// them. An endless run misses nothing.
+    #[test]
+    fn missed_characters_and_ending_early() {
+        let mut app = custom_app(&["abc", "de", "fgh"]);
+        for ch in "abc d".chars() {
+            app.handle_char(ch);
+        }
+        assert_eq!(app.missed_chars(), 1 + 4); // "e", then " fgh"
+        app.end_early();
+        assert!(app.ended_early);
+        assert_eq!(app.screen, Screen::Results);
+
+        let mut app = custom_app(&["ab"]);
+        app.handle_char('a');
+        app.handle_char('b');
+        assert_eq!(app.screen, Screen::Results);
+        assert!(!app.ended_early, "finished by its last character");
+        assert_eq!(app.missed_chars(), 0);
+        app.end_early(); // Esc after the end changes nothing
+        assert!(!app.ended_early);
+
+        let mut app = menu_app();
+        app.start_game(Mode::Time(15)).unwrap();
+        assert_eq!(app.missed_chars(), 0);
     }
 
     // ── daily challenge (v0.5.0) ───────────────────────────────────────────
