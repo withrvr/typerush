@@ -229,7 +229,7 @@ one pull request:
    `word` (a word with a mistake can't be left until it's fixed)
 5. ✅ Cursor styles — underline, block, bar — and an optional key sound
    (the terminal's bell, on every key or only on mistakes)
-6. 🔲 Pace cursor: a second, dimmer cursor moving at your best for the
+6. ✅ Pace cursor: a second, dimmer cursor moving at your best for the
    mode, or at a target WPM
 7. 🔲 Practise missed words: every session keeps the words you got wrong;
    a `missed` run is built from your most-missed recent words

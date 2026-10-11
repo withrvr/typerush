@@ -253,6 +253,10 @@ fn render_words(f: &mut Frame, app: &App, area: Rect) {
     //    character, ~0.2 ms a frame at 10,000 words); cache per word list if a run
     //    ever gets long enough to show up in a profile.
     let mut word_starts = Vec::with_capacity(app.words.len());
+    // Where each word starts in the text read as one stream (each space
+    // between words one character): what the pace cursor counts in.
+    let mut word_offsets = Vec::with_capacity(app.words.len());
+    let mut offset = 0;
     let mut cursor_line = 0;
     let mut at = (0, 0);
     for (word_index, word) in app.words.iter().enumerate() {
@@ -266,6 +270,8 @@ fn render_words(f: &mut Frame, app: &App, area: Rect) {
             + usize::from(has_space(word_index));
         at = place(at, width.min(max_width));
         word_starts.push(at);
+        word_offsets.push(offset);
+        offset += word.text.chars().count() + 1;
         let is_active = word_index == app.current_word;
         if at.1 + width <= max_width && !is_active {
             at.1 += width;
@@ -328,6 +334,18 @@ fn render_words(f: &mut Frame, app: &App, area: Rect) {
         }),
     };
     let mut bar_at: Option<(usize, usize)> = None;
+    // The pace cursor: the character it has reached, underlined in the
+    // secondary color — never over the real cursor, which wins.
+    let pace = app.pace_position();
+    let ghost = |index: usize, on_cursor: bool, style: Style| {
+        if pace == Some(index) && !on_cursor {
+            style
+                .fg(app.theme.secondary)
+                .add_modifier(Modifier::UNDERLINED)
+        } else {
+            style
+        }
+    };
     let mut lines: Vec<Vec<Span>> = vec![Vec::new(); end_line - first_line];
     let first_word = word_starts
         .partition_point(|&(line, _)| line < first_line)
@@ -356,6 +374,11 @@ fn render_words(f: &mut Frame, app: &App, area: Rect) {
                 Style::default()
             };
             let on_cursor = is_active_word && typed_char_count >= char_states.len();
+            let style = ghost(
+                word_offsets[word_index] + char_states.len(),
+                on_cursor,
+                style,
+            );
             (' ', style, on_cursor)
         });
         let styled = char_states
@@ -370,6 +393,7 @@ fn render_words(f: &mut Frame, app: &App, area: Rect) {
                 } else {
                     style_for_char(*state, is_zen_mode, blind, &app.theme)
                 };
+                let style = ghost(word_offsets[word_index] + char_index, on_cursor, style);
                 (*ch, style, on_cursor)
             });
         for (ch, style, on_cursor) in styled.chain(space) {
@@ -436,6 +460,7 @@ mod tests {
     use crate::app::Word;
     use crate::theme::builtin;
     use ratatui::{backend::TestBackend, Terminal};
+    use std::time::{Duration, Instant};
 
     /// The cell the cursor is drawn on (accent + underline), if on screen.
     fn cursor_cell(app: &App, width: u16, height: u16) -> Option<(u16, u16)> {
@@ -609,6 +634,49 @@ mod tests {
         app.rejected_key = true;
         let (cell, ..) = cell_of_b(&app);
         assert_eq!(cell.fg, theme.incorrect);
+    }
+
+    /// The pace cursor underlines the character it has reached in the
+    /// secondary color, counting the spaces between words; the real cursor
+    /// wins where they meet.
+    #[test]
+    fn pace_cursor_is_drawn_where_it_has_reached() {
+        let mut app = App::new(None, builtin::MONOKAI, Mode::Time(15));
+        app.start_game(Mode::Words(3)).unwrap();
+        app.words = vec![
+            Word::new("ab".into()),
+            Word::new("cd".into()),
+            Word::new("ef".into()),
+        ];
+        let end = Instant::now();
+        app.ended_at = Some(end);
+        app.started_at = Some(end - Duration::from_secs(6));
+        app.pace_wpm = Some(6.0); // 6 wpm × 6 s = 3 characters: "ab c"
+        let mut terminal = Terminal::new(TestBackend::new(80, 24)).unwrap();
+        terminal.draw(|f| crate::ui::render(f, &app)).unwrap();
+        let buffer = terminal.backend().buffer();
+        let ghosts: Vec<&str> = buffer
+            .content()
+            .iter()
+            .filter(|c| {
+                c.fg == builtin::MONOKAI.secondary && c.modifier.contains(Modifier::UNDERLINED)
+            })
+            .map(|c| c.symbol())
+            .collect();
+        assert_eq!(ghosts, ["c"]);
+
+        app.pace_wpm = Some(0.0); // at the start, under the real cursor
+        terminal.draw(|f| crate::ui::render(f, &app)).unwrap();
+        let ghosts = terminal
+            .backend()
+            .buffer()
+            .content()
+            .iter()
+            .filter(|c| {
+                c.fg == builtin::MONOKAI.secondary && c.modifier.contains(Modifier::UNDERLINED)
+            })
+            .count();
+        assert_eq!(ghosts, 0);
     }
 
     /// An emoji with a skin-tone modifier is two characters drawn two cells

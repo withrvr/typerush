@@ -17,7 +17,7 @@ use super::load::{
 };
 use super::Config;
 use crate::app::Mode;
-use crate::options::{CursorStyle, KeySound, StopOnError};
+use crate::options::{CursorStyle, KeySound, Pace, StopOnError};
 use crate::storage::write_atomic;
 use crate::text::printable;
 use crate::theme::{builtin, color, ThemePalette};
@@ -44,6 +44,8 @@ pub enum Kind {
     Color,
     /// One of a fixed set of names.
     Choice(&'static [&'static str]),
+    /// `off`, `best` or a WPM.
+    Pace,
 }
 
 /// One setting of `config.toml`, by its dotted name (`defaults.mode`).
@@ -111,6 +113,10 @@ pub const KEYS: &[Key] = &[
     Key {
         name: "typing.sound",
         kind: Kind::Choice(&KeySound::NAMES),
+    },
+    Key {
+        name: "typing.pace",
+        kind: Kind::Pace,
     },
     Key {
         name: "colors.accent",
@@ -239,6 +245,15 @@ pub fn check(key: &Key, raw: &str) -> Result<Setting, String> {
         },
         // Written back the one way the parser reads it (`#A6E22E`,
         // `dark_gray`), so a printed value is always one of those.
+        // A WPM is written as a number, `off` / `best` as text.
+        Kind::Pace => match Pace::from_name(raw) {
+            Some(Pace::Wpm(wpm)) => Ok(Setting::Number(i64::from(wpm))),
+            Some(pace) => text(&pace.name()),
+            None => Err(format!(
+                "not off, best or a WPM from 1 to {}",
+                Pace::MAX_WPM
+            )),
+        },
         Kind::Choice(names) => match names.contains(&lower.as_str()) {
             true => text(&lower),
             false => Err(format!("not one of {}", names.join(", "))),
@@ -316,6 +331,12 @@ fn file_value(config: &Config, name: &str) -> Option<String> {
         "typing.stop_on_error" => config.typing.as_ref()?.stop_on_error.clone(),
         "typing.cursor" => config.typing.as_ref()?.cursor.clone(),
         "typing.sound" => config.typing.as_ref()?.sound.clone(),
+        "typing.pace" => config
+            .typing
+            .as_ref()?
+            .pace
+            .as_ref()
+            .map(|pace| pace.text()),
         "colors.accent" => colors?.accent.clone(),
         "colors.secondary" => colors?.secondary.clone(),
         "colors.correct" => colors?.correct.clone(),
@@ -347,6 +368,7 @@ fn default_value(key: &Key, theme: &ThemePalette) -> Setting {
         "typing.stop_on_error" => text("off"),
         "typing.cursor" => text("underline"),
         "typing.sound" => text("off"),
+        "typing.pace" => text("off"),
         "colors.accent" => color(theme.accent),
         "colors.secondary" => color(theme.secondary),
         "colors.correct" => color(theme.correct),
@@ -556,6 +578,7 @@ mod tests {
             stop_on_error: _,
             cursor: _,
             sound: _,
+            pace: _,
         } = Typing::default();
         let Colors {
             accent: _,
@@ -569,9 +592,9 @@ mod tests {
             neutral: _,
             background: _,
         } = Colors::default();
-        // 1 theme + 5 defaults + 3 words + 5 typing + 9 colors (10 minus
+        // 1 theme + 5 defaults + 3 words + 6 typing + 9 colors (10 minus
         // `extra`).
-        assert_eq!(KEYS.len(), 1 + 5 + 3 + 5 + 9);
+        assert_eq!(KEYS.len(), 1 + 5 + 3 + 6 + 9);
     }
 
     /// One valid value for each kind of setting, as typed by a person.
@@ -586,6 +609,7 @@ mod tests {
             Kind::Switch => "on",
             Kind::Color => "#A6E22E",
             Kind::Choice(names) => names[names.len() - 1],
+            Kind::Pace => "85",
         }
     }
 

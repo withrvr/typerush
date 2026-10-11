@@ -60,6 +60,16 @@ where
     check_count(count, MAX)
 }
 
+/// Value parser for `--pace`.
+fn pace(value: &str) -> Result<options::Pace, String> {
+    options::Pace::from_name(value).ok_or_else(|| {
+        format!(
+            "not off, best or a WPM from 1 to {}",
+            options::Pace::MAX_WPM
+        )
+    })
+}
+
 /// Value parser for `--stop-on-error`.
 fn stop_on_error(value: &str) -> Result<options::StopOnError, String> {
     options::StopOnError::from_name(value)
@@ -150,6 +160,11 @@ struct Cli {
     #[arg(long, value_name = "WHEN", value_parser = stop_on_error)]
     stop_on_error: Option<options::StopOnError>,
 
+    /// A pace cursor for this run of TypeRush: `best` (your best for the
+    /// mode) or a target WPM, 1–300.
+    #[arg(long, value_name = "PACE", value_parser = pace)]
+    pace: Option<options::Pace>,
+
     /// One-shot theme override: dark | light | monokai | dracula.
     /// Takes precedence over the `theme` setting in `~/.typerush/config.toml`.
     #[arg(long)]
@@ -195,6 +210,7 @@ impl Cli {
             numbers: switch(self.numbers, self.no_numbers),
             blind: self.blind.then_some(true),
             stop_on_error: self.stop_on_error,
+            pace: self.pace,
         }
     }
 }
@@ -362,6 +378,7 @@ fn run_app(terminal: &mut Tui, cli: Cli) -> Result<()> {
     }
     app.export_file = Some(storage::data_dir().join("stats.csv"));
     app.config_file = Some(config::load::config_path());
+    app.stats_file = Some(storage::stats_path());
     let stats_file = storage::stats_path();
     apply_cli_autostart(&mut app, &cli, &stats_file)?;
 
@@ -2152,6 +2169,29 @@ mod tests {
         assert!(warnings.is_empty(), "{warnings:?}");
         assert_eq!(resolved.typing.cursor, options::CursorStyle::Bar);
         assert_eq!(resolved.typing.sound, options::KeySound::Errors);
+
+        app.settings_select(row(settings::Row::Pace));
+        press(&mut app, KeyCode::Right); // off → best
+        press(&mut app, KeyCode::Right); // → 30
+        assert_eq!(app.options.pace, options::Pace::Wpm(30));
+        let text = std::fs::read_to_string(&config_file).unwrap();
+        assert!(
+            text.contains("pace = 30\n"),
+            "a WPM is written as a number: {text}"
+        );
+        let (resolved, warnings) = config::load::load_from(&config_file, CliOverrides::default());
+        assert!(warnings.is_empty(), "{warnings:?}");
+        assert_eq!(resolved.typing.pace, options::Pace::Wpm(30));
+    }
+
+    /// `--pace` takes off, best or a WPM in range.
+    #[test]
+    fn pace_flag() {
+        let cli = Cli::try_parse_from(["typerush", "--pace", "75"]).unwrap();
+        assert_eq!(cli.overrides().pace, Some(options::Pace::Wpm(75)));
+        let cli = Cli::try_parse_from(["typerush", "--pace", "best"]).unwrap();
+        assert_eq!(cli.overrides().pace, Some(options::Pace::Best));
+        assert!(Cli::try_parse_from(["typerush", "--pace", "999"]).is_err());
     }
 
     /// `--stop-on-error` takes off / letter / word, nothing else.

@@ -90,6 +90,59 @@ impl KeySound {
     }
 }
 
+/// What the pace cursor moves at.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum Pace {
+    /// No pace cursor (the default).
+    #[default]
+    Off,
+    /// Your best for the mode being played (a replay: the original run).
+    Best,
+    /// A target WPM.
+    Wpm(u32),
+}
+
+impl Pace {
+    /// Fastest target pace.
+    pub const MAX_WPM: u32 = 300;
+    /// The values Settings cycles through.
+    pub const CHOICES: [Pace; 12] = [
+        Pace::Off,
+        Pace::Best,
+        Pace::Wpm(30),
+        Pace::Wpm(40),
+        Pace::Wpm(50),
+        Pace::Wpm(60),
+        Pace::Wpm(70),
+        Pace::Wpm(80),
+        Pace::Wpm(90),
+        Pace::Wpm(100),
+        Pace::Wpm(120),
+        Pace::Wpm(150),
+    ];
+
+    /// `off`, `best` or a number of WPM (1 to [`Pace::MAX_WPM`]).
+    pub fn from_name(name: &str) -> Option<Self> {
+        match name.trim().to_lowercase().as_str() {
+            "off" => Some(Pace::Off),
+            "best" => Some(Pace::Best),
+            number => match number.parse::<u32>() {
+                Ok(wpm) if (1..=Self::MAX_WPM).contains(&wpm) => Some(Pace::Wpm(wpm)),
+                _ => None,
+            },
+        }
+    }
+
+    /// As written in the config and shown on Settings: `off`, `best`, `60`.
+    pub fn name(self) -> String {
+        match self {
+            Pace::Off => "off".into(),
+            Pace::Best => "best".into(),
+            Pace::Wpm(wpm) => wpm.to_string(),
+        }
+    }
+}
+
 /// The resolved `[typing]` settings.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct TypingOptions {
@@ -102,6 +155,7 @@ pub struct TypingOptions {
     pub stop_on_error: StopOnError,
     pub cursor: CursorStyle,
     pub sound: KeySound,
+    pub pace: Pace,
 }
 
 impl Default for TypingOptions {
@@ -112,6 +166,7 @@ impl Default for TypingOptions {
             stop_on_error: StopOnError::Off,
             cursor: CursorStyle::Underline,
             sound: KeySound::Off,
+            pace: Pace::Off,
         }
     }
 }
@@ -142,5 +197,17 @@ mod tests {
         }
         assert_eq!(CursorStyle::from_name("BAR"), Some(CursorStyle::Bar));
         assert_eq!(KeySound::from_name("click"), None);
+    }
+
+    #[test]
+    fn pace_names_read_back() {
+        for pace in Pace::CHOICES {
+            assert_eq!(Pace::from_name(&pace.name()), Some(pace));
+        }
+        assert_eq!(Pace::from_name(" Best "), Some(Pace::Best));
+        assert_eq!(Pace::from_name("85"), Some(Pace::Wpm(85)));
+        for bad in ["0", "301", "fast", "-5"] {
+            assert_eq!(Pace::from_name(bad), None, "{bad}");
+        }
     }
 }

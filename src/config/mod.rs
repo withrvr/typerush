@@ -27,6 +27,7 @@
 //! stop_on_error = "off"         # off | letter | word
 //! cursor = "underline"          # underline | block | bar
 //! sound = "off"                 # off | errors | keys (the terminal bell)
+//! pace = "off"                  # off | best | a WPM such as 60
 //!
 //! [colors]                      # optional — overrides slots of the chosen theme
 //! accent = "#FF00FF"
@@ -73,6 +74,27 @@ pub struct Typing {
     pub cursor: Option<String>,
     /// `off` | `errors` | `keys`: when the terminal bell sounds.
     pub sound: Option<String>,
+    /// `"off"` | `"best"` | a WPM (`60` or `"60"`): the pace cursor.
+    pub pace: Option<TextOrNumber>,
+}
+
+/// A value written either as text or as a whole number (`pace = 60` and
+/// `pace = "best"` are both natural to write).
+#[derive(Debug, Deserialize, PartialEq, Clone)]
+#[serde(untagged)]
+pub enum TextOrNumber {
+    Number(i64),
+    Text(String),
+}
+
+impl TextOrNumber {
+    /// The value as text: `60`, `best`.
+    pub fn text(&self) -> String {
+        match self {
+            TextOrNumber::Number(number) => number.to_string(),
+            TextOrNumber::Text(text) => text.clone(),
+        }
+    }
 }
 
 /// Default mode + per-mode defaults. Pre-selects the matching row in the menu

@@ -22,13 +22,14 @@ pub enum Row {
     LiveWpm,
     Blind,
     StopOnError,
+    Pace,
     Cursor,
     Sound,
     Reset,
 }
 
 /// Every row, in order.
-pub const ROWS: [Row; 11] = [
+pub const ROWS: [Row; 12] = [
     Row::Theme,
     Row::Start,
     Row::Punctuation,
@@ -37,6 +38,7 @@ pub const ROWS: [Row; 11] = [
     Row::LiveWpm,
     Row::Blind,
     Row::StopOnError,
+    Row::Pace,
     Row::Cursor,
     Row::Sound,
     Row::Reset,
@@ -214,6 +216,17 @@ impl App {
                     .is_some()
                 {
                     self.options.stop_on_error = StopOnError::from_name(name).unwrap_or_default();
+                }
+            }
+            Row::Pace => {
+                use crate::options::Pace;
+                let at = Pace::CHOICES.iter().position(|p| *p == view.typing.pace);
+                let pace = Pace::CHOICES[cycle(at, Pace::CHOICES.len(), forward)];
+                if self
+                    .save_settings(&[("typing.pace", pace.name())])
+                    .is_some()
+                {
+                    self.options.pace = pace;
                 }
             }
             Row::Cursor => {

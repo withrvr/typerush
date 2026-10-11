@@ -9,7 +9,7 @@ use std::path::{Path, PathBuf};
 
 use super::{Colors, Config};
 use crate::app::Mode;
-use crate::options::{CursorStyle, KeySound, StopOnError, TypingOptions};
+use crate::options::{CursorStyle, KeySound, Pace, StopOnError, TypingOptions};
 use crate::storage;
 use crate::theme::{self, builtin, ThemePalette};
 use crate::words::{CodeLang, WordDecor, WordPool};
@@ -69,6 +69,8 @@ pub struct CliOverrides<'a> {
     pub blind: Option<bool>,
     /// `--stop-on-error <off|letter|word>`.
     pub stop_on_error: Option<StopOnError>,
+    /// `--pace <best|WPM>`.
+    pub pace: Option<Pace>,
 }
 
 /// Read and resolve `~/.typerush/config.toml`, then apply CLI overrides on
@@ -190,6 +192,9 @@ fn resolve_with(raw: Config, cli: CliOverrides<'_>) -> (ResolvedConfig, Vec<Stri
     if let Some(stop) = cli.stop_on_error {
         typing.stop_on_error = stop;
     }
+    if let Some(pace) = cli.pace {
+        typing.pace = pace;
+    }
 
     (
         ResolvedConfig {
@@ -234,7 +239,19 @@ fn resolve_typing(typing: Option<&super::Typing>, warnings: &mut Vec<String>) ->
         defaults.sound,
         warnings,
     );
+    let pace = match &typing.pace {
+        None => defaults.pace,
+        Some(value) => Pace::from_name(&value.text()).unwrap_or_else(|| {
+            warnings.push(format!(
+                "pace '{}' isn't off, best or a WPM from 1 to {}, using 'off'",
+                crate::text::printable(&value.text()),
+                Pace::MAX_WPM
+            ));
+            defaults.pace
+        }),
+    };
     TypingOptions {
+        pace,
         live_wpm: typing.live_wpm.unwrap_or(defaults.live_wpm),
         blind: typing.blind.unwrap_or(defaults.blind),
         stop_on_error,
@@ -532,6 +549,24 @@ mod tests {
             warnings[0].contains("unknown stop_on_error 'strict'"),
             "{warnings:?}"
         );
+    }
+
+    /// `pace` is written as a number or as text; out of range warns.
+    #[test]
+    fn pace_from_the_config() {
+        for (text, pace) in [
+            ("pace = 60", Pace::Wpm(60)),
+            ("pace = \"best\"", Pace::Best),
+        ] {
+            let raw: Config = toml::from_str(&format!("[typing]\n{text}")).unwrap();
+            let (resolved, warnings) = resolve(raw, None);
+            assert!(warnings.is_empty(), "{warnings:?}");
+            assert_eq!(resolved.typing.pace, pace);
+        }
+        let raw: Config = toml::from_str("[typing]\npace = 9000").unwrap();
+        let (resolved, warnings) = resolve(raw, None);
+        assert_eq!(resolved.typing.pace, Pace::Off);
+        assert!(warnings[0].contains("pace '9000'"), "{warnings:?}");
     }
 
     #[test]
@@ -958,6 +993,7 @@ mod tests {
                 numbers: Some(true),
                 blind: Some(true),
                 stop_on_error: Some(StopOnError::Word),
+                pace: Some(Pace::Best),
             },
         );
         assert!(
@@ -965,6 +1001,7 @@ mod tests {
             "--blind applies on a broken file too"
         );
         assert_eq!(resolved.typing.stop_on_error, StopOnError::Word);
+        assert_eq!(resolved.typing.pace, Pace::Best);
         assert_eq!(warnings.len(), 1, "{warnings:?}");
         assert!(warnings[0].starts_with("could not parse"), "{warnings:?}");
         assert_eq!(resolved.palette, builtin::MONOKAI);

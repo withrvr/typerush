@@ -157,6 +157,7 @@ fn row_line(
         Row::LiveWpm => ("live wpm", on_off(view.typing.live_wpm)),
         Row::Blind => ("blind", on_off(view.typing.blind)),
         Row::StopOnError => ("stop on", view.typing.stop_on_error.name().to_string()),
+        Row::Pace => ("pace", view.typing.pace.name()),
         Row::Cursor => ("cursor", view.typing.cursor.name().to_string()),
         Row::Sound => ("key sound", view.typing.sound.name().to_string()),
         Row::Reset => unreachable!("drawn above"),

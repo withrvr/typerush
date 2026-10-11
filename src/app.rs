@@ -577,6 +577,9 @@ pub struct App {
     pub ended_early: bool,
     /// The last key was refused (stop on error): the cursor shows it.
     pub rejected_key: bool,
+    /// The WPM the pace cursor moves at in this run (worked out when the
+    /// run begins), `None` without one.
+    pub pace_wpm: Option<f64>,
     /// The key just typed should ring the terminal bell (`typing.sound`);
     /// the main loop rings it and clears this.
     pub bell: bool,
@@ -590,6 +593,10 @@ pub struct App {
     /// Results screen needs it and replaced by the updated list on every
     /// save. `None` until first needed (or after a failed save).
     pub stats_cache: Option<Vec<SessionRecord>>,
+    /// Where the history is read from when something needs it before the
+    /// Stats or Results screen has (`~/.typerush/stats.json`; `None` in
+    /// tests: then only `stats_cache` is used).
+    pub stats_file: Option<PathBuf>,
     /// What the Stats screen shows (category, its summary, every mode's
     /// best), built from `stats_cache` when that screen is entered and when
     /// the category changes. `None` until the first Stats visit.
@@ -700,9 +707,11 @@ impl App {
             timeline: Vec::new(),
             ended_early: false,
             rejected_key: false,
+            pace_wpm: None,
             bell: false,
             missed: 0,
             stats_cache: None,
+            stats_file: None,
             stats_view: None,
             results_comparison: None,
             session_just_saved: false,
@@ -1199,6 +1208,51 @@ impl App {
         self.missed = 0;
         self.top_up_words();
         self.screen = Screen::Typing;
+        self.pace_wpm = self.pace_for_run();
+    }
+
+    /// The history: the cache, read from `stats_file` the first time it's
+    /// needed (outside a frame: at a run's start, on entering a screen).
+    pub fn history(&mut self) -> &[SessionRecord] {
+        if self.stats_cache.is_none() {
+            if let Some(file) = &self.stats_file {
+                self.stats_cache =
+                    Some(crate::storage::load_sessions_from_path(file).unwrap_or_default());
+            }
+        }
+        self.stats_cache.as_deref().unwrap_or(&[])
+    }
+
+    /// What the pace cursor moves at in the run just begun: the target
+    /// WPM; or for `best`, the best for this mode — on a replay, the
+    /// original run's speed. Zen keeps no score, so it has none.
+    fn pace_for_run(&mut self) -> Option<f64> {
+        use crate::options::Pace;
+        if self.mode == Mode::Zen {
+            return None;
+        }
+        match self.options.pace {
+            Pace::Off => None,
+            Pace::Wpm(wpm) => Some(f64::from(wpm)),
+            Pace::Best => match &self.replay {
+                Some(replay) => Some(replay.wpm),
+                None => {
+                    let label = self.session_label();
+                    crate::storage::personal_best_for_mode(self.history(), &label)
+                }
+            },
+        }
+        .filter(|wpm| *wpm > 0.0)
+    }
+
+    /// Where the pace cursor is: the index of the character it's on, the
+    /// text read as one stream (each space between words counts one).
+    /// `None` without a pace, or before the first key.
+    pub fn pace_position(&self) -> Option<usize> {
+        let wpm = self.pace_wpm?;
+        self.started_at?;
+        let minutes = self.elapsed().as_secs_f64() / 60.0;
+        Some((wpm * 5.0 * minutes) as usize)
     }
 
     /// The text the Results best is limited to: today's words for the daily
@@ -1664,6 +1718,43 @@ mod tests {
             app.handle_char('x');
             assert_eq!(app.bell, wrong, "{sound:?} wrong key");
         }
+    }
+
+    /// The pace cursor moves at the target WPM, at the mode's best, or on
+    /// a replay at the original's speed; never in zen or without a best.
+    #[test]
+    fn pace_cursor_speed_and_position() {
+        use crate::options::Pace;
+        let mut app = menu_app();
+        app.stats_cache = Some(vec![SessionRecord {
+            wpm: 72.0,
+            mode: "words-10".into(),
+            ..SessionRecord::default()
+        }]);
+        app.options.pace = Pace::Wpm(60);
+        app.start_game(Mode::Words(10)).unwrap();
+        assert_eq!(app.pace_wpm, Some(60.0));
+        assert_eq!(app.pace_position(), None, "not before the first key");
+        let end = Instant::now();
+        app.ended_at = Some(end);
+        app.started_at = Some(end - Duration::from_secs(6));
+        assert_eq!(app.pace_position(), Some(30), "60 wpm = 5 chars a second");
+
+        app.options.pace = Pace::Best;
+        app.start_game(Mode::Words(10)).unwrap();
+        assert_eq!(app.pace_wpm, Some(72.0));
+        app.start_game(Mode::Words(25)).unwrap();
+        assert_eq!(app.pace_wpm, None, "no best yet for words-25");
+        app.start_game(Mode::Zen).unwrap();
+        assert_eq!(app.pace_wpm, None);
+        app.start_replay(&SessionRecord {
+            wpm: 55.5,
+            mode: "words-25".into(),
+            text: "a b".into(),
+            ..SessionRecord::default()
+        })
+        .unwrap();
+        assert_eq!(app.pace_wpm, Some(55.5), "a replay races the original");
     }
 
     // ── deeper results (v0.6.0) ────────────────────────────────────────────
