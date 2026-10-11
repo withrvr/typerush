@@ -90,6 +90,14 @@ pub const KEYS: &[Key] = &[
         kind: Kind::Switch,
     },
     Key {
+        name: "typing.live_wpm",
+        kind: Kind::Switch,
+    },
+    Key {
+        name: "typing.blind",
+        kind: Kind::Switch,
+    },
+    Key {
         name: "colors.accent",
         kind: Kind::Color,
     },
@@ -284,6 +292,8 @@ fn file_value(config: &Config, name: &str) -> Option<String> {
         "words.pool" => words?.pool.clone(),
         "words.punctuation" => switch(words?.punctuation),
         "words.numbers" => switch(words?.numbers),
+        "typing.live_wpm" => switch(config.typing.as_ref()?.live_wpm),
+        "typing.blind" => switch(config.typing.as_ref()?.blind),
         "colors.accent" => colors?.accent.clone(),
         "colors.secondary" => colors?.secondary.clone(),
         "colors.correct" => colors?.correct.clone(),
@@ -310,6 +320,8 @@ fn default_value(key: &Key, theme: &ThemePalette) -> Setting {
         "defaults.symbol_count" => Setting::Number(DEFAULT_SYMBOLS as i64),
         "words.pool" => text("common"),
         "words.punctuation" | "words.numbers" => Setting::Switch(false),
+        "typing.live_wpm" => Setting::Switch(true),
+        "typing.blind" => Setting::Switch(false),
         "colors.accent" => color(theme.accent),
         "colors.secondary" => color(theme.secondary),
         "colors.correct" => color(theme.correct),
@@ -481,7 +493,7 @@ fn shown(path: &Path) -> String {
 mod tests {
     use super::*;
     use crate::config::load::{load_from, CliOverrides};
-    use crate::config::{Colors, Defaults, Words};
+    use crate::config::{Colors, Defaults, Typing, Words};
 
     fn temp_config() -> (tempfile::TempDir, PathBuf) {
         let dir = tempfile::tempdir().unwrap();
@@ -499,6 +511,7 @@ mod tests {
             defaults: _,
             colors: _,
             words: _,
+            typing: _,
         } = Config::default();
         let Defaults {
             mode: _,
@@ -512,6 +525,10 @@ mod tests {
             punctuation: _,
             numbers: _,
         } = Words::default();
+        let Typing {
+            live_wpm: _,
+            blind: _,
+        } = Typing::default();
         let Colors {
             accent: _,
             secondary: _,
@@ -524,8 +541,9 @@ mod tests {
             neutral: _,
             background: _,
         } = Colors::default();
-        // 1 theme + 5 defaults + 3 words + 9 colors (10 minus `extra`).
-        assert_eq!(KEYS.len(), 1 + 5 + 3 + 9);
+        // 1 theme + 5 defaults + 3 words + 2 typing + 9 colors (10 minus
+        // `extra`).
+        assert_eq!(KEYS.len(), 1 + 5 + 3 + 2 + 9);
     }
 
     /// One valid value for each kind of setting, as typed by a person.

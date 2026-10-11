@@ -9,6 +9,7 @@ use std::path::{Path, PathBuf};
 
 use super::{Colors, Config};
 use crate::app::Mode;
+use crate::options::TypingOptions;
 use crate::storage;
 use crate::theme::{self, builtin, ThemePalette};
 use crate::words::{CodeLang, WordDecor, WordPool};
@@ -29,6 +30,8 @@ pub struct ResolvedConfig {
     pub word_pool: WordPool,
     /// Punctuation / numbers decoration toggles (v0.4.0).
     pub word_decor: WordDecor,
+    /// The `[typing]` settings (v0.7.0).
+    pub typing: TypingOptions,
 }
 
 impl Default for ResolvedConfig {
@@ -39,6 +42,7 @@ impl Default for ResolvedConfig {
             default_mode: Mode::Time(DEFAULT_SECONDS),
             word_pool: WordPool::Common,
             word_decor: WordDecor::default(),
+            typing: TypingOptions::default(),
         }
     }
 }
@@ -61,6 +65,8 @@ pub struct CliOverrides<'a> {
     pub punctuation: Option<bool>,
     /// `--numbers` → `Some(true)`, `--no-numbers` → `Some(false)`.
     pub numbers: Option<bool>,
+    /// `--blind` → `Some(true)`.
+    pub blind: Option<bool>,
 }
 
 /// Read and resolve `~/.typerush/config.toml`, then apply CLI overrides on
@@ -175,6 +181,10 @@ fn resolve_with(raw: Config, cli: CliOverrides<'_>) -> (ResolvedConfig, Vec<Stri
     if let Some(n) = cli.numbers {
         word_decor.numbers = n;
     }
+    let mut typing = resolve_typing(raw.typing.as_ref());
+    if let Some(blind) = cli.blind {
+        typing.blind = blind;
+    }
 
     (
         ResolvedConfig {
@@ -182,9 +192,22 @@ fn resolve_with(raw: Config, cli: CliOverrides<'_>) -> (ResolvedConfig, Vec<Stri
             default_mode,
             word_pool,
             word_decor,
+            typing,
         },
         warnings,
     )
+}
+
+/// The `[typing]` section, each unset value its default.
+fn resolve_typing(typing: Option<&super::Typing>) -> TypingOptions {
+    let defaults = TypingOptions::default();
+    let Some(typing) = typing else {
+        return defaults;
+    };
+    TypingOptions {
+        live_wpm: typing.live_wpm.unwrap_or(defaults.live_wpm),
+        blind: typing.blind.unwrap_or(defaults.blind),
+    }
 }
 
 /// Translate the optional `[words]` section into a (pool, decor) pair.
@@ -854,7 +877,12 @@ mod tests {
                 word_pool: Some(WordPool::Extended),
                 punctuation: Some(true),
                 numbers: Some(true),
+                blind: Some(true),
             },
+        );
+        assert!(
+            resolved.typing.blind,
+            "--blind applies on a broken file too"
         );
         assert_eq!(warnings.len(), 1, "{warnings:?}");
         assert!(warnings[0].starts_with("could not parse"), "{warnings:?}");

@@ -21,6 +21,10 @@
 //! punctuation = false           # sprinkle commas/periods/quotes on ~25% of words
 //! numbers = false               # replace ~12% of slots with random 1–4 digit numbers
 //!
+//! [typing]                      # v0.7.0 — how a run behaves and looks
+//! live_wpm = true               # show WPM and accuracy while typing
+//! blind = false                 # no right/wrong colors, numbers only at the end
+//!
 //! [colors]                      # optional — overrides slots of the chosen theme
 //! accent = "#FF00FF"
 //! correct = "green"
@@ -47,6 +51,19 @@ pub struct Config {
     pub colors: Option<Colors>,
     /// Word source / decoration toggles (v0.4.0).
     pub words: Option<Words>,
+    /// How a run behaves and looks while typing (v0.7.0).
+    pub typing: Option<Typing>,
+}
+
+/// `[typing]` section: how a run behaves and looks while you type. Added
+/// in v0.7.0.
+#[derive(Debug, Default, Deserialize, PartialEq)]
+#[serde(deny_unknown_fields)]
+pub struct Typing {
+    /// Show WPM and accuracy while typing (default true).
+    pub live_wpm: Option<bool>,
+    /// Blind mode: no right/wrong colors, no numbers until the end.
+    pub blind: Option<bool>,
 }
 
 /// Default mode + per-mode defaults. Pre-selects the matching row in the menu

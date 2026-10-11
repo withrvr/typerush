@@ -135,21 +135,28 @@ fn render_header(f: &mut Frame, app: &App, area: Rect) {
             ),
         ])
     } else {
-        Line::from(vec![
-            Span::styled("  wpm ", Style::default().fg(theme.pending)),
-            Span::styled(
-                format!("{:>3.0}", app.wpm()),
-                Style::default()
-                    .fg(theme.secondary)
-                    .add_modifier(Modifier::BOLD),
-            ),
-            Span::raw("   "),
-            Span::styled("acc ", Style::default().fg(theme.pending)),
-            Span::styled(
-                format!("{:>5.1}%", app.accuracy()),
-                Style::default().fg(theme.correct),
-            ),
-            Span::raw("   "),
+        let mut spans = vec![Span::raw("  ")];
+        // Live numbers only when wanted (typing.live_wpm) and not blind:
+        // blind mode keeps every number for the end.
+        if app.options.show_live_numbers() {
+            spans.extend([
+                Span::styled("wpm ", Style::default().fg(theme.pending)),
+                Span::styled(
+                    format!("{:>3.0}", app.wpm()),
+                    Style::default()
+                        .fg(theme.secondary)
+                        .add_modifier(Modifier::BOLD),
+                ),
+                Span::raw("   "),
+                Span::styled("acc ", Style::default().fg(theme.pending)),
+                Span::styled(
+                    format!("{:>5.1}%", app.accuracy()),
+                    Style::default().fg(theme.correct),
+                ),
+                Span::raw("   "),
+            ]);
+        }
+        spans.extend([
             Span::styled("time ", Style::default().fg(theme.pending)),
             Span::styled(timer_text, Style::default().fg(theme.accent)),
             Span::raw("   "),
@@ -159,7 +166,8 @@ fn render_header(f: &mut Frame, app: &App, area: Rect) {
                 format!("[{}]", crate::text::shorten(&app.session_label(), 32)),
                 Style::default().fg(theme.mode_tag),
             ),
-        ])
+        ]);
+        Line::from(spans)
     };
 
     f.render_widget(Paragraph::new(header), area);
@@ -296,6 +304,7 @@ fn render_words(f: &mut Frame, app: &App, area: Rect) {
     //    word that begins before the first visible line: a long word can
     //    run onto it.
     let is_zen_mode = matches!(app.mode, Mode::Zen);
+    let blind = app.options.blind;
     let cursor_style = Style::default()
         .fg(app.theme.accent)
         .add_modifier(Modifier::UNDERLINED);
@@ -316,9 +325,10 @@ fn render_words(f: &mut Frame, app: &App, area: Rect) {
         // the character it sits on. The space between words is a character
         // like any other: the cursor lands on it once the word is typed.
         let space = has_space(word_index).then(|| {
-            let style = if word.space_missed {
+            // Blind: a wrong space isn't shown either.
+            let style = if word.space_missed && !blind {
                 // A colored blank is invisible — underline so the wrong space shows.
-                style_for_char(CharState::Incorrect, is_zen_mode, &app.theme)
+                style_for_char(CharState::Incorrect, is_zen_mode, blind, &app.theme)
                     .add_modifier(Modifier::UNDERLINED)
             } else if is_active_word && typed_char_count >= char_states.len() {
                 cursor_style
@@ -334,7 +344,7 @@ fn render_words(f: &mut Frame, app: &App, area: Rect) {
                 let style = if is_active_word && char_index == typed_char_count {
                     cursor_style
                 } else {
-                    style_for_char(*state, is_zen_mode, &app.theme)
+                    style_for_char(*state, is_zen_mode, blind, &app.theme)
                 };
                 (*ch, style)
             });
@@ -359,7 +369,13 @@ fn render_words(f: &mut Frame, app: &App, area: Rect) {
 /// Zen mode intentionally desaturates everything to the theme's muted shades
 /// (with correct chars in `neutral`) so the screen stays calm and the user
 /// isn't distracted by score-shaped feedback.
-fn style_for_char(state: CharState, is_zen_mode: bool, theme: &ThemePalette) -> Style {
+///
+/// Blind mode shows typed text in one neutral color, right or wrong: you
+/// see where you are, not how you're doing.
+fn style_for_char(state: CharState, is_zen_mode: bool, blind: bool, theme: &ThemePalette) -> Style {
+    if blind && state != CharState::Pending {
+        return Style::default().fg(theme.neutral);
+    }
     if is_zen_mode {
         return match state {
             CharState::Correct => Style::default().fg(theme.neutral),
@@ -472,6 +488,48 @@ mod tests {
         );
         let footer = paused.lines().last().unwrap();
         assert!(footer.starts_with("  Ctrl+P / F2 resume"), "{footer}");
+    }
+
+    /// With the live WPM hidden the header keeps only the clock and mode;
+    /// blind mode hides them too and shows typed text in one neutral color,
+    /// right or wrong (a wrong space included) — nothing in the wrong color.
+    #[test]
+    fn hidden_numbers_and_blind_mode() {
+        let mut app = App::new(None, builtin::MONOKAI, Mode::Time(15));
+        app.start_game(Mode::Words(3)).unwrap();
+        app.words = vec![Word::new("abc".into()), Word::new("def".into())];
+        for ch in "axcx".chars() {
+            app.handle_char(ch);
+        }
+        let draw = |app: &App| {
+            let mut terminal = Terminal::new(TestBackend::new(80, 24)).unwrap();
+            terminal.draw(|f| crate::ui::render(f, app)).unwrap();
+            terminal.backend().buffer().clone()
+        };
+        let header = |buffer: &ratatui::buffer::Buffer| -> String {
+            (0..80).map(|x| buffer[(x, 0)].symbol()).collect()
+        };
+        assert!(header(&draw(&app)).starts_with("  wpm"));
+        app.options.live_wpm = false;
+        let shown = header(&draw(&app));
+        assert!(
+            shown.starts_with("  time") && !shown.contains("acc"),
+            "{shown}"
+        );
+
+        app.options = crate::options::TypingOptions {
+            blind: true,
+            ..Default::default()
+        };
+        let buffer = draw(&app);
+        assert!(
+            header(&buffer).starts_with("  time"),
+            "no numbers when blind"
+        );
+        let wrong = buffer.content().iter().any(|cell| {
+            cell.fg == builtin::MONOKAI.incorrect || cell.fg == builtin::MONOKAI.correct
+        });
+        assert!(!wrong, "a right/wrong color while blind");
     }
 
     /// An emoji with a skin-tone modifier is two characters drawn two cells

@@ -56,8 +56,8 @@ pub fn render(f: &mut Frame, app: &App, area: Rect) -> &'static [super::Hint] {
     let block = block.title_bottom(Span::styled(saved_to, Style::default().fg(theme.pending)));
     f.render_widget(block, box_area);
 
-    // A blank line, the five settings, a blank line, reset, then any
-    // problem with the file.
+    // A blank line, the settings, a blank line, reset, then any problem
+    // with the file.
     let mut lines = vec![Line::raw("")];
     let mut targets = app.click_targets.borrow_mut();
     for (index, row) in ROWS.iter().enumerate() {
@@ -154,6 +154,8 @@ fn row_line(
         Row::Punctuation => ("punctuation", on_off(view.decor.punctuation)),
         Row::Numbers => ("numbers", on_off(view.decor.numbers)),
         Row::Pool => ("10k words", on_off(view.pool == WordPool::Extended)),
+        Row::LiveWpm => ("live wpm", on_off(view.typing.live_wpm)),
+        Row::Blind => ("blind", on_off(view.typing.blind)),
         Row::Reset => unreachable!("drawn above"),
     };
     let label = Span::styled(

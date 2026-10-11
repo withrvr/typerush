@@ -14,6 +14,7 @@ mod app;
 mod commands;
 mod config;
 mod game;
+mod options;
 mod progress;
 mod settings;
 mod state;
@@ -132,6 +133,11 @@ struct Cli {
           value_parser = count::<usize, MAX_COUNT>)]
     replay: Option<usize>,
 
+    /// Blind mode for this run of TypeRush: no right/wrong colors while
+    /// typing, and the numbers only at the end.
+    #[arg(long)]
+    blind: bool,
+
     /// One-shot theme override: dark | light | monokai | dracula.
     /// Takes precedence over the `theme` setting in `~/.typerush/config.toml`.
     #[arg(long)]
@@ -175,6 +181,7 @@ impl Cli {
             }),
             punctuation: switch(self.punctuation, self.no_punctuation),
             numbers: switch(self.numbers, self.no_numbers),
+            blind: self.blind.then_some(true),
         }
     }
 }
@@ -321,6 +328,7 @@ fn run_app(terminal: &mut Tui, cli: Cli) -> Result<()> {
     let (resolved, warnings) = config::load::load_or_default_with(cli.overrides());
     let mut app = App::new(cli.file.clone(), resolved.palette, resolved.default_mode);
     app.set_word_source(resolved.word_pool, resolved.word_decor);
+    app.options = resolved.typing;
     let state_file = state::state_path();
     app.load_custom_sources(
         words::snippets::discover_snippets(),
@@ -1984,9 +1992,8 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let (mut app, config_file) = settings_app(&dir);
         press(&mut app, KeyCode::Right); // light theme, saved
-        press(&mut app, KeyCode::End);
-        for _ in 0..5 {
-            press(&mut app, KeyCode::Down);
+        for _ in settings::ROWS {
+            press(&mut app, KeyCode::Down); // to the last row: reset
         }
         press(&mut app, KeyCode::Enter);
         assert!(app.settings.as_ref().unwrap().confirm_reset);
@@ -2066,6 +2073,28 @@ mod tests {
             "theme = = 1"
         );
         assert_eq!(app.theme, ThemePalette::default());
+    }
+
+    /// The typing switches on Settings — live wpm, blind — are saved to
+    /// `[typing]` and used at once.
+    #[test]
+    fn settings_typing_switches() {
+        let dir = tempfile::tempdir().unwrap();
+        let (mut app, config_file) = settings_app(&dir);
+        let row = |row| settings::ROWS.iter().position(|r| *r == row).unwrap();
+        app.settings_select(row(settings::Row::LiveWpm));
+        press(&mut app, KeyCode::Enter);
+        app.settings_select(row(settings::Row::Blind));
+        press(&mut app, KeyCode::Right);
+        assert!(!app.options.live_wpm && app.options.blind);
+        let (resolved, warnings) = config::load::load_from(&config_file, CliOverrides::default());
+        assert!(warnings.is_empty(), "{warnings:?}");
+        assert!(!resolved.typing.live_wpm && resolved.typing.blind);
+        let text = std::fs::read_to_string(&config_file).unwrap();
+        assert!(
+            text.contains("[typing]\nlive_wpm = false\nblind = true"),
+            "{text}"
+        );
     }
 
     /// The menu's settings option opens the screen too.

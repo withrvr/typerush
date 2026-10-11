@@ -19,16 +19,20 @@ pub enum Row {
     Punctuation,
     Numbers,
     Pool,
+    LiveWpm,
+    Blind,
     Reset,
 }
 
 /// Every row, in order.
-pub const ROWS: [Row; 6] = [
+pub const ROWS: [Row; 8] = [
     Row::Theme,
     Row::Start,
     Row::Punctuation,
     Row::Numbers,
     Row::Pool,
+    Row::LiveWpm,
+    Row::Blind,
     Row::Reset,
 ];
 
@@ -47,6 +51,8 @@ pub struct SettingsView {
     pub start: Mode,
     pub pool: WordPool,
     pub decor: WordDecor,
+    /// The `[typing]` settings.
+    pub typing: crate::options::TypingOptions,
     /// The first problem the loader has with the file (it doesn't parse, a
     /// value is out of range…), shown on the screen.
     pub problem: Option<String>,
@@ -75,6 +81,7 @@ impl SettingsView {
             start: resolved.default_mode,
             pool: resolved.word_pool,
             decor: resolved.word_decor,
+            typing: resolved.typing,
             problem: warnings.into_iter().next(),
         }
     }
@@ -171,6 +178,24 @@ impl App {
                     self.word_pool = pool;
                 }
             }
+            Row::LiveWpm => {
+                let on = !view.typing.live_wpm;
+                if self
+                    .save_settings(&[("typing.live_wpm", on.to_string())])
+                    .is_some()
+                {
+                    self.options.live_wpm = on;
+                }
+            }
+            Row::Blind => {
+                let on = !view.typing.blind;
+                if self
+                    .save_settings(&[("typing.blind", on.to_string())])
+                    .is_some()
+                {
+                    self.options.blind = on;
+                }
+            }
             Row::Reset => {}
         }
     }
@@ -246,6 +271,7 @@ impl App {
         self.theme = defaults.palette;
         self.word_pool = defaults.word_pool;
         self.word_decor = defaults.word_decor;
+        self.options = defaults.typing;
         self.menu_index = best_menu_match(&self.menu, defaults.default_mode);
         self.settings = Some(SettingsView::load(Some(&path), selected));
     }

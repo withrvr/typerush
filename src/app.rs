@@ -558,6 +558,8 @@ pub struct App {
     pub notice: Option<String>,
     /// Active color palette — read by every UI module on every frame.
     pub theme: ThemePalette,
+    /// How a run behaves and looks (the `[typing]` settings, v0.7.0).
+    pub options: crate::options::TypingOptions,
 
     // --- per-key accuracy (v0.3.0) ---
     /// Per expected character: how many times it was typed correctly.
@@ -686,6 +688,7 @@ impl App {
             error_message: None,
             notice: None,
             theme: palette,
+            options: Default::default(),
             key_hits: HashMap::new(),
             key_misses: HashMap::new(),
             timeline: Vec::new(),

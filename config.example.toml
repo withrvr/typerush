@@ -51,6 +51,14 @@ symbol_count = 25
 # numbers = false        # mix in random 1–4 digit number tokens (~12% of slots)
 
 # -----------------------------------------------------------------------------
+# Typing — how a run behaves and looks while you type. The Settings screen
+# changes these too; `--blind` turns blind mode on for one launch.
+# -----------------------------------------------------------------------------
+# [typing]
+# live_wpm = true        # show WPM and accuracy while typing
+# blind = false          # no right/wrong colors while typing; numbers at the end
+
+# -----------------------------------------------------------------------------
 # Color overrides — applied ON TOP of the chosen theme.
 # Any slot omitted here keeps the theme's value. (The values below are
 # monokai's, as an example.)
