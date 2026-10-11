@@ -34,6 +34,7 @@ use std::{
 use anyhow::Result;
 use clap::Parser;
 use ratatui::crossterm::{
+    cursor::SetCursorStyle,
     event::{
         self, DisableMouseCapture, EnableMouseCapture, Event, KeyCode, KeyEventKind, KeyModifiers,
         MouseButton, MouseEvent, MouseEventKind,
@@ -310,7 +311,8 @@ fn restore_terminal(terminal: &mut Tui) -> Result<()> {
     let screen = execute!(
         terminal.backend_mut(),
         LeaveAlternateScreen,
-        DisableMouseCapture
+        DisableMouseCapture,
+        SetCursorStyle::DefaultUserShape
     );
     let cursor = terminal.show_cursor();
     raw?;
@@ -326,7 +328,12 @@ fn install_panic_hook() {
     let original = panic::take_hook();
     panic::set_hook(Box::new(move |info| {
         let _ = disable_raw_mode();
-        let _ = execute!(stdout(), LeaveAlternateScreen, DisableMouseCapture);
+        let _ = execute!(
+            stdout(),
+            LeaveAlternateScreen,
+            DisableMouseCapture,
+            SetCursorStyle::DefaultUserShape
+        );
         original(info);
     }));
 }
@@ -362,8 +369,19 @@ fn run_app(terminal: &mut Tui, cli: Cli) -> Result<()> {
     let mut last_tick = Instant::now();
     let mut last_screen = app.screen;
     let mut session_saved = false;
+    let mut cursor_shape = options::CursorStyle::default();
 
     loop {
+        // The bar cursor is the terminal's own: shape it when the setting
+        // changes (Settings can change it while TypeRush is open).
+        if app.options.cursor != cursor_shape {
+            cursor_shape = app.options.cursor;
+            let shape = match cursor_shape {
+                options::CursorStyle::Bar => SetCursorStyle::SteadyBar,
+                _ => SetCursorStyle::DefaultUserShape,
+            };
+            execute!(terminal.backend_mut(), shape)?;
+        }
         terminal.draw(|frame| ui::render(frame, &app))?;
 
         // Block until either a key event arrives or the tick interval elapses.
@@ -383,6 +401,13 @@ fn run_app(terminal: &mut Tui, cli: Cli) -> Result<()> {
                         continue;
                     }
                     handle_key(&mut app, key.code, key.modifiers);
+                    // The key sound is the terminal's bell: a byte, not a
+                    // dependency on an audio library.
+                    if std::mem::take(&mut app.bell) {
+                        use std::io::Write;
+                        let backend = terminal.backend_mut();
+                        let _ = backend.write_all(b"\x07").and_then(|()| backend.flush());
+                    }
                 }
                 Event::Mouse(mouse) => handle_mouse(&mut app, mouse),
                 _ => {}
@@ -2116,6 +2141,17 @@ mod tests {
         assert_eq!(app.options.stop_on_error, options::StopOnError::Off);
         let text = std::fs::read_to_string(&config_file).unwrap();
         assert!(text.contains("stop_on_error = \"off\""), "{text}");
+
+        app.settings_select(row(settings::Row::Cursor));
+        press(&mut app, KeyCode::Left); // underline → bar (wraps)
+        assert_eq!(app.options.cursor, options::CursorStyle::Bar);
+        app.settings_select(row(settings::Row::Sound));
+        press(&mut app, KeyCode::Enter); // off → errors
+        assert_eq!(app.options.sound, options::KeySound::Errors);
+        let (resolved, warnings) = config::load::load_from(&config_file, CliOverrides::default());
+        assert!(warnings.is_empty(), "{warnings:?}");
+        assert_eq!(resolved.typing.cursor, options::CursorStyle::Bar);
+        assert_eq!(resolved.typing.sound, options::KeySound::Errors);
     }
 
     /// `--stop-on-error` takes off / letter / word, nothing else.

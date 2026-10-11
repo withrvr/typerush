@@ -21,7 +21,7 @@ use std::time::{Duration, Instant};
 use ratatui::crossterm::event::{KeyCode, KeyModifiers};
 use ratatui::layout::Rect;
 
-use crate::options::StopOnError;
+use crate::options::{KeySound, StopOnError};
 use crate::state::{self, AppState};
 use crate::storage::{ResultsComparison, SessionRecord, StatsView};
 use crate::theme::ThemePalette;
@@ -577,6 +577,9 @@ pub struct App {
     pub ended_early: bool,
     /// The last key was refused (stop on error): the cursor shows it.
     pub rejected_key: bool,
+    /// The key just typed should ring the terminal bell (`typing.sound`);
+    /// the main loop rings it and clears this.
+    pub bell: bool,
     /// Characters of the text left untyped when the run ended
     /// ([`App::missed_chars`]), worked out once then — Results shows it on
     /// every frame, and a big custom file has a lot of text left.
@@ -697,6 +700,7 @@ impl App {
             timeline: Vec::new(),
             ended_early: false,
             rejected_key: false,
+            bell: false,
             missed: 0,
             stats_cache: None,
             stats_view: None,
@@ -1322,6 +1326,11 @@ impl App {
         };
         self.rejected_key = blocked;
         let is_correct = typed_char == target_char && !blocked;
+        self.bell = match self.options.sound {
+            KeySound::Off => false,
+            KeySound::Errors => !is_correct,
+            KeySound::Keys => true,
+        };
         // Per-key stats are kept for the key that *should* have been pressed.
         let key_counts = if is_correct {
             self.correct_chars += 1;
@@ -1637,6 +1646,24 @@ mod tests {
         app.handle_backspace(false);
         app.handle_char('d');
         assert_eq!(app.screen, Screen::Results);
+    }
+
+    /// The bell is asked for on every key, on mistakes only (refused keys
+    /// too), or never.
+    #[test]
+    fn key_sound_asks_for_the_bell() {
+        for (sound, right, wrong) in [
+            (KeySound::Off, false, false),
+            (KeySound::Errors, false, true),
+            (KeySound::Keys, true, true),
+        ] {
+            let mut app = custom_app(&["ab"]);
+            app.options.sound = sound;
+            app.handle_char('a');
+            assert_eq!(app.bell, right, "{sound:?} right key");
+            app.handle_char('x');
+            assert_eq!(app.bell, wrong, "{sound:?} wrong key");
+        }
     }
 
     // ── deeper results (v0.6.0) ────────────────────────────────────────────

@@ -59,6 +59,8 @@ symbol_count = 25
 # blind = false          # no right/wrong colors while typing; numbers at the end
 # stop_on_error = "off"  # "off" | "letter" (a wrong key doesn't move the cursor)
 #                        #  | "word" (a word with a mistake can't be left)
+# cursor = "underline"   # "underline" | "block" | "bar"
+# sound = "off"          # "off" | "errors" | "keys" — the terminal's bell
 
 # -----------------------------------------------------------------------------
 # Color overrides — applied ON TOP of the chosen theme.

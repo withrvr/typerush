@@ -9,7 +9,7 @@ use std::path::{Path, PathBuf};
 
 use super::{Colors, Config};
 use crate::app::Mode;
-use crate::options::{StopOnError, TypingOptions};
+use crate::options::{CursorStyle, KeySound, StopOnError, TypingOptions};
 use crate::storage;
 use crate::theme::{self, builtin, ThemePalette};
 use crate::words::{CodeLang, WordDecor, WordPool};
@@ -210,22 +210,61 @@ fn resolve_typing(typing: Option<&super::Typing>, warnings: &mut Vec<String>) ->
     let Some(typing) = typing else {
         return defaults;
     };
-    let stop_on_error = match typing.stop_on_error.as_deref() {
-        None => defaults.stop_on_error,
-        Some(name) => StopOnError::from_name(name).unwrap_or_else(|| {
-            warnings.push(format!(
-                "unknown stop_on_error '{}', using 'off' (try {})",
-                crate::text::printable(name),
-                StopOnError::NAMES.join(", ")
-            ));
-            defaults.stop_on_error
-        }),
-    };
+    let stop_on_error = named(
+        "stop_on_error",
+        typing.stop_on_error.as_deref(),
+        &StopOnError::NAMES,
+        StopOnError::from_name,
+        defaults.stop_on_error,
+        warnings,
+    );
+    let cursor = named(
+        "cursor",
+        typing.cursor.as_deref(),
+        &CursorStyle::NAMES,
+        CursorStyle::from_name,
+        defaults.cursor,
+        warnings,
+    );
+    let sound = named(
+        "sound",
+        typing.sound.as_deref(),
+        &KeySound::NAMES,
+        KeySound::from_name,
+        defaults.sound,
+        warnings,
+    );
     TypingOptions {
         live_wpm: typing.live_wpm.unwrap_or(defaults.live_wpm),
         blind: typing.blind.unwrap_or(defaults.blind),
         stop_on_error,
+        cursor,
+        sound,
     }
+}
+
+/// A setting that takes one of `names`: the default when unset, a warning
+/// and the default when it isn't one of them.
+fn named<T: Copy>(
+    setting: &str,
+    value: Option<&str>,
+    names: &[&str],
+    from_name: fn(&str) -> Option<T>,
+    default: T,
+    warnings: &mut Vec<String>,
+) -> T {
+    let Some(value) = value else {
+        return default;
+    };
+    from_name(value).unwrap_or_else(|| {
+        warnings.push(format!(
+            "unknown {setting} '{}', using '{}' (try {})",
+            crate::text::printable(value),
+            names[0],
+            names.join(", ")
+        ));
+        default
+    })
 }
 
 /// Translate the optional `[words]` section into a (pool, decor) pair.

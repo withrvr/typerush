@@ -22,11 +22,13 @@ pub enum Row {
     LiveWpm,
     Blind,
     StopOnError,
+    Cursor,
+    Sound,
     Reset,
 }
 
 /// Every row, in order.
-pub const ROWS: [Row; 9] = [
+pub const ROWS: [Row; 11] = [
     Row::Theme,
     Row::Start,
     Row::Punctuation,
@@ -35,6 +37,8 @@ pub const ROWS: [Row; 9] = [
     Row::LiveWpm,
     Row::Blind,
     Row::StopOnError,
+    Row::Cursor,
+    Row::Sound,
     Row::Reset,
 ];
 
@@ -210,6 +214,30 @@ impl App {
                     .is_some()
                 {
                     self.options.stop_on_error = StopOnError::from_name(name).unwrap_or_default();
+                }
+            }
+            Row::Cursor => {
+                use crate::options::CursorStyle;
+                let names = CursorStyle::NAMES;
+                let at = names.iter().position(|n| *n == view.typing.cursor.name());
+                let name = names[cycle(at, names.len(), forward)];
+                if self
+                    .save_settings(&[("typing.cursor", name.to_string())])
+                    .is_some()
+                {
+                    self.options.cursor = CursorStyle::from_name(name).unwrap_or_default();
+                }
+            }
+            Row::Sound => {
+                use crate::options::KeySound;
+                let names = KeySound::NAMES;
+                let at = names.iter().position(|n| *n == view.typing.sound.name());
+                let name = names[cycle(at, names.len(), forward)];
+                if self
+                    .save_settings(&[("typing.sound", name.to_string())])
+                    .is_some()
+                {
+                    self.options.sound = KeySound::from_name(name).unwrap_or_default();
                 }
             }
             Row::Reset => {}

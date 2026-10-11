@@ -25,6 +25,8 @@
 //! live_wpm = true               # show WPM and accuracy while typing
 //! blind = false                 # no right/wrong colors, numbers only at the end
 //! stop_on_error = "off"         # off | letter | word
+//! cursor = "underline"          # underline | block | bar
+//! sound = "off"                 # off | errors | keys (the terminal bell)
 //!
 //! [colors]                      # optional — overrides slots of the chosen theme
 //! accent = "#FF00FF"
@@ -67,6 +69,10 @@ pub struct Typing {
     pub blind: Option<bool>,
     /// `off` | `letter` | `word`: whether a mistake must be fixed first.
     pub stop_on_error: Option<String>,
+    /// `underline` | `block` | `bar`.
+    pub cursor: Option<String>,
+    /// `off` | `errors` | `keys`: when the terminal bell sounds.
+    pub sound: Option<String>,
 }
 
 /// Default mode + per-mode defaults. Pre-selects the matching row in the menu

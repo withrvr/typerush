@@ -17,7 +17,7 @@ use super::load::{
 };
 use super::Config;
 use crate::app::Mode;
-use crate::options::StopOnError;
+use crate::options::{CursorStyle, KeySound, StopOnError};
 use crate::storage::write_atomic;
 use crate::text::printable;
 use crate::theme::{builtin, color, ThemePalette};
@@ -103,6 +103,14 @@ pub const KEYS: &[Key] = &[
     Key {
         name: "typing.stop_on_error",
         kind: Kind::Choice(&StopOnError::NAMES),
+    },
+    Key {
+        name: "typing.cursor",
+        kind: Kind::Choice(&CursorStyle::NAMES),
+    },
+    Key {
+        name: "typing.sound",
+        kind: Kind::Choice(&KeySound::NAMES),
     },
     Key {
         name: "colors.accent",
@@ -306,6 +314,8 @@ fn file_value(config: &Config, name: &str) -> Option<String> {
         "typing.live_wpm" => switch(config.typing.as_ref()?.live_wpm),
         "typing.blind" => switch(config.typing.as_ref()?.blind),
         "typing.stop_on_error" => config.typing.as_ref()?.stop_on_error.clone(),
+        "typing.cursor" => config.typing.as_ref()?.cursor.clone(),
+        "typing.sound" => config.typing.as_ref()?.sound.clone(),
         "colors.accent" => colors?.accent.clone(),
         "colors.secondary" => colors?.secondary.clone(),
         "colors.correct" => colors?.correct.clone(),
@@ -335,6 +345,8 @@ fn default_value(key: &Key, theme: &ThemePalette) -> Setting {
         "typing.live_wpm" => Setting::Switch(true),
         "typing.blind" => Setting::Switch(false),
         "typing.stop_on_error" => text("off"),
+        "typing.cursor" => text("underline"),
+        "typing.sound" => text("off"),
         "colors.accent" => color(theme.accent),
         "colors.secondary" => color(theme.secondary),
         "colors.correct" => color(theme.correct),
@@ -542,6 +554,8 @@ mod tests {
             live_wpm: _,
             blind: _,
             stop_on_error: _,
+            cursor: _,
+            sound: _,
         } = Typing::default();
         let Colors {
             accent: _,
@@ -555,9 +569,9 @@ mod tests {
             neutral: _,
             background: _,
         } = Colors::default();
-        // 1 theme + 5 defaults + 3 words + 3 typing + 9 colors (10 minus
+        // 1 theme + 5 defaults + 3 words + 5 typing + 9 colors (10 minus
         // `extra`).
-        assert_eq!(KEYS.len(), 1 + 5 + 3 + 3 + 9);
+        assert_eq!(KEYS.len(), 1 + 5 + 3 + 5 + 9);
     }
 
     /// One valid value for each kind of setting, as typed by a person.

@@ -227,7 +227,7 @@ one pull request:
    numbers only at the end)
 4. ✅ Stop on error: `letter` (a wrong key doesn't move the cursor) or
    `word` (a word with a mistake can't be left until it's fixed)
-5. 🔲 Cursor styles — underline, block, bar — and an optional key sound
+5. ✅ Cursor styles — underline, block, bar — and an optional key sound
    (the terminal's bell, on every key or only on mistakes)
 6. 🔲 Pace cursor: a second, dimmer cursor moving at your best for the
    mode, or at a target WPM

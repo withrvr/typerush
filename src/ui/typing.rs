@@ -312,9 +312,22 @@ fn render_words(f: &mut Frame, app: &App, area: Rect) {
     } else {
         app.theme.accent
     };
-    let cursor_style = Style::default()
-        .fg(cursor_color)
-        .add_modifier(Modifier::UNDERLINED);
+    // Underline and block style the character; the bar is the terminal's
+    // own cursor, placed on it below (the character keeps its usual style,
+    // or the mistake color after a refused key).
+    let bar = app.options.cursor == crate::options::CursorStyle::Bar;
+    let cursor_style = match app.options.cursor {
+        crate::options::CursorStyle::Underline => Style::default()
+            .fg(cursor_color)
+            .add_modifier(Modifier::UNDERLINED),
+        crate::options::CursorStyle::Block => super::selected_style(&app.theme).bg(cursor_color),
+        crate::options::CursorStyle::Bar => Style::default().fg(if app.rejected_key && !blind {
+            app.theme.incorrect
+        } else {
+            app.theme.pending
+        }),
+    };
+    let mut bar_at: Option<(usize, usize)> = None;
     let mut lines: Vec<Vec<Span>> = vec![Vec::new(); end_line - first_line];
     let first_word = word_starts
         .partition_point(|&(line, _)| line < first_line)
@@ -342,32 +355,48 @@ fn render_words(f: &mut Frame, app: &App, area: Rect) {
             } else {
                 Style::default()
             };
-            (' ', style)
+            let on_cursor = is_active_word && typed_char_count >= char_states.len();
+            (' ', style, on_cursor)
         });
         let styled = char_states
             .iter()
             .enumerate()
             .map(|(char_index, (ch, state))| {
-                let style = if is_active_word && char_index == typed_char_count {
+                let on_cursor = is_active_word && char_index == typed_char_count;
+                // The bar leaves the character's style alone, unless a key
+                // was just refused.
+                let style = if on_cursor && (!bar || app.rejected_key) {
                     cursor_style
                 } else {
                     style_for_char(*state, is_zen_mode, blind, &app.theme)
                 };
-                (*ch, style)
+                (*ch, style, on_cursor)
             });
-        for (ch, style) in styled.chain(space) {
+        for (ch, style, on_cursor) in styled.chain(space) {
             let cells = ch.width().unwrap_or(0);
             at = place(at, cells);
             if (first_line..end_line).contains(&at.0) {
                 lines[at.0 - first_line].push(Span::styled(ch.to_string(), style));
+                if on_cursor {
+                    bar_at = Some((at.0 - first_line, at.1));
+                }
             }
             at.1 += cells;
         }
     }
 
-    let words_paragraph = Paragraph::new(lines.into_iter().map(Line::from).collect::<Vec<_>>())
-        .block(words_block(app));
+    let block = words_block(app);
+    let inner = block.inner(area);
+    let words_paragraph =
+        Paragraph::new(lines.into_iter().map(Line::from).collect::<Vec<_>>()).block(block);
     f.render_widget(words_paragraph, area);
+    // The bar: the terminal's cursor, on the character to type next.
+    if let (true, Some((line, column))) = (bar, bar_at) {
+        let position = Position::new(inner.x + column as u16, inner.y + line as u16);
+        if inner.contains(position) {
+            f.set_cursor_position(position);
+        }
+    }
 }
 
 /// Picks a foreground color/modifier for one character based on whether it
@@ -537,6 +566,49 @@ mod tests {
             cell.fg == builtin::MONOKAI.incorrect || cell.fg == builtin::MONOKAI.correct
         });
         assert!(!wrong, "a right/wrong color while blind");
+    }
+
+    /// Underline and block style the character to type next; the bar puts
+    /// the terminal's own cursor on it, leaving its style alone — until a
+    /// key is refused, when it takes the mistake color.
+    #[test]
+    fn cursor_styles() {
+        use crate::options::CursorStyle;
+        let mut app = App::new(None, builtin::MONOKAI, Mode::Time(15));
+        app.start_game(Mode::Words(2)).unwrap();
+        app.words = vec![Word::new("abc".into()), Word::new("de".into())];
+        app.handle_char('a');
+        let theme = builtin::MONOKAI;
+        let mut terminal = Terminal::new(TestBackend::new(80, 24)).unwrap();
+        let mut cell_of_b = |app: &App| {
+            terminal.draw(|f| crate::ui::render(f, app)).unwrap();
+            let buffer = terminal.backend().buffer().clone();
+            let at = (0..24)
+                .flat_map(|y| (0..80).map(move |x| (x, y)))
+                .find(|&(x, y)| buffer[(x, y)].symbol() == "b")
+                .unwrap();
+            (
+                buffer[at].clone(),
+                at,
+                terminal.get_cursor_position().unwrap(),
+            )
+        };
+
+        let (cell, ..) = cell_of_b(&app);
+        assert!(cell.modifier.contains(Modifier::UNDERLINED) && cell.fg == theme.accent);
+
+        app.options.cursor = CursorStyle::Block;
+        let (cell, ..) = cell_of_b(&app);
+        assert_eq!(cell.bg, theme.accent);
+
+        app.options.cursor = CursorStyle::Bar;
+        let (cell, at, cursor) = cell_of_b(&app);
+        assert_eq!((cursor.x, cursor.y), at, "the terminal cursor sits on it");
+        assert_eq!(cell.fg, theme.pending);
+        assert!(!cell.modifier.contains(Modifier::UNDERLINED));
+        app.rejected_key = true;
+        let (cell, ..) = cell_of_b(&app);
+        assert_eq!(cell.fg, theme.incorrect);
     }
 
     /// An emoji with a skin-tone modifier is two characters drawn two cells
