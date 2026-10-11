@@ -183,21 +183,34 @@ one pull request:
 - ✅ Fixed: a non-hex color in `[colors]` crashed at startup; a pipe or
   device at `config.toml` could hang or fill memory
 
+## 🚧 v0.6 — Profile and deeper results
+
+Worked in this order, one commit (or a few) per step, on one branch and
+one pull request:
+
+1. 🚧 Plan (this section)
+2. 🔲 Raw WPM (every keystroke, errors included), consistency (how even
+   your speed was, second by second) and a character breakdown (correct /
+   incorrect / missed) on Results, saved with every session
+3. 🔲 Results chart: WPM, raw speed and errors second by second for the
+   session you just finished ([#4](https://github.com/withrvr/typerush/issues/4))
+4. 🔲 History: raw WPM and consistency columns; filters by date range and
+   word settings (the mode is the category), sortable by date, WPM,
+   accuracy, raw, consistency or time
+5. 🔲 Level and experience points, earned from time spent typing; the XP a
+   run earned on Results
+6. 🔲 Runs started vs completed (a run ended with Esc, restarted or left
+   isn't completed)
+7. 🔲 Profile screen: level, typing since, days typed, streaks, started vs
+   completed, time and characters typed, and the best for every time and
+   word count side by side
+8. 🔲 Activity calendar on the Profile screen: a year of days shaded by how
+   long you typed, with a day you can pick to see its runs
+9. 🔲 Review, end-to-end test, docs, version 0.6.0
+
 ---
 
 ## 🔲 Planned
-
-### v0.6 — Profile and deeper results
-- 🔲 Profile screen: best per time and per word count side by side,
-  sessions started vs finished, total time typed, account-style summary
-- 🔲 Activity calendar: a year of days shaded by how much you practised
-- 🔲 Results chart: WPM and errors second by second for the session you
-  just finished ([#4](https://github.com/withrvr/typerush/issues/4))
-- 🔲 Raw WPM (every keystroke, errors included) and consistency (how even
-  your speed was) on Results and in history
-- 🔲 History filters: by mode, date range and word settings, sortable
-- 🔲 Character breakdown on Results: correct / incorrect / missed
-- 🔲 Level and experience points earned from time spent typing
 
 ### v0.7 — Practice modes
 - 🔲 Practise missed words: a run built from the words you got wrong
