@@ -379,6 +379,163 @@ mod tests {
         }
     }
 
+    /// Every screen in every state, with real data in every widget, on
+    /// every theme that paints a background, at a small, standard and big
+    /// terminal size, with and without each overlay: no cell is left in the
+    /// terminal's own colors (black on most terminals).
+    #[test]
+    fn no_terminal_colors_anywhere() {
+        use crate::app::{Screen, Second};
+        use std::time::{Duration, Instant};
+
+        // A month of varied history: several modes, word settings, replays,
+        // per-key counts and consistency, so every table, chart, heatmap,
+        // sparkline and calendar shade has something to draw.
+        let history: Vec<crate::storage::SessionRecord> = (0..40)
+            .map(|i| {
+                let mode = [
+                    "time-30s",
+                    "words-25+p",
+                    "quote",
+                    "time-15s+replay",
+                    "daily",
+                ][i % 5];
+                crate::storage::SessionRecord {
+                    wpm: 40.0 + (i * 7 % 50) as f64,
+                    accuracy: 90.0 + (i % 10) as f64,
+                    mode: mode.into(),
+                    word_count: 20,
+                    correct_chars: 100,
+                    total_chars: 110,
+                    duration_secs: 15.0 + (i % 4) as f64 * 15.0,
+                    timestamp: chrono::Local::now() - chrono::Days::new((i * 3 % 40) as u64),
+                    key_hits: [("a".to_string(), 20), ("e".to_string(), 5)].into(),
+                    key_misses: [("a".to_string(), 1), ("e".to_string(), 3)].into(),
+                    text: "the quick brown fox".into(),
+                    consistency: (i % 3 != 0).then_some(70.0 + i as f64),
+                    missed: i % 2,
+                    ended_early: i % 7 == 0,
+                }
+            })
+            .collect();
+
+        // Each case puts the app in one state.
+        type Setup = fn(&mut App);
+        let cases: Vec<(&str, Setup)> = vec![
+            ("menu", |app| app.screen = Screen::Menu),
+            ("typing", |app| {
+                app.start_game(Mode::Words(25)).unwrap();
+                app.started_at = Some(Instant::now() - Duration::from_secs(3));
+                for ch in "thx".chars() {
+                    app.handle_char(ch);
+                }
+            }),
+            ("typing time", |app| {
+                app.start_game(Mode::Time(30)).unwrap();
+                app.started_at = Some(Instant::now() - Duration::from_secs(12));
+            }),
+            ("paused", |app| {
+                app.start_game(Mode::Words(25)).unwrap();
+                app.toggle_pause();
+            }),
+            ("zen", |app| app.start_game(Mode::Zen).unwrap()),
+            ("results with chart", |app| {
+                app.start_game(Mode::Words(10)).unwrap();
+                let end = Instant::now();
+                app.ended_at = Some(end);
+                app.started_at = Some(end - Duration::from_secs(12));
+                app.timeline = (0..12)
+                    .map(|i| Second {
+                        typed: 3 + i % 4,
+                        correct: 3,
+                        errors: i % 4,
+                    })
+                    .collect();
+                app.session_just_saved = true;
+                app.screen = Screen::Results;
+            }),
+            ("results short", |app| {
+                app.start_game(Mode::Words(10)).unwrap();
+                app.finish_game();
+            }),
+            ("stats all", |app| app.screen = Screen::Stats),
+            ("stats bests", |app| {
+                app.screen = Screen::Stats;
+                let history = app.stats_cache.clone().unwrap();
+                let mut view =
+                    crate::storage::StatsView::new(&history, Some("bests"), Default::default());
+                view.move_selection(2);
+                app.stats_view = Some(view);
+            }),
+            ("stats filtered empty", |app| {
+                app.screen = Screen::Stats;
+                let history = app.stats_cache.clone().unwrap();
+                let filters = crate::storage::Filters::default()
+                    .next_range()
+                    .next_words()
+                    .next_words()
+                    .next_words();
+                app.stats_view = Some(crate::storage::StatsView::new(
+                    &history,
+                    Some("quote"),
+                    filters,
+                ));
+            }),
+            ("settings", |app| app.screen = Screen::Settings),
+            ("settings confirm reset", |app| {
+                let mut view = crate::settings::SettingsView::load(None, 5);
+                view.confirm_reset = true;
+                view.problem = Some("could not parse config.toml: expected `=`".into());
+                app.settings = Some(view);
+                app.screen = Screen::Settings;
+            }),
+            ("profile", |app| {
+                let history = app.stats_cache.clone().unwrap();
+                let mut profile = crate::progress::Profile::new(&history, 50);
+                profile.move_day(-3);
+                app.profile = Some(profile);
+                app.screen = Screen::Profile;
+            }),
+            ("help", |app| app.screen = Screen::Help),
+        ];
+
+        for (theme, palette) in builtin::ALL
+            .iter()
+            .filter(|(_, p)| p.background != Color::Reset)
+        {
+            for (case, setup) in &cases {
+                for overlay in ["none", "error", "notice"] {
+                    for (width, height) in [(40, 15), (80, 24), (130, 45)] {
+                        let mut app = App::new(None, *palette, Mode::Time(15));
+                        app.stats_cache = Some(history.clone());
+                        setup(&mut app);
+                        match overlay {
+                            "error" => app.error_message = Some("can't read notes.txt".into()),
+                            "notice" => app.notice = Some("exported 40 sessions to ~/x.csv".into()),
+                            _ => {}
+                        }
+                        let mut terminal = Terminal::new(TestBackend::new(width, height)).unwrap();
+                        terminal.draw(|f| render(f, &app)).unwrap();
+                        let buffer = terminal.backend().buffer();
+                        for y in 0..height {
+                            for x in 0..width {
+                                let cell = &buffer[(x, y)];
+                                assert!(
+                                    cell.bg != Color::Reset && cell.fg != Color::Reset,
+                                    "{theme} / {case} / overlay {overlay} / {width}x{height}: \
+                                     cell ({x}, {y}) {:?} has fg {:?} bg {:?}",
+                                    cell.symbol(),
+                                    cell.fg,
+                                    cell.bg
+                                );
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+
     /// The help overlay fits a standard 80×24 terminal whole: every line,
     /// none wrapped, and the close hint on its bottom border.
     #[test]

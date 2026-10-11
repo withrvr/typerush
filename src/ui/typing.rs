@@ -176,6 +176,9 @@ fn render_progress(f: &mut Frame, app: &App, area: Rect) {
         .fg(app.theme.secondary)
         .bg(app.theme.background)
         .add_modifier(Modifier::BOLD);
+    // The bar on the theme background: the filled part is the accent, the
+    // rest (and what's behind the label) the theme's own background.
+    let bar = Style::default().fg(gauge_color).bg(app.theme.background);
     if let Some((done, total)) = app.progress() {
         let ratio = if total == 0 {
             0.0
@@ -184,7 +187,7 @@ fn render_progress(f: &mut Frame, app: &App, area: Rect) {
         };
         let gauge = Gauge::default()
             .block(Block::default())
-            .gauge_style(Style::default().fg(gauge_color))
+            .gauge_style(bar)
             .ratio(ratio.min(1.0))
             .label(Span::styled(format!("{} / {}", done, total), label_style));
         f.render_widget(gauge, area);
@@ -193,7 +196,7 @@ fn render_progress(f: &mut Frame, app: &App, area: Rect) {
         let ratio = (elapsed / total as f64).min(1.0);
         let gauge = Gauge::default()
             .block(Block::default())
-            .gauge_style(Style::default().fg(gauge_color))
+            .gauge_style(bar)
             .ratio(ratio)
             .label(Span::styled(
                 format!("{:.0}s / {}s", elapsed, total),

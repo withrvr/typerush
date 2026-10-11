@@ -91,7 +91,15 @@ rule that keeps it fixed).
   `every_screen_is_on_the_theme_background` — every screen, with real data
   in every widget, on every painted theme: no cell in the terminal's own
   colors. Lesson: a check over "every screen" only covers the widgets the
-  test actually makes draw.
+  test actually makes draw. So the last pass, `no_terminal_colors_anywhere`,
+  draws every screen in every state with data in every widget (paused,
+  zen, a charted run, every Stats category with filters, a filled
+  calendar, a pending reset) under each overlay at three sizes — and it
+  found one more: the typing progress bar's filled part, whose
+  `gauge_style` had no background. The release binary was swept the same
+  way in tmux, counting default-background cells (zero on every painted
+  theme; a parser that tracks colors across lines, since `capture-pane`
+  only prints changes).
 - **A test passed by luck.** `results_show_xp_and_level_up` typed "hello
   world" after `restart()`, which deals new random words; it passed only
   while a frame happened to finish. Fix: set the words after restarting.
