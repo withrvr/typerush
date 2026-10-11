@@ -250,7 +250,21 @@ fn resolve_typing(typing: Option<&super::Typing>, warnings: &mut Vec<String>) ->
             defaults.pace
         }),
     };
+    let idle_limit = match typing.idle_limit {
+        None => defaults.idle_limit,
+        Some(0) => None,
+        Some(seconds) if seconds <= crate::options::MAX_IDLE_SECONDS => Some(seconds),
+        Some(seconds) => {
+            warnings.push(format!(
+                "idle_limit {seconds} is over {}, using {}",
+                crate::options::MAX_IDLE_SECONDS,
+                crate::options::idle_name(defaults.idle_limit)
+            ));
+            defaults.idle_limit
+        }
+    };
     TypingOptions {
+        idle_limit,
         pace,
         live_wpm: typing.live_wpm.unwrap_or(defaults.live_wpm),
         blind: typing.blind.unwrap_or(defaults.blind),
@@ -570,6 +584,21 @@ mod tests {
         let (resolved, warnings) = resolve(raw, None);
         assert_eq!(resolved.typing.pace, Pace::Off);
         assert!(warnings[0].contains("pace '9000'"), "{warnings:?}");
+    }
+
+    /// `idle_limit`: 0 turns it off, up to 600 s, more warns.
+    #[test]
+    fn idle_limit_from_the_config() {
+        for (seconds, limit) in [(0, None), (30, Some(30)), (600, Some(600))] {
+            let raw: Config = toml::from_str(&format!("[typing]\nidle_limit = {seconds}")).unwrap();
+            let (resolved, warnings) = resolve(raw, None);
+            assert!(warnings.is_empty(), "{warnings:?}");
+            assert_eq!(resolved.typing.idle_limit, limit);
+        }
+        let raw: Config = toml::from_str("[typing]\nidle_limit = 601").unwrap();
+        let (resolved, warnings) = resolve(raw, None);
+        assert_eq!(resolved.typing.idle_limit, Some(10));
+        assert!(warnings[0].contains("idle_limit 601"), "{warnings:?}");
     }
 
     #[test]

@@ -52,6 +52,16 @@ pub fn render(f: &mut Frame, app: &App, area: Rect) -> &'static [super::Hint] {
             .fg(theme.correct)
             .add_modifier(Modifier::BOLD),
     )];
+    if let (false, Some(idle), Some(limit)) = (
+        app.session_just_saved,
+        app.too_idle(),
+        app.options.idle_limit,
+    ) {
+        title.push(Span::styled(
+            format!("   not saved: {idle} s without a key (the limit is {limit} s)"),
+            Style::default().fg(theme.incorrect),
+        ));
+    }
     if app.session_just_saved {
         let (before, after) = (
             crate::progress::Level::of(comparison.xp_before),

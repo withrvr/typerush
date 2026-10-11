@@ -25,11 +25,12 @@ pub enum Row {
     Pace,
     Cursor,
     Sound,
+    IdleLimit,
     Reset,
 }
 
 /// Every row, in order.
-pub const ROWS: [Row; 12] = [
+pub const ROWS: [Row; 13] = [
     Row::Theme,
     Row::Start,
     Row::Punctuation,
@@ -41,6 +42,7 @@ pub const ROWS: [Row; 12] = [
     Row::Pace,
     Row::Cursor,
     Row::Sound,
+    Row::IdleLimit,
     Row::Reset,
 ];
 
@@ -251,6 +253,18 @@ impl App {
                     .is_some()
                 {
                     self.options.sound = KeySound::from_name(name).unwrap_or_default();
+                }
+            }
+            Row::IdleLimit => {
+                use crate::options::IDLE_CHOICES;
+                let current = view.typing.idle_limit.unwrap_or(0);
+                let at = IDLE_CHOICES.iter().position(|s| *s == current);
+                let seconds = IDLE_CHOICES[cycle(at, IDLE_CHOICES.len(), forward)];
+                if self
+                    .save_settings(&[("typing.idle_limit", seconds.to_string())])
+                    .is_some()
+                {
+                    self.options.idle_limit = (seconds > 0).then_some(seconds);
                 }
             }
             Row::Reset => {}

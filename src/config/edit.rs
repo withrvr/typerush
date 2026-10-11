@@ -46,6 +46,8 @@ pub enum Kind {
     Choice(&'static [&'static str]),
     /// `off`, `best` or a WPM.
     Pace,
+    /// Seconds from 0 (off) to the longest idle limit.
+    IdleLimit,
 }
 
 /// One setting of `config.toml`, by its dotted name (`defaults.mode`).
@@ -117,6 +119,10 @@ pub const KEYS: &[Key] = &[
     Key {
         name: "typing.pace",
         kind: Kind::Pace,
+    },
+    Key {
+        name: "typing.idle_limit",
+        kind: Kind::IdleLimit,
     },
     Key {
         name: "colors.accent",
@@ -245,6 +251,22 @@ pub fn check(key: &Key, raw: &str) -> Result<Setting, String> {
         },
         // Written back the one way the parser reads it (`#A6E22E`,
         // `dark_gray`), so a printed value is always one of those.
+        // `off` is 0; a number of seconds may end in `s`.
+        Kind::IdleLimit => {
+            let seconds = match lower.trim_end_matches('s') {
+                "off" => 0,
+                number => number
+                    .parse::<i64>()
+                    .map_err(|_| "not a number of seconds (or off)".to_string())?,
+            };
+            match (0..=crate::options::MAX_IDLE_SECONDS as i64).contains(&seconds) {
+                true => Ok(Setting::Number(seconds)),
+                false => Err(format!(
+                    "must be between 0 (off) and {}",
+                    crate::options::MAX_IDLE_SECONDS
+                )),
+            }
+        }
         // A WPM is written as a number, `off` / `best` as text.
         Kind::Pace => match Pace::from_name(raw) {
             Some(Pace::Wpm(wpm)) => Ok(Setting::Number(i64::from(wpm))),
@@ -331,6 +353,7 @@ fn file_value(config: &Config, name: &str) -> Option<String> {
         "typing.stop_on_error" => config.typing.as_ref()?.stop_on_error.clone(),
         "typing.cursor" => config.typing.as_ref()?.cursor.clone(),
         "typing.sound" => config.typing.as_ref()?.sound.clone(),
+        "typing.idle_limit" => number(config.typing.as_ref()?.idle_limit),
         "typing.pace" => config
             .typing
             .as_ref()?
@@ -369,6 +392,7 @@ fn default_value(key: &Key, theme: &ThemePalette) -> Setting {
         "typing.cursor" => text("underline"),
         "typing.sound" => text("off"),
         "typing.pace" => text("off"),
+        "typing.idle_limit" => Setting::Number(10),
         "colors.accent" => color(theme.accent),
         "colors.secondary" => color(theme.secondary),
         "colors.correct" => color(theme.correct),
@@ -579,6 +603,7 @@ mod tests {
             cursor: _,
             sound: _,
             pace: _,
+            idle_limit: _,
         } = Typing::default();
         let Colors {
             accent: _,
@@ -592,9 +617,9 @@ mod tests {
             neutral: _,
             background: _,
         } = Colors::default();
-        // 1 theme + 5 defaults + 3 words + 6 typing + 9 colors (10 minus
+        // 1 theme + 5 defaults + 3 words + 7 typing + 9 colors (10 minus
         // `extra`).
-        assert_eq!(KEYS.len(), 1 + 5 + 3 + 6 + 9);
+        assert_eq!(KEYS.len(), 1 + 5 + 3 + 7 + 9);
     }
 
     /// One valid value for each kind of setting, as typed by a person.
@@ -610,6 +635,7 @@ mod tests {
             Kind::Color => "#A6E22E",
             Kind::Choice(names) => names[names.len() - 1],
             Kind::Pace => "85",
+            Kind::IdleLimit => "30s",
         }
     }
 

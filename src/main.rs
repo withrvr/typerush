@@ -978,6 +978,7 @@ fn after_input(app: &mut App, last_screen: Screen, session_saved: &mut bool, sta
 ///   - the mode is Zen (no-stats philosophy)
 ///   - the session is shorter than 1 second
 ///   - the user hasn't typed a single character
+///   - it sat idle for the idle limit or longer (`App::too_idle`)
 ///
 /// File I/O errors are intentionally swallowed — losing a stat row is never a
 /// good reason to crash on the user.
@@ -990,6 +991,10 @@ fn save_current_session(app: &mut App, stats_file: &Path) {
     }
     let duration = app.elapsed().as_secs_f64();
     if duration < 1.0 || app.total_typed_chars == 0 {
+        return;
+    }
+    // A run left idle too long isn't a fair result (Results says why).
+    if app.too_idle().is_some() {
         return;
     }
     let record = SessionRecord {
@@ -1920,6 +1925,31 @@ mod tests {
         apply_cli_autostart(&mut app, &cli, &stats_file).unwrap();
         assert_eq!(app.mode, Mode::Missed);
         assert!(app.words.iter().all(|w| w.text == "hello"));
+    }
+
+    /// A run left idle past the limit isn't saved, and Results says why;
+    /// with the check off it is saved.
+    #[test]
+    fn idle_runs_are_not_saved() {
+        let dir = tempfile::tempdir().unwrap();
+        let stats_file = dir.path().join("stats.json");
+        for (limit, saved) in [(Some(10), false), (None, true)] {
+            let mut app = make_typing_app();
+            app.options.idle_limit = limit;
+            // Twelve seconds pass before the keys come.
+            app.started_at = Some(std::time::Instant::now() - Duration::from_secs(12));
+            for ch in "hello world".chars() {
+                app.handle_char(ch);
+            }
+            after_input(&mut app, Screen::Typing, &mut false, &stats_file);
+            assert_eq!(app.session_just_saved, saved, "{limit:?}");
+            let title = screen(&app, 100, 24)[0].clone();
+            assert_eq!(
+                title.contains("not saved: 12 s without a key (the limit is 10 s)"),
+                !saved,
+                "{title}"
+            );
+        }
     }
 
     /// `--daily` starts today's challenge straight away.

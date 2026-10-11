@@ -63,6 +63,8 @@ symbol_count = 25
 # cursor = "underline"   # "underline" | "block" | "bar"
 # sound = "off"          # "off" | "errors" | "keys" — the terminal's bell
 # pace = "off"           # "off" | "best" (your best for the mode) | a WPM, e.g. 60
+# idle_limit = 10        # a run with this many seconds without a key isn't saved;
+#                        # 0 = never
 
 # -----------------------------------------------------------------------------
 # Color overrides — applied ON TOP of the chosen theme.

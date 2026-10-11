@@ -160,6 +160,10 @@ fn row_line(
         Row::Pace => ("pace", view.typing.pace.name()),
         Row::Cursor => ("cursor", view.typing.cursor.name().to_string()),
         Row::Sound => ("key sound", view.typing.sound.name().to_string()),
+        Row::IdleLimit => (
+            "idle limit",
+            crate::options::idle_name(view.typing.idle_limit),
+        ),
         Row::Reset => unreachable!("drawn above"),
     };
     let label = Span::styled(

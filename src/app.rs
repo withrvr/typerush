@@ -1073,6 +1073,30 @@ impl App {
         Some((100.0 * (1.0 - variance.sqrt() / mean)).clamp(0.0, 100.0))
     }
 
+    /// The longest stretch of whole seconds without a key in this run
+    /// (paused time left out, like everywhere): the idle check.
+    pub fn longest_idle(&self) -> u64 {
+        let seconds = self.elapsed().as_secs() as usize;
+        let (mut longest, mut run) = (0u64, 0u64);
+        for i in 0..seconds {
+            if self.timeline.get(i).is_none_or(|second| second.typed == 0) {
+                run += 1;
+                longest = longest.max(run);
+            } else {
+                run = 0;
+            }
+        }
+        longest
+    }
+
+    /// `Some(idle seconds)` when the run sat idle for at least the limit
+    /// (`typing.idle_limit`): it isn't saved, and Results says why.
+    pub fn too_idle(&self) -> Option<u64> {
+        let limit = self.options.idle_limit?;
+        let idle = self.longest_idle();
+        (idle >= limit).then_some(idle)
+    }
+
     /// Characters of the text never typed: what was left of a fixed text
     /// (words, quote, code, symbols, custom, daily) when the run ended
     /// early. Endless runs (time, zen) miss nothing — there is always more.
@@ -1854,6 +1878,42 @@ mod tests {
         let run = app.missed_words_run().unwrap();
         assert_eq!(run.len(), 50);
         assert!(run.contains(&"w79".to_string()), "missed twice: kept");
+    }
+
+    /// The idle check counts the longest stretch of whole seconds with no
+    /// key — at the end too (walking away from a time run) — against the
+    /// limit; off, nothing is too idle.
+    #[test]
+    fn idle_runs_are_caught() {
+        let mut app = custom_app(&["abc"]);
+        let end = Instant::now();
+        app.ended_at = Some(end);
+        app.started_at = Some(end - Duration::from_secs(20));
+        let typing = Second {
+            typed: 3,
+            correct: 3,
+            errors: 0,
+        };
+        // Keys in seconds 0–3 and 16–19: twelve idle seconds between.
+        app.timeline = (0..20)
+            .map(|i| {
+                if !(4..16).contains(&i) {
+                    typing
+                } else {
+                    Second::default()
+                }
+            })
+            .collect();
+        assert_eq!(app.longest_idle(), 12);
+        app.options.idle_limit = Some(10);
+        assert_eq!(app.too_idle(), Some(12));
+        app.options.idle_limit = Some(15);
+        assert_eq!(app.too_idle(), None);
+        // Walking away at the end counts too: keys only in seconds 0–3.
+        app.timeline = vec![typing; 4];
+        assert_eq!(app.longest_idle(), 16);
+        app.options.idle_limit = None;
+        assert_eq!(app.too_idle(), None);
     }
 
     /// The bell is asked for on every key, on mistakes only (refused keys

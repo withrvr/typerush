@@ -28,6 +28,7 @@
 //! cursor = "underline"          # underline | block | bar
 //! sound = "off"                 # off | errors | keys (the terminal bell)
 //! pace = "off"                  # off | best | a WPM such as 60
+//! idle_limit = 10               # a run idle this long isn't saved; 0 = never
 //!
 //! [colors]                      # optional — overrides slots of the chosen theme
 //! accent = "#FF00FF"
@@ -76,6 +77,8 @@ pub struct Typing {
     pub sound: Option<String>,
     /// `"off"` | `"best"` | a WPM (`60` or `"60"`): the pace cursor.
     pub pace: Option<TextOrNumber>,
+    /// Seconds without a key after which a run isn't saved; 0 = never.
+    pub idle_limit: Option<u64>,
 }
 
 /// A value written either as text or as a whole number (`pace = 60` and

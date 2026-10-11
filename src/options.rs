@@ -143,6 +143,11 @@ impl Pace {
     }
 }
 
+/// Longest idle limit, in seconds.
+pub const MAX_IDLE_SECONDS: u64 = 600;
+/// The idle limits Settings cycles through (0 = off).
+pub const IDLE_CHOICES: [u64; 6] = [0, 5, 10, 15, 30, 60];
+
 /// The resolved `[typing]` settings.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct TypingOptions {
@@ -156,6 +161,9 @@ pub struct TypingOptions {
     pub cursor: CursorStyle,
     pub sound: KeySound,
     pub pace: Pace,
+    /// A run with this many seconds or more without a key isn't saved;
+    /// `None` = never.
+    pub idle_limit: Option<u64>,
 }
 
 impl Default for TypingOptions {
@@ -167,8 +175,14 @@ impl Default for TypingOptions {
             cursor: CursorStyle::Underline,
             sound: KeySound::Off,
             pace: Pace::Off,
+            idle_limit: Some(10),
         }
     }
+}
+
+/// `off` or `10s` — an idle limit as Settings shows it.
+pub fn idle_name(limit: Option<u64>) -> String {
+    limit.map_or("off".into(), |seconds| format!("{seconds}s"))
 }
 
 impl TypingOptions {

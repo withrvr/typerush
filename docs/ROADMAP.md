@@ -233,7 +233,7 @@ one pull request:
    mode, or at a target WPM
 7. ✅ Practise missed words: every session keeps the words you got wrong;
    a `missed` run is built from your most-missed recent words
-8. 🔲 Idle detection: a run with a long stretch without a key (10 s by
+8. ✅ Idle detection: a run with a long stretch without a key (10 s by
    default) is not saved, and Results says why
 9. 🔲 Custom themes from files in `~/.typerush/themes/`, on top of a
    built-in or from scratch, listed and picked like the built-in ones
