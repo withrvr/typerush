@@ -197,7 +197,7 @@ flowchart TD
     end
     subgraph code
         direction LR
-        rust ~~~ python ~~~ javascript ~~~ go ~~~ java ~~~ sql ~~~ shell
+        rust ~~~ python ~~~ js ~~~ go ~~~ java ~~~ sql ~~~ shell
     end
     subgraph symbols
         direction LR

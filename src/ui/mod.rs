@@ -573,7 +573,7 @@ mod tests {
                 };
                 let code = rows
                     .iter()
-                    .find(|row| row.concat().contains("javascript"))
+                    .find(|row| row.concat().contains("python"))
                     .unwrap();
                 let first = (1..79).find(|&x| code[x].trim() != "").unwrap();
                 let last = (1..79).rev().find(|&x| code[x].trim() != "").unwrap();

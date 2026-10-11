@@ -332,7 +332,7 @@ pub fn build_menu(snippets: &[Snippet], last_custom_file: Option<&Path>) -> Vec<
         start("words", "100", Mode::Words(100)),
         start("code", "rust", Mode::Code(CodeLang::Rust)),
         start("code", "python", Mode::Code(CodeLang::Python)),
-        start("code", "javascript", Mode::Code(CodeLang::JavaScript)),
+        start("code", "js", Mode::Code(CodeLang::JavaScript)),
         start("code", "go", Mode::Code(CodeLang::Go)),
         start("code", "java", Mode::Code(CodeLang::Java)),
         start("code", "sql", Mode::Code(CodeLang::Sql)),
@@ -1745,7 +1745,7 @@ mod tests {
         };
         assert_eq!(
             row("code"),
-            ["rust", "python", "javascript", "go", "java", "sql", "shell"]
+            ["rust", "python", "js", "go", "java", "sql", "shell"]
         );
         assert_eq!(row("symbols"), ["25", "50"]);
         // Rows with a choice of options first, then the single runs, then
