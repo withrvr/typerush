@@ -162,7 +162,7 @@ one pull request:
    same words again, compared with the original run
 4. ✅ Daily challenge: the same words for everyone on a given day, from a
    seed of the date (`daily` menu row, `--daily`), with today's best
-5. 🔲 Export stats as CSV: `typerush export [FILE]`, and `e` on the Stats
+5. ✅ Export stats as CSV: `typerush export [FILE]`, and `e` on the Stats
    screen
 6. 🔲 `typerush config path / show / get / set / reset` and
    `typerush --init-config` (also `config init`): edit

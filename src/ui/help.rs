@@ -1,6 +1,6 @@
 //! Two floating overlays drawn on top of any screen:
 //!  - the keybindings help (toggled with `?` / F1, closed by a click too)
-//!  - a transient error modal (dismissed by any keypress or click)
+//!  - a transient error or notice modal (dismissed by any keypress or click)
 
 use ratatui::{
     prelude::*,
@@ -9,7 +9,7 @@ use ratatui::{
 
 use ratatui::crossterm::event::KeyCode;
 
-use crate::{app::App, theme::ThemePalette};
+use crate::app::App;
 
 /// Render the keybindings overlay. Sized to its content (23 rows, so it fits
 /// an 80×24 window whole). On a smaller terminal the box shrinks and the
@@ -86,9 +86,10 @@ pub fn render(f: &mut Frame, app: &App, screen: Rect) -> &'static [super::Hint] 
     HINTS
 }
 
-/// Render the transient error modal. Dismissed by any keypress or click from
-/// the main loop. Tall enough for the wrapped message plus the hint line.
-pub fn render_error(f: &mut Frame, theme: &ThemePalette, message: &str) {
+/// Render a transient modal — an error, or a notice — titled `title` with a
+/// `border` color. Dismissed by any keypress or click from the main loop.
+/// Tall enough for the wrapped message plus the hint line.
+pub fn render_message(f: &mut Frame, title: &'static str, border: Color, message: &str) {
     use unicode_width::UnicodeWidthStr;
     // Messages can carry file paths, which may contain control characters.
     // Made safe and indented line by line, so a multi-line message (a TOML
@@ -116,8 +117,8 @@ pub fn render_error(f: &mut Frame, theme: &ThemePalette, message: &str) {
         .block(
             Block::default()
                 .borders(Borders::ALL)
-                .border_style(Style::default().fg(theme.error))
-                .title(" error "),
+                .border_style(Style::default().fg(border))
+                .title(title),
         );
     f.render_widget(p, area);
 }

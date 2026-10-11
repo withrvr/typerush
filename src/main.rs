@@ -11,6 +11,7 @@
 //!   4. Restore the terminal on exit (and on panic, via a hook).
 
 mod app;
+mod commands;
 mod config;
 mod game;
 mod state;
@@ -63,6 +64,8 @@ where
     version,
     about = "In your terminal — a fast WPM typing trainer",
     long_about = None,
+    // `typerush --time 30 export` is a mistake, not an export.
+    args_conflicts_with_subcommands = true,
 )]
 struct Cli {
     /// Custom text file to use as the word source.
@@ -139,6 +142,9 @@ struct Cli {
     /// Print the snippets found in ~/.typerush/snippets/ and exit.
     #[arg(long)]
     list_snippets: bool,
+
+    #[command(subcommand)]
+    command: Option<commands::Command>,
 }
 
 impl Cli {
@@ -174,25 +180,41 @@ fn main() -> Result<()> {
     if cli.list_snippets {
         print_snippets_and_exit();
     }
+    if let Some(command) = &cli.command {
+        let result = commands::run(
+            command,
+            &storage::stats_path(),
+            &mut stdout().lock(),
+            &mut std::io::stderr().lock(),
+        );
+        if let Err(error) = result {
+            print_error_and_exit(&error);
+        }
+        return Ok(());
+    }
     install_panic_hook();
     let mut terminal = setup_terminal()?;
     let run_result = run_app(&mut terminal, cli);
     let restored = restore_terminal(&mut terminal);
     if let Err(error) = run_result {
-        // The report Rust prints for an `Err` from `main`. File paths in it
-        // are already made safe where the error was built; each line goes
-        // through `printable` too, as a backstop.
-        let report = format!("{error:?}");
-        let lines: Vec<_> = report.lines().map(text::printable).collect();
-        eprintln!("Error: {}", lines.join("\n"));
         // The run's error is the one that matters; still mention a failed
         // terminal restore rather than dropping it.
         if let Err(restore_error) = restored {
-            eprintln!("(also: couldn't restore the terminal: {restore_error:#})");
+            eprintln!("(couldn't restore the terminal: {restore_error:#})");
         }
-        std::process::exit(1);
+        print_error_and_exit(&error);
     }
     restored
+}
+
+/// Print `error` the way Rust reports an `Err` from `main`, and exit with
+/// status 1. File paths in it are already made safe where the error was
+/// built; each line goes through `printable` too, as a backstop.
+fn print_error_and_exit(error: &anyhow::Error) -> ! {
+    let report = format!("{error:?}");
+    let lines: Vec<_> = report.lines().map(text::printable).collect();
+    eprintln!("Error: {}", lines.join("\n"));
+    std::process::exit(1);
 }
 
 /// Print every built-in theme name on its own line and exit with status 0.
@@ -294,6 +316,7 @@ fn run_app(terminal: &mut Tui, cli: Cli) -> Result<()> {
     if let Some(first_warning) = warnings.into_iter().next() {
         app.error_message = Some(first_warning);
     }
+    app.export_file = Some(storage::data_dir().join("stats.csv"));
     let stats_file = storage::stats_path();
     apply_cli_autostart(&mut app, &cli, &stats_file)?;
 
@@ -316,9 +339,9 @@ fn run_app(terminal: &mut Tui, cli: Cli) -> Result<()> {
                     if key.kind != KeyEventKind::Press && key.kind != KeyEventKind::Repeat {
                         continue;
                     }
-                    // If a modal error is showing, any key dismisses it.
-                    if app.error_message.is_some() {
-                        app.error_message = None;
+                    // If a modal (error or notice) is showing, any key
+                    // dismisses it.
+                    if app.dismiss_modal() {
                         continue;
                     }
                     handle_key(&mut app, key.code, key.modifiers);
@@ -447,10 +470,11 @@ fn toggle_help(app: &mut App) {
 /// only highlights it.
 fn handle_mouse(app: &mut App, mouse: MouseEvent) {
     let released = mouse.kind == MouseEventKind::Up(MouseButton::Left);
-    // Modal error / help overlay: a click anywhere closes it, like any key.
-    if app.error_message.is_some() {
+    // Modal error, notice or help overlay: a click anywhere closes it, like
+    // any key.
+    if app.error_message.is_some() || app.notice.is_some() {
         if released {
-            app.error_message = None;
+            app.dismiss_modal();
         }
         return;
     }
@@ -648,7 +672,7 @@ fn handle_results_key(app: &mut App, code: KeyCode, mods: KeyModifiers) {
 
 /// Keymap for the historical stats screen: ←/→ (h/l) pick a category, `a`
 /// shows all sessions, ↑/↓ (j/k), PgUp/PgDn and Home/End move the
-/// selection, Enter replays the selected session.
+/// selection, Enter replays the selected session, `e` exports CSV.
 fn handle_stats_key(app: &mut App, code: KeyCode, _mods: KeyModifiers) {
     let history = app.stats_cache.as_deref().unwrap_or(&[]);
     if let Some(view) = app.stats_view.as_mut() {
@@ -677,9 +701,32 @@ fn handle_stats_key(app: &mut App, code: KeyCode, _mods: KeyModifiers) {
         return;
     }
     match code {
+        KeyCode::Char('e') => export_stats(app),
         KeyCode::Char('m') | KeyCode::Esc | KeyCode::Tab => app.screen = Screen::Menu,
         KeyCode::Char('q') => app.should_quit = true,
         _ => {}
+    }
+}
+
+/// `e` on Stats: write every session as CSV to `app.export_file`
+/// (`~/.typerush/stats.csv`, replaced each time) and say where it went.
+fn export_stats(app: &mut App) {
+    let Some(file) = app.export_file.clone() else {
+        return;
+    };
+    let sessions = app.stats_cache.as_deref().unwrap_or(&[]);
+    let count = sessions.len();
+    let shown = text::printable(&file.display().to_string()).into_owned();
+    match storage::export_csv(&file, sessions) {
+        Ok(()) => {
+            app.notice = Some(format!(
+                "exported {} to\n{shown}",
+                commands::sessions_text(count)
+            ));
+        }
+        Err(error) => {
+            app.show_error(&anyhow::Error::new(error).context(format!("can't write {shown}")))
+        }
     }
 }
 
@@ -1662,6 +1709,36 @@ mod tests {
         assert_eq!(app.results_comparison.unwrap().previous_mode_best, None);
         let rows = screen(&app, 80, 24).join("\n");
         assert!(rows.contains("today best  — wpm"), "{rows}");
+    }
+
+    /// `e` on Stats writes the CSV export and says where in a notice (not an
+    /// error); any key closes it.
+    #[test]
+    fn stats_e_exports_csv() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut app = App::new(None, ThemePalette::default(), Mode::Time(15));
+        app.export_file = Some(dir.path().join("stats.csv"));
+        app.stats_cache = Some(vec![SessionRecord {
+            mode: "quote".into(),
+            ..SessionRecord::default()
+        }]);
+        app.screen = Screen::Stats;
+        after_input(&mut app, Screen::Menu, &mut false, Path::new("unused"));
+        draw(&app);
+        let export = target_cell(
+            &app,
+            ClickAction::Key(KeyCode::Char('e'), KeyModifiers::NONE),
+        );
+        click(&mut app, export);
+        let notice = app.notice.clone().expect("notice shown");
+        assert!(notice.starts_with("exported 1 session to"), "{notice}");
+        assert!(app.error_message.is_none());
+        let csv = std::fs::read_to_string(dir.path().join("stats.csv")).unwrap();
+        assert!(csv.contains(",quote,"), "{csv}");
+        let rows = screen(&app, 80, 24).join("\n");
+        assert!(rows.contains(" done "), "{rows}");
+        assert!(app.dismiss_modal());
+        assert!(app.notice.is_none() && !app.dismiss_modal());
     }
 
     // ── saving ───────────────────────────────────────────────────────────────

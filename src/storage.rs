@@ -154,6 +154,61 @@ pub fn save_session_to_path(path: &Path, record: &SessionRecord) -> Result<Vec<S
     Ok(history)
 }
 
+/// Columns of the CSV export, in order.
+pub const CSV_HEADER: &str =
+    "timestamp,mode,wpm,accuracy,duration_secs,words,correct_chars,total_chars";
+
+/// `sessions` as CSV (RFC 4180, one row per session, oldest first) for a
+/// spreadsheet. Timestamps are RFC 3339 with the UTC offset; numbers have
+/// two decimals. Key counts and session text are left out.
+pub fn to_csv(sessions: &[SessionRecord]) -> String {
+    use std::fmt::Write as _;
+    let mut csv = format!("{CSV_HEADER}\n");
+    for s in sessions {
+        let _ = writeln!(
+            csv,
+            "{},{},{:.2},{:.2},{:.2},{},{},{}",
+            s.timestamp
+                .to_rfc3339_opts(chrono::SecondsFormat::Secs, false),
+            csv_field(&crate::text::printable(&s.mode)),
+            s.wpm,
+            s.accuracy,
+            s.duration_secs,
+            s.word_count,
+            s.correct_chars,
+            s.total_chars,
+        );
+    }
+    csv
+}
+
+/// One CSV text field. A spreadsheet runs a cell that starts with `=`, `+`,
+/// `-` or `@` as a formula, and a mode label carries a file name (or
+/// anything, in a hand-edited stats.json): such a field gets a leading `'`.
+/// Fields with a comma or quote are quoted. (Control characters are already
+/// gone: the label went through `text::printable`.)
+fn csv_field(text: &str) -> String {
+    let text = if text.starts_with(['=', '+', '-', '@']) {
+        format!("'{text}")
+    } else {
+        text.to_string()
+    };
+    if text.contains([',', '"']) {
+        format!("\"{}\"", text.replace('"', "\"\""))
+    } else {
+        text
+    }
+}
+
+/// Write [`to_csv`] of `sessions` to `path`, creating its folder if needed;
+/// atomic like every file TypeRush writes.
+pub fn export_csv(path: &Path, sessions: &[SessionRecord]) -> std::io::Result<()> {
+    if let Some(dir) = path.parent().filter(|dir| !dir.as_os_str().is_empty()) {
+        fs::create_dir_all(dir)?;
+    }
+    write_atomic(path, &to_csv(sessions))
+}
+
 /// Load every saved session at `path` (normally [`stats_path`]) in the order
 /// they were recorded (oldest first). A missing file is treated as an empty
 /// history; a corrupt file falls back to an empty list.
@@ -1142,6 +1197,49 @@ mod tests {
         assert_eq!(any.previous_mode_best, Some(90.0));
         let fresh = ResultsComparison::new(&sessions, false, "daily", Some("other"));
         assert_eq!(fresh.previous_mode_best, None);
+    }
+
+    /// The CSV export: a header, one row per session in order, fields that
+    /// need it quoted, formula-like labels defused and control characters
+    /// gone.
+    #[test]
+    fn csv_export_rows_and_escaping() {
+        use chrono::TimeZone;
+        let mut first = make_record(61.234, "time-30s+p", 0);
+        first.timestamp = Local.with_ymd_and_hms(2026, 10, 11, 9, 5, 7).unwrap();
+        let csv = to_csv(&[
+            first,
+            make_record(70.0, "custom-a,\"b\"", 0),
+            make_record(80.0, "=HYPERLINK(1)", 0),
+            make_record(90.0, "custom-\u{1b}[2J", 0),
+        ]);
+        let lines: Vec<&str> = csv.lines().collect();
+        assert_eq!(lines[0], CSV_HEADER);
+        let offset = first_offset(&csv);
+        assert!(
+            offset.len() == 6 && offset.starts_with(['+', '-']),
+            "{offset}"
+        );
+        assert_eq!(
+            lines[1],
+            format!("2026-10-11T09:05:07{offset},time-30s+p,61.23,95.00,30.00,30,100,105")
+        );
+        assert!(
+            lines[2].contains(",\"custom-a,\"\"b\"\"\",70.00,"),
+            "{}",
+            lines[2]
+        );
+        assert!(lines[3].contains(",'=HYPERLINK(1),"), "{}", lines[3]);
+        assert!(lines[4].contains(",custom-?[2J,"), "{}", lines[4]);
+        assert_eq!(lines.len(), 5);
+        assert_eq!(to_csv(&[]), format!("{CSV_HEADER}\n"));
+    }
+
+    /// The UTC offset written on the first row (it depends on the machine's
+    /// time zone): the text after the seconds of its timestamp.
+    fn first_offset(csv: &str) -> String {
+        let timestamp = csv.lines().nth(1).unwrap().split(',').next().unwrap();
+        timestamp["2026-10-11T09:05:07".len()..].to_string()
     }
 
     /// A record without text (every record before v0.5) loads with none, and

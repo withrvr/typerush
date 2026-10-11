@@ -528,6 +528,9 @@ pub struct App {
     pub should_quit: bool,
     /// Transient error message rendered as a modal overlay.
     pub error_message: Option<String>,
+    /// Transient message that isn't an error ("exported 42 sessions to …"),
+    /// shown and dismissed like `error_message`.
+    pub notice: Option<String>,
     /// Active color palette — read by every UI module on every frame.
     pub theme: ThemePalette,
 
@@ -570,6 +573,10 @@ pub struct App {
     /// Where `app_state` is saved. `None` means "don't persist" — the
     /// default, so tests never write to the real home directory.
     pub state_file: Option<PathBuf>,
+    /// Where `e` on the Stats screen writes the CSV export
+    /// (`~/.typerush/stats.csv`). `None` — the default, and in tests unless
+    /// they set one — means exporting is off.
+    pub export_file: Option<PathBuf>,
 
     // --- replay (v0.5.0) ---
     /// The session being typed again, while replaying one. Restarting
@@ -620,6 +627,7 @@ impl App {
             custom_file,
             should_quit: false,
             error_message: None,
+            notice: None,
             theme: palette,
             key_hits: HashMap::new(),
             key_misses: HashMap::new(),
@@ -632,6 +640,7 @@ impl App {
             snippets: Vec::new(),
             app_state: AppState::default(),
             state_file: None,
+            export_file: None,
             replay: None,
             click_targets: RefCell::new(Vec::new()),
             pressed_target: None,
@@ -677,6 +686,15 @@ impl App {
             }
         }
         label
+    }
+
+    /// Close the error or notice modal if one is open; whether one was.
+    /// Any key or click does this before acting on anything else.
+    pub fn dismiss_modal(&mut self) -> bool {
+        let open = self.error_message.is_some() || self.notice.is_some();
+        self.error_message = None;
+        self.notice = None;
+        open
     }
 
     /// Show `error` in the error modal, with its cause chain ("can't read

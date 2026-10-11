@@ -56,9 +56,11 @@ pub fn render(frame: &mut Frame, app: &App) {
         Screen::Help => help::render(frame, app, body),
     };
     render_footer(frame, app, footer, hints);
-    // 3. Error overlay sits on top of everything else when present.
+    // 3. An error or notice sits on top of everything else when present.
     if let Some(message) = &app.error_message {
-        help::render_error(frame, &app.theme, message);
+        help::render_message(frame, " error ", app.theme.error, message);
+    } else if let Some(message) = &app.notice {
+        help::render_message(frame, " done ", app.theme.accent, message);
     }
 }
 

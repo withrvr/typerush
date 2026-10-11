@@ -106,14 +106,14 @@ pub fn render(f: &mut Frame, app: &App, area: Rect) -> &'static [super::Hint] {
         render_sessions_table(f, app, layout[3], sessions, view);
     }
 
-    // What fits in 80 columns; `a` and `q` still work, and [all] is in the
-    // title.
+    // What fits in 80 columns. ↑/↓, `a` and `q` still work (help lists
+    // them); the rows, ‹ › and [all] are clickable.
     const HINTS: &[super::Hint] = &[
         // Two-way navigation hints aren't clickable: ‹ › in the title, the
         // rows themselves and the mouse wheel do it with the mouse.
         ("←/→ category", None),
-        ("↑/↓ select", None),
         ("Enter replay", key(KeyCode::Enter)),
+        ("e export", key(KeyCode::Char('e'))),
         ("Esc menu", key(KeyCode::Esc)),
         ("? help", key(KeyCode::Char('?'))),
     ];
