@@ -197,7 +197,7 @@ one pull request:
 4. ✅ History: raw WPM and consistency columns; filters by date range and
    word settings (the mode is the category), sortable by date, WPM,
    accuracy, raw, consistency or time
-5. 🔲 Level and experience points, earned from time spent typing; the XP a
+5. ✅ Level and experience points, earned from time spent typing; the XP a
    run earned on Results
 6. 🔲 Runs started vs completed (a run ended with Esc, restarted or left
    isn't completed)

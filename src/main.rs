@@ -14,6 +14,7 @@ mod app;
 mod commands;
 mod config;
 mod game;
+mod progress;
 mod settings;
 mod state;
 mod storage;
@@ -2078,6 +2079,38 @@ mod tests {
         handle_key(&mut app, KeyCode::Char('w'), KeyModifiers::NONE); // +n
         let rows = screen(&app, 80, 24).join("\n");
         assert!(rows.contains("sessions · none match"), "{rows}");
+    }
+
+    /// Results says what a saved run earned, and a level-up when it crosses
+    /// one: 295 s before plus a 6 s run passes level 2 at 300 XP.
+    #[test]
+    fn results_show_xp_and_level_up() {
+        let dir = tempfile::tempdir().unwrap();
+        let stats_file = dir.path().join("stats.json");
+        let earlier = SessionRecord {
+            duration_secs: 295.0,
+            mode: "quote".into(),
+            timestamp: chrono::Local::now(),
+            ..SessionRecord::default()
+        };
+        storage::save_session_to_path(&stats_file, &earlier).unwrap();
+        let mut app = make_typing_app();
+        app.started_at = Some(std::time::Instant::now() - Duration::from_secs(6));
+        for ch in "hello world".chars() {
+            app.handle_char(ch);
+        }
+        after_input(&mut app, Screen::Typing, &mut false, &stats_file);
+        let title = screen(&app, 80, 24)[0].clone();
+        assert!(title.contains("+6 xp  ·  ★ level 2!"), "{title}");
+
+        app.restart().unwrap();
+        app.started_at = Some(std::time::Instant::now() - Duration::from_secs(4));
+        for ch in "hello world".chars() {
+            app.handle_char(ch);
+        }
+        after_input(&mut app, Screen::Typing, &mut false, &stats_file);
+        let title = screen(&app, 80, 24)[0].clone();
+        assert!(title.contains("+4 xp  ·  level 2  ·  1%"), "{title}");
     }
 
     // ── saving ───────────────────────────────────────────────────────────────

@@ -438,6 +438,10 @@ pub struct ResultsComparison {
     /// Best WPM in this mode *before* this session — on the same text only,
     /// when one was given (the daily challenge: today's best).
     pub previous_mode_best: Option<f64>,
+    /// XP earned before this session, and with it (the same if it wasn't
+    /// saved): the Results title shows what it earned and any level-up.
+    pub xp_before: u64,
+    pub xp_after: u64,
 }
 
 impl ResultsComparison {
@@ -454,7 +458,14 @@ impl ResultsComparison {
     ) -> Self {
         let previous =
             &sessions[..sessions.len() - usize::from(includes_current).min(sessions.len())];
+        let xp_before = crate::progress::total_xp(previous);
         Self {
+            xp_before,
+            xp_after: xp_before
+                + sessions[previous.len()..]
+                    .iter()
+                    .map(crate::progress::session_xp)
+                    .sum::<u64>(),
             last_wpm: previous.last().map(|s| s.wpm),
             previous_mode_best: match same_text {
                 None => personal_best_for_mode(previous, mode_label),
@@ -1473,6 +1484,17 @@ mod tests {
         assert_eq!(any.previous_mode_best, Some(90.0));
         let fresh = ResultsComparison::new(&sessions, false, "daily", Some("other"));
         assert_eq!(fresh.previous_mode_best, None);
+    }
+
+    /// The XP before and with the session shown: the same when it wasn't
+    /// saved (it isn't in the history then).
+    #[test]
+    fn results_comparison_xp() {
+        let sessions = vec![make_record(50.0, "quote", 1), make_record(60.0, "quote", 0)];
+        let saved = ResultsComparison::new(&sessions, true, "quote", None);
+        assert_eq!((saved.xp_before, saved.xp_after), (30, 60));
+        let unsaved = ResultsComparison::new(&sessions, false, "quote", None);
+        assert_eq!((unsaved.xp_before, unsaved.xp_after), (60, 60));
     }
 
     /// The CSV export: a header, one row per session in order, fields that

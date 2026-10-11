@@ -31,20 +31,8 @@ pub fn render(f: &mut Frame, app: &App, area: Rect) -> &'static [super::Hint] {
     ])
     .split(area);
 
-    let title = Paragraph::new(Span::styled(
-        "  ✓ session complete",
-        Style::default()
-            .fg(theme.correct)
-            .add_modifier(Modifier::BOLD),
-    ));
-    f.render_widget(title, layout[0]);
-
-    let wpm = app.wpm();
-    let acc = app.accuracy();
-    let elapsed = app.elapsed().as_secs_f64();
-    let mode_label = app.session_label();
-
     let sessions: &[storage::SessionRecord] = app.stats_cache.as_deref().unwrap_or(&[]);
+    let mode_label = app.session_label();
     // Normally computed once on screen entry (main loop); computed here only
     // if something renders Results without going through it (e.g. tests).
     let comparison = app.results_comparison.unwrap_or_else(|| {
@@ -55,6 +43,48 @@ pub fn render(f: &mut Frame, app: &App, area: Rect) -> &'static [super::Hint] {
             app.best_text().as_deref(),
         )
     });
+
+    // The title row also says what the run earned: "+31 xp · level 7 · 62%",
+    // or a level-up. Unsaved runs (zen, under a second) earn nothing.
+    let mut title = vec![Span::styled(
+        "  ✓ session complete",
+        Style::default()
+            .fg(theme.correct)
+            .add_modifier(Modifier::BOLD),
+    )];
+    if app.session_just_saved {
+        let (before, after) = (
+            crate::progress::Level::of(comparison.xp_before),
+            crate::progress::Level::of(comparison.xp_after),
+        );
+        let dim = Style::default().fg(theme.pending);
+        title.push(Span::styled(
+            format!("   +{} xp", comparison.xp_after - comparison.xp_before),
+            Style::default().fg(theme.accent),
+        ));
+        if after.level > before.level {
+            title.push(Span::styled(
+                format!("  ·  ★ level {}!", after.level),
+                Style::default()
+                    .fg(theme.secondary)
+                    .add_modifier(Modifier::BOLD),
+            ));
+        } else {
+            title.push(Span::styled(
+                format!(
+                    "  ·  level {}  ·  {:.0}%",
+                    after.level,
+                    after.ratio() * 100.0
+                ),
+                dim,
+            ));
+        }
+    }
+    f.render_widget(Paragraph::new(Line::from(title)), layout[0]);
+
+    let wpm = app.wpm();
+    let acc = app.accuracy();
+    let elapsed = app.elapsed().as_secs_f64();
 
     // Delta vs the previous any-mode session — or, for a replay, vs the run
     // it replays.
